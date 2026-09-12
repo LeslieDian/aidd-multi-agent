@@ -1,0 +1,482 @@
+{
+  "round": 0,
+  "timestamp": "2026-09-12T23:27:25",
+  "target": "EGFR",
+  "focus": "Best scores are only -3 kcal/mol — the basic amine (morpholine/piperazine) is too flexible and lacks the critical H-bond donor to Met793 hinge NH; replace the western aryl-NH-aryl ether chain with a 6-aminopyrimidine bearing a free NH2 to donate a hinge H-bond.",
+  "generator_outputs": [
+    {
+      "model": "deepseek-chat",
+      "provider": "deepseek",
+      "smiles_list": [
+        "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCCN4CCOCC4",
+        "C#Cc1ccc(Nc2ncnc3cc(OCCCN4CCOCC4)c(OC)cc23)cc1",
+        "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCN4CCCC4",
+        "C#Cc1ccc(Nc2ncnc3cc(OCCOC)c(OCCOC)cc23)cc1",
+        "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCCN4CCOCC4"
+      ],
+      "rationale": "Explored 4-anilinoquinazoline hinge binders with varied 6,7-substituents (morpholine, pyrrolidine, ethoxyethoxy, and ethynylphenyl) to balance potency and drug-likeness while maintaining key H-bond acceptor interactions.",
+      "raw_length": 528
+    },
+    {
+      "model": "MiniMax-M3",
+      "provider": "MiniMax",
+      "smiles_list": [
+        "C#Cc1ccc(Nc2ncnc3cc(O)c(OCCCN4CCOCC4)cc23)cc1",
+        "COc1cc2ncnc(Nc3cccc(Cl)c3F)c2cc1OCCN1CCOCC1",
+        "Fc1cc(Cl)c(Nc2ncnc3ccc(OCCCNC(C)=O)cc23)cc1F",
+        "C#Cc1cccnc1Nc1ncnc2c1cc(O)c2OCCOC",
+        "O=C(Nc1ccc(F)c(Cl)c1)c1c(N)ncnc1NCCOc1ccncc1"
+      ],
+      "rationale": "Diverse quinazoline and related heteroaromatic scaffolds with anilino hinge-binders, terminal alkynes/hydroxyl/morpholine solubilizing groups, and H-bond acceptor/donor motifs to target the EGFR ATP-pocket while maintaining drug-like properties.",
+      "raw_length": 501
+    }
+  ],
+  "candidates": [
+    {
+      "smiles": "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCCN4CCOCC4",
+      "provider": "deepseek",
+      "model": "deepseek-chat",
+      "rationale": "Explored 4-anilinoquinazoline hinge binders with varied 6,7-substituents (morpholine, pyrrolidine, ethoxyethoxy, and ethynylphenyl) to balance potency and drug-likeness while maintaining key H-bond acceptor interactions.",
+      "validate": {
+        "valid": true,
+        "smiles": "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCCN1CCOCC1",
+        "mw": 446.91,
+        "logp": 4.28,
+        "hbd": 1,
+        "hba": 7,
+        "rotatable_bonds": 8,
+        "tpsa": 68.74,
+        "rings": 4,
+        "lipinski_pass": true,
+        "sa_score": 2.337357549756243
+      },
+      "admet": {
+        "valid": true,
+        "smiles": "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCCN1CCOCC1",
+        "absorption": 1.0,
+        "bioavailability": 1.0,
+        "herg_risk": 1.0,
+        "qed": 0.518,
+        "tpsa": 68.74,
+        "rotatable_bonds": 8,
+        "summary_score": 0.704,
+        "warnings": [
+          "hERG 椋庨櫓鍋忛珮"
+        ]
+      },
+      "dock": {
+        "smiles": "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCCN4CCOCC4",
+        "score": -2.768,
+        "valid": true,
+        "error": null
+      },
+      "scaffold": "c1ccc(Nc2ncnc3ccc(OCCCN4CCOCC4)cc23)cc1",
+      "composite_score": 0.573
+    },
+    {
+      "smiles": "C#Cc1ccc(Nc2ncnc3cc(OCCCN4CCOCC4)c(OC)cc23)cc1",
+      "provider": "deepseek",
+      "model": "deepseek-chat",
+      "rationale": "Explored 4-anilinoquinazoline hinge binders with varied 6,7-substituents (morpholine, pyrrolidine, ethoxyethoxy, and ethynylphenyl) to balance potency and drug-likeness while maintaining key H-bond acceptor interactions.",
+      "validate": {
+        "valid": true,
+        "smiles": "C#Cc1ccc(Nc2ncnc3cc(OCCCN4CCOCC4)c(OC)cc23)cc1",
+        "mw": 418.5,
+        "logp": 3.46,
+        "hbd": 1,
+        "hba": 7,
+        "rotatable_bonds": 8,
+        "tpsa": 68.74,
+        "rings": 4,
+        "lipinski_pass": true,
+        "sa_score": 2.44903388111719
+      },
+      "admet": {
+        "valid": true,
+        "smiles": "C#Cc1ccc(Nc2ncnc3cc(OCCCN4CCOCC4)c(OC)cc23)cc1",
+        "absorption": 1.0,
+        "bioavailability": 1.0,
+        "herg_risk": 0.0,
+        "qed": 0.444,
+        "tpsa": 68.74,
+        "rotatable_bonds": 8,
+        "summary_score": 0.889,
+        "warnings": []
+      },
+      "dock": {
+        "smiles": "C#Cc1ccc(Nc2ncnc3cc(OCCCN4CCOCC4)c(OC)cc23)cc1",
+        "score": -2.996,
+        "valid": true,
+        "error": null
+      },
+      "scaffold": "c1ccc(Nc2ncnc3cc(OCCCN4CCOCC4)ccc23)cc1",
+      "composite_score": 0.646
+    },
+    {
+      "smiles": "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCN4CCCC4",
+      "provider": "deepseek",
+      "model": "deepseek-chat",
+      "rationale": "Explored 4-anilinoquinazoline hinge binders with varied 6,7-substituents (morpholine, pyrrolidine, ethoxyethoxy, and ethynylphenyl) to balance potency and drug-likeness while maintaining key H-bond acceptor interactions.",
+      "validate": {
+        "valid": true,
+        "smiles": "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCN1CCCC1",
+        "mw": 416.88,
+        "logp": 4.65,
+        "hbd": 1,
+        "hba": 6,
+        "rotatable_bonds": 7,
+        "tpsa": 59.51,
+        "rings": 4,
+        "lipinski_pass": true,
+        "sa_score": 2.247792943499247
+      },
+      "admet": {
+        "valid": true,
+        "smiles": "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCN1CCCC1",
+        "absorption": 1.0,
+        "bioavailability": 1.0,
+        "herg_risk": 1.0,
+        "qed": 0.605,
+        "tpsa": 59.51,
+        "rotatable_bonds": 7,
+        "summary_score": 0.721,
+        "warnings": [
+          "hERG 椋庨櫓鍋忛珮"
+        ]
+      },
+      "dock": {
+        "smiles": "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCN4CCCC4",
+        "score": -2.933,
+        "valid": true,
+        "error": null
+      },
+      "scaffold": "c1ccc(Nc2ncnc3ccc(OCCN4CCCC4)cc23)cc1",
+      "composite_score": 0.583
+    },
+    {
+      "smiles": "C#Cc1ccc(Nc2ncnc3cc(OCCOC)c(OCCOC)cc23)cc1",
+      "provider": "deepseek",
+      "model": "deepseek-chat",
+      "rationale": "Explored 4-anilinoquinazoline hinge binders with varied 6,7-substituents (morpholine, pyrrolidine, ethoxyethoxy, and ethynylphenyl) to balance potency and drug-likeness while maintaining key H-bond acceptor interactions.",
+      "validate": {
+        "valid": true,
+        "smiles": "C#Cc1ccc(Nc2ncnc3cc(OCCOC)c(OCCOC)cc23)cc1",
+        "mw": 393.44,
+        "logp": 3.41,
+        "hbd": 1,
+        "hba": 7,
+        "rotatable_bonds": 10,
+        "tpsa": 74.73,
+        "rings": 3,
+        "lipinski_pass": true,
+        "sa_score": 2.449000635806941
+      },
+      "admet": {
+        "valid": true,
+        "smiles": "C#Cc1ccc(Nc2ncnc3cc(OCCOC)c(OCCOC)cc23)cc1",
+        "absorption": 1.0,
+        "bioavailability": 1.0,
+        "herg_risk": 0.0,
+        "qed": 0.418,
+        "tpsa": 74.73,
+        "rotatable_bonds": 10,
+        "summary_score": 0.884,
+        "warnings": []
+      },
+      "dock": {
+        "smiles": "C#Cc1ccc(Nc2ncnc3cc(OCCOC)c(OCCOC)cc23)cc1",
+        "score": -2.853,
+        "valid": true,
+        "error": null
+      },
+      "scaffold": "c1ccc(Nc2ncnc3ccccc23)cc1",
+      "composite_score": 0.643
+    },
+    {
+      "smiles": "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCCN4CCOCC4",
+      "provider": "deepseek",
+      "model": "deepseek-chat",
+      "rationale": "Explored 4-anilinoquinazoline hinge binders with varied 6,7-substituents (morpholine, pyrrolidine, ethoxyethoxy, and ethynylphenyl) to balance potency and drug-likeness while maintaining key H-bond acceptor interactions.",
+      "validate": {
+        "valid": true,
+        "smiles": "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCCN1CCOCC1",
+        "mw": 446.91,
+        "logp": 4.28,
+        "hbd": 1,
+        "hba": 7,
+        "rotatable_bonds": 8,
+        "tpsa": 68.74,
+        "rings": 4,
+        "lipinski_pass": true,
+        "sa_score": 2.337357549756243
+      },
+      "admet": {
+        "valid": true,
+        "smiles": "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCCN1CCOCC1",
+        "absorption": 1.0,
+        "bioavailability": 1.0,
+        "herg_risk": 1.0,
+        "qed": 0.518,
+        "tpsa": 68.74,
+        "rotatable_bonds": 8,
+        "summary_score": 0.704,
+        "warnings": [
+          "hERG 椋庨櫓鍋忛珮"
+        ]
+      },
+      "dock": {
+        "smiles": "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCCN4CCOCC4",
+        "score": -2.384,
+        "valid": true,
+        "error": null
+      },
+      "scaffold": "c1ccc(Nc2ncnc3ccc(OCCCN4CCOCC4)cc23)cc1",
+      "composite_score": 0.57
+    },
+    {
+      "smiles": "C#Cc1ccc(Nc2ncnc3cc(O)c(OCCCN4CCOCC4)cc23)cc1",
+      "provider": "MiniMax",
+      "model": "MiniMax-M3",
+      "rationale": "Diverse quinazoline and related heteroaromatic scaffolds with anilino hinge-binders, terminal alkynes/hydroxyl/morpholine solubilizing groups, and H-bond acceptor/donor motifs to target the EGFR ATP-pocket while maintaining drug-like properties.",
+      "validate": {
+        "valid": true,
+        "smiles": "C#Cc1ccc(Nc2ncnc3cc(O)c(OCCCN4CCOCC4)cc23)cc1",
+        "mw": 404.47,
+        "logp": 3.16,
+        "hbd": 2,
+        "hba": 7,
+        "rotatable_bonds": 7,
+        "tpsa": 79.74,
+        "rings": 4,
+        "lipinski_pass": true,
+        "sa_score": 2.547475780989938
+      },
+      "admet": {
+        "valid": true,
+        "smiles": "C#Cc1ccc(Nc2ncnc3cc(O)c(OCCCN4CCOCC4)cc23)cc1",
+        "absorption": 1.0,
+        "bioavailability": 1.0,
+        "herg_risk": 0.0,
+        "qed": 0.462,
+        "tpsa": 79.74,
+        "rotatable_bonds": 7,
+        "summary_score": 0.892,
+        "warnings": []
+      },
+      "dock": {
+        "smiles": "C#Cc1ccc(Nc2ncnc3cc(O)c(OCCCN4CCOCC4)cc23)cc1",
+        "score": -2.756,
+        "valid": true,
+        "error": null
+      },
+      "scaffold": "c1ccc(Nc2ncnc3ccc(OCCCN4CCOCC4)cc23)cc1",
+      "composite_score": 0.643
+    },
+    {
+      "smiles": "COc1cc2ncnc(Nc3cccc(Cl)c3F)c2cc1OCCN1CCOCC1",
+      "provider": "MiniMax",
+      "model": "MiniMax-M3",
+      "rationale": "Diverse quinazoline and related heteroaromatic scaffolds with anilino hinge-binders, terminal alkynes/hydroxyl/morpholine solubilizing groups, and H-bond acceptor/donor motifs to target the EGFR ATP-pocket while maintaining drug-like properties.",
+      "validate": {
+        "valid": true,
+        "smiles": "COc1cc2ncnc(Nc3cccc(Cl)c3F)c2cc1OCCN1CCOCC1",
+        "mw": 432.88,
+        "logp": 3.89,
+        "hbd": 1,
+        "hba": 7,
+        "rotatable_bonds": 7,
+        "tpsa": 68.74,
+        "rings": 4,
+        "lipinski_pass": true,
+        "sa_score": 2.3799254916241317
+      },
+      "admet": {
+        "valid": true,
+        "smiles": "COc1cc2ncnc(Nc3cccc(Cl)c3F)c2cc1OCCN1CCOCC1",
+        "absorption": 1.0,
+        "bioavailability": 1.0,
+        "herg_risk": 1.0,
+        "qed": 0.607,
+        "tpsa": 68.74,
+        "rotatable_bonds": 7,
+        "summary_score": 0.721,
+        "warnings": [
+          "hERG 椋庨櫓鍋忛珮"
+        ]
+      },
+      "dock": {
+        "smiles": "COc1cc2ncnc(Nc3cccc(Cl)c3F)c2cc1OCCN1CCOCC1",
+        "score": -3.093,
+        "valid": true,
+        "error": null
+      },
+      "scaffold": "c1ccc(Nc2ncnc3ccc(OCCN4CCOCC4)cc23)cc1",
+      "composite_score": 0.635
+    },
+    {
+      "smiles": "Fc1cc(Cl)c(Nc2ncnc3ccc(OCCCNC(C)=O)cc23)cc1F",
+      "provider": "MiniMax",
+      "model": "MiniMax-M3",
+      "rationale": "Diverse quinazoline and related heteroaromatic scaffolds with anilino hinge-binders, terminal alkynes/hydroxyl/morpholine solubilizing groups, and H-bond acceptor/donor motifs to target the EGFR ATP-pocket while maintaining drug-like properties.",
+      "validate": {
+        "valid": true,
+        "smiles": "CC(=O)NCCCOc1ccc2ncnc(Nc3cc(F)c(F)cc3Cl)c2c1",
+        "mw": 406.82,
+        "logp": 4.21,
+        "hbd": 2,
+        "hba": 5,
+        "rotatable_bonds": 7,
+        "tpsa": 76.14,
+        "rings": 3,
+        "lipinski_pass": true,
+        "sa_score": 2.3210749253832077
+      },
+      "admet": {
+        "valid": true,
+        "smiles": "CC(=O)NCCCOc1ccc2ncnc(Nc3cc(F)c(F)cc3Cl)c2c1",
+        "absorption": 1.0,
+        "bioavailability": 1.0,
+        "herg_risk": 1.0,
+        "qed": 0.454,
+        "tpsa": 76.14,
+        "rotatable_bonds": 7,
+        "summary_score": 0.691,
+        "warnings": [
+          "hERG 椋庨櫓鍋忛珮"
+        ]
+      },
+      "dock": {
+        "smiles": "Fc1cc(Cl)c(Nc2ncnc3ccc(OCCCNC(C)=O)cc23)cc1F",
+        "score": -3.012,
+        "valid": true,
+        "error": null
+      },
+      "scaffold": "c1ccc(Nc2ncnc3ccccc23)cc1",
+      "composite_score": 0.622
+    },
+    {
+      "smiles": "C#Cc1cccnc1Nc1ncnc2c1cc(O)c2OCCOC",
+      "provider": "MiniMax",
+      "model": "MiniMax-M3",
+      "rationale": "Diverse quinazoline and related heteroaromatic scaffolds with anilino hinge-binders, terminal alkynes/hydroxyl/morpholine solubilizing groups, and H-bond acceptor/donor motifs to target the EGFR ATP-pocket while maintaining drug-like properties.",
+      "validate": {
+        "valid": false,
+        "smiles": "C#Cc1cccnc1Nc1ncnc2c1cc(O)c2OCCOC",
+        "error": "RDKit cannot parse SMILES"
+      },
+      "admet": {
+        "valid": false,
+        "smiles": "C#Cc1cccnc1Nc1ncnc2c1cc(O)c2OCCOC",
+        "error": "Invalid SMILES"
+      },
+      "dock": {
+        "smiles": "C#Cc1cccnc1Nc1ncnc2c1cc(O)c2OCCOC",
+        "score": null,
+        "valid": false,
+        "error": "skipped (invalid SMILES)"
+      },
+      "scaffold": null,
+      "composite_score": 0.0
+    },
+    {
+      "smiles": "O=C(Nc1ccc(F)c(Cl)c1)c1c(N)ncnc1NCCOc1ccncc1",
+      "provider": "MiniMax",
+      "model": "MiniMax-M3",
+      "rationale": "Diverse quinazoline and related heteroaromatic scaffolds with anilino hinge-binders, terminal alkynes/hydroxyl/morpholine solubilizing groups, and H-bond acceptor/donor motifs to target the EGFR ATP-pocket while maintaining drug-like properties.",
+      "validate": {
+        "valid": true,
+        "smiles": "Nc1ncnc(NCCOc2ccncc2)c1C(=O)Nc1ccc(F)c(Cl)c1",
+        "mw": 402.82,
+        "logp": 2.99,
+        "hbd": 3,
+        "hba": 7,
+        "rotatable_bonds": 7,
+        "tpsa": 115.05,
+        "rings": 3,
+        "lipinski_pass": true,
+        "sa_score": 2.4118663908165097
+      },
+      "admet": {
+        "valid": true,
+        "smiles": "Nc1ncnc(NCCOc2ccncc2)c1C(=O)Nc1ccc(F)c(Cl)c1",
+        "absorption": 1.0,
+        "bioavailability": 1.0,
+        "herg_risk": 0.0,
+        "qed": 0.52,
+        "tpsa": 115.05,
+        "rotatable_bonds": 7,
+        "summary_score": 0.904,
+        "warnings": []
+      },
+      "dock": {
+        "smiles": "O=C(Nc1ccc(F)c(Cl)c1)c1c(N)ncnc1NCCOc1ccncc1",
+        "score": -2.747,
+        "valid": true,
+        "error": null
+      },
+      "scaffold": "O=C(Nc1ccccc1)c1cncnc1NCCOc1ccncc1",
+      "composite_score": 0.651
+    }
+  ],
+  "summary": {
+    "n_total": 10,
+    "n_valid": 9,
+    "valid_ratio": 0.9,
+    "n_docked": 9,
+    "n_unique_scaffolds": 6,
+    "avg_admet": 0.79,
+    "best_vina": -3.093,
+    "top_candidates": [
+      {
+        "smiles": "O=C(Nc1ccc(F)c(Cl)c1)c1c(N)ncnc1NCCOc1ccncc1",
+        "score": 0.651
+      },
+      {
+        "smiles": "C#Cc1ccc(Nc2ncnc3cc(OCCCN4CCOCC4)c(OC)cc23)cc1",
+        "score": 0.646
+      },
+      {
+        "smiles": "C#Cc1ccc(Nc2ncnc3cc(OCCOC)c(OCCOC)cc23)cc1",
+        "score": 0.643
+      }
+    ],
+    "round": 0,
+    "per_provider": {
+      "deepseek": {
+        "count": 5,
+        "n_unique_scaffolds": 4,
+        "best_vina": -2.996,
+        "avg_composite": 0.603
+      },
+      "MiniMax": {
+        "count": 4,
+        "n_unique_scaffolds": 4,
+        "best_vina": -3.093,
+        "avg_composite": 0.638
+      },
+      "__overlap__": {
+        "providers": [
+          "deepseek",
+          "MiniMax"
+        ],
+        "intersection": 2,
+        "union": 6,
+        "overlap_ratio": 0.333
+      }
+    }
+  },
+  "judgment": {
+    "focus": "Best scores are only -3 kcal/mol — the basic amine (morpholine/piperazine) is too flexible and lacks the critical H-bond donor to Met793 hinge NH; replace the western aryl-NH-aryl ether chain with a 6-aminopyrimidine bearing a free NH2 to donate a hinge H-bond.",
+    "best_index": 4,
+    "weakness": "No candidate presents a donor H-bond to the Met793 backbone NH of the hinge — the aryl-ether-amine tail cannot reach it.",
+    "expected_change": "Vina score should improve from ~-3 to ~-7 kcal/mol with proper hinge engagement",
+    "reasoning": "The Met793 NH is the universal anchor for quinazoline/pyrimidine EGFR inhibitors (gefitinib/erlotinib rely on it); without a donor, the core sits too far from the hinge and affinity plateaus.",
+    "summary": {
+      "focus": "Best scores are only -3 kcal/mol — the basic amine (morpholine/piperazine) is too flexible and lacks the critical H-bond donor to Met793 hinge NH; replace the western aryl-NH-aryl ether chain with a 6-aminopyrimidine bearing a free NH2 to donate a hinge H-bond.",
+      "best_index": 4,
+      "weakness": "No candidate presents a donor H-bond to the Met793 backbone NH of the hinge — the aryl-ether-amine tail cannot reach it.",
+      "expected_change": "Vina score should improve from ~-3 to ~-7 kcal/mol with proper hinge engagement",
+      "reasoning": "The Met793 NH is the universal anchor for quinazoline/pyrimidine EGFR inhibitors (gefitinib/erlotinib rely on it); without a donor, the core sits too far from the hinge and affinity plateaus."
+    }
+  }
+}

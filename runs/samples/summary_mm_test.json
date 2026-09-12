@@ -1,0 +1,148 @@
+{
+  "target": "EGFR",
+  "rounds_completed": 3,
+  "history": [
+    {
+      "n_total": 10,
+      "n_valid": 9,
+      "valid_ratio": 0.9,
+      "n_docked": 9,
+      "n_unique_scaffolds": 6,
+      "avg_admet": 0.79,
+      "best_vina": -3.093,
+      "top_candidates": [
+        {
+          "smiles": "O=C(Nc1ccc(F)c(Cl)c1)c1c(N)ncnc1NCCOc1ccncc1",
+          "score": 0.651
+        },
+        {
+          "smiles": "C#Cc1ccc(Nc2ncnc3cc(OCCCN4CCOCC4)c(OC)cc23)cc1",
+          "score": 0.646
+        },
+        {
+          "smiles": "C#Cc1ccc(Nc2ncnc3cc(OCCOC)c(OCCOC)cc23)cc1",
+          "score": 0.643
+        }
+      ],
+      "round": 0,
+      "per_provider": {
+        "deepseek": {
+          "count": 5,
+          "n_unique_scaffolds": 4,
+          "best_vina": -2.996,
+          "avg_composite": 0.603
+        },
+        "MiniMax": {
+          "count": 4,
+          "n_unique_scaffolds": 4,
+          "best_vina": -3.093,
+          "avg_composite": 0.638
+        },
+        "__overlap__": {
+          "providers": [
+            "deepseek",
+            "MiniMax"
+          ],
+          "intersection": 2,
+          "union": 6,
+          "overlap_ratio": 0.333
+        }
+      }
+    },
+    {
+      "n_total": 10,
+      "n_valid": 10,
+      "valid_ratio": 1.0,
+      "n_docked": 10,
+      "n_unique_scaffolds": 5,
+      "avg_admet": 0.938,
+      "best_vina": -3.516,
+      "top_candidates": [
+        {
+          "smiles": "Nc1ncnc2cc(NCc3ccc(C)cc3)c(OC)cc12",
+          "score": 0.747
+        },
+        {
+          "smiles": "Nc1ncnc(Nc2ccc(OC)cc2)c1",
+          "score": 0.685
+        },
+        {
+          "smiles": "Nc1ncnc(Nc2ccc(Cl)c(F)c2)c1",
+          "score": 0.682
+        }
+      ],
+      "round": 1,
+      "per_provider": {
+        "deepseek": {
+          "count": 5,
+          "n_unique_scaffolds": 1,
+          "best_vina": -2.981,
+          "avg_composite": 0.682
+        },
+        "MiniMax": {
+          "count": 5,
+          "n_unique_scaffolds": 4,
+          "best_vina": -3.516,
+          "avg_composite": 0.683
+        },
+        "__overlap__": {
+          "providers": [
+            "deepseek",
+            "MiniMax"
+          ],
+          "intersection": 0,
+          "union": 5,
+          "overlap_ratio": 0.0
+        }
+      }
+    },
+    {
+      "n_total": 10,
+      "n_valid": 10,
+      "valid_ratio": 1.0,
+      "n_docked": 10,
+      "n_unique_scaffolds": 2,
+      "avg_admet": 0.854,
+      "best_vina": -3.322,
+      "top_candidates": [
+        {
+          "smiles": "COc1cc2c(cc1OC)c(Nc3ccc(C#C)cc3)ncn2",
+          "score": 0.732
+        },
+        {
+          "smiles": "COc1cc2c(cc1OC)c(Nc3ccc(OC)cc3)ncn2",
+          "score": 0.685
+        },
+        {
+          "smiles": "COc1cc2ncnc(Nc3ccc(OC)c(OC)c3)c2cc1OC",
+          "score": 0.677
+        }
+      ],
+      "round": 2,
+      "per_provider": {
+        "deepseek": {
+          "count": 5,
+          "n_unique_scaffolds": 1,
+          "best_vina": -3.322,
+          "avg_composite": 0.68
+        },
+        "MiniMax": {
+          "count": 5,
+          "n_unique_scaffolds": 2,
+          "best_vina": -2.882,
+          "avg_composite": 0.646
+        },
+        "__overlap__": {
+          "providers": [
+            "deepseek",
+            "MiniMax"
+          ],
+          "intersection": 1,
+          "union": 2,
+          "overlap_ratio": 0.5
+        }
+      }
+    }
+  ],
+  "final_focus": "Replace the 6,7-dimethoxy groups on the quinazoline with a 6-acrylamide and 7-(2-methoxyethoxy) substituent to add a covalent warhead and solubilizing tail."
+}

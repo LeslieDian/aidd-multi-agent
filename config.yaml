@@ -48,9 +48,11 @@ llm:
       max_tokens: 2048
 
     # ----- generator A2: MiniMax M3 (MiniMax latest, 1M context) -----
+    # NOTE: base_url is case-sensitive. The working endpoint is
+    # "api.MiniMax.chat" (camelCase), not "api.minimax.io".
     # OpenAI-compatible endpoint.
     MiniMax:
-      base_url: https://api.minimax.io/v1
+      base_url: https://api.MiniMax.chat/v1
       api_key_env: MiniMax_API_KEY
       model: MiniMax-M3
       temperature: 1.0          # recommended by MiniMax docs
@@ -62,7 +64,7 @@ llm:
 
     # ----- judge C: MiniMax-M3 thinking enabled (best reasoning) -----
     judge_MiniMax:
-      base_url: https://api.minimax.io/v1
+      base_url: https://api.MiniMax.chat/v1
       api_key_env: MiniMax_API_KEY
       model: MiniMax-M3
       temperature: 0.3
@@ -72,7 +74,7 @@ llm:
           type: adaptive
 
   # Which providers to use as generators (round-robin or parallel)
-  # Note: MiniMax currently returns 401 (key issue); using deepseek-only until fixed.
+  # Both providers working now (MiniMax base_url fixed).
   generators:
     - deepseek
     - MiniMax
