@@ -1,10 +1,10 @@
-"""validate_mol — SMILES 合法性 + Lipinski + SA score
+"""tools/validate_mol.py - SMILES validity + Lipinski + SA score.
 
-输入：单个 SMILES 字符串，或 SMILES 列表
-输出：标准化 JSON 字典列表
+Input:  a single SMILES string, or a list of SMILES.
+Output: a standardized JSON dict (or list of dicts).
 
-注意：SA score 需要 sascorer.py 文件（不在 pip 包里）。
-如果没有该文件，SA score 字段返回 None，不影响其他字段。
+Note: SA score requires sascorer.py (not in pip).
+If the file is missing, the sa_score field returns None but other fields still work.
 """
 from __future__ import annotations
 
@@ -12,18 +12,18 @@ from pathlib import Path
 from typing import Iterable
 
 from rdkit import Chem, RDLogger
-from rdkit.Chem import AllChem, Crippen, Descriptors, Lipinski
+from rdkit.Chem import Crippen, Descriptors, Lipinski
 
-# 抑制 RDKit 的 stderr warning（无效 SMILES 会刷屏）
+# Silence RDKit stderr warnings (invalid SMILES spams a lot)
 RDLogger.DisableLog("rdApp.*")
 
-# 可选：SA score scorer（懒加载）
+# Lazy-loaded SA scorer
 _sascorer = None
 _sascorer_loaded = False
 
 
 def _load_sascorer():
-    """懒加载 sascorer.py（如果存在）"""
+    """Lazy-load sascorer.py if present."""
     global _sascorer, _sascorer_loaded
     if _sascorer_loaded:
         return _sascorer
@@ -40,7 +40,7 @@ def _load_sascorer():
 
 
 def compute_sa_score(mol: Chem.Mol) -> float | None:
-    """计算 SA score，1=容易合成，10=几乎不可能。失败返回 None。"""
+    """Compute SA score (1 = easy to synthesize, 10 = nearly impossible)."""
     scorer = _load_sascorer()
     if scorer is None:
         return None
@@ -50,25 +50,13 @@ def compute_sa_score(mol: Chem.Mol) -> float | None:
         return None
 
 
-# ----------------- 核心函数 -----------------
+# ----------------- Core API -----------------
 
 def validate_smiles(smiles: str) -> dict:
-    """验证单个 SMILES 并计算化学描述符。
+    """Validate one SMILES and compute chemistry descriptors.
 
-    Returns:
-        dict: {
-            "valid": bool,
-            "smiles": canonical SMILES or original,
-            "mw": float,
-            "logp": float,
-            "hbd": int,
-            "hba": int,
-            "rotatable_bonds": int,
-            "tpsa": float,
-            "rings": int,
-            "lipinski_pass": bool,
-            "sa_score": float | None,
-        }
+    Returns a dict with: valid, smiles (canonical), mw, logp, hbd, hba,
+    rotatable_bonds, tpsa, rings, lipinski_pass, sa_score.
     """
     if not smiles or not isinstance(smiles, str):
         return {"valid": False, "smiles": str(smiles), "error": "empty or non-string input"}
@@ -79,7 +67,7 @@ def validate_smiles(smiles: str) -> dict:
 
     props = {
         "valid": True,
-        "smiles": Chem.MolToSmiles(mol),  # 规范化
+        "smiles": Chem.MolToSmiles(mol),  # canonical
         "mw": round(Descriptors.MolWt(mol), 2),
         "logp": round(Crippen.MolLogP(mol), 2),
         "hbd": Lipinski.NumHDonors(mol),
@@ -95,7 +83,7 @@ def validate_smiles(smiles: str) -> dict:
 
 def lipinski_pass(props: dict, max_mw: float = 500, max_logp: float = 5,
                   max_hbd: int = 5, max_hba: int = 10) -> bool:
-    """Lipinski 五规则（仅前四项）。"""
+    """Lipinski rule-of-five (first four rules)."""
     if not props.get("valid"):
         return False
     return (
@@ -107,7 +95,7 @@ def lipinski_pass(props: dict, max_mw: float = 500, max_logp: float = 5,
 
 
 def validate_batch(smiles_list: Iterable[str]) -> list[dict]:
-    """批量验证，返回与输入等长的结果列表（保序）。"""
+    """Validate a list of SMILES, returning results in input order."""
     return [validate_smiles(s) for s in smiles_list]
 
 

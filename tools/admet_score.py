@@ -1,12 +1,12 @@
-"""admet_score — 基于 RDKit 描述符的 ADMET 近似评分
+"""admet_score 鈥?鍩轰簬 RDKit 鎻忚堪绗︾殑 ADMET 杩戜技璇勫垎
 
-注意：这是**估算**，不是真实 ADMET 预测（没有集成 admetSAR / SwissADME）。
-适合在 Agent 闭环里做**快速粗筛**——把明显不合理的分子剔掉。
+娉ㄦ剰锛氳繖鏄?*浼扮畻**锛屼笉鏄湡瀹?ADMET 棰勬祴锛堟病鏈夐泦鎴?admetSAR / SwissADME锛夈€?
+閫傚悎鍦?Agent 闂幆閲屽仛**蹇€熺矖绛?*鈥斺€旀妸鏄庢樉涓嶅悎鐞嗙殑鍒嗗瓙鍓旀帀銆?
 
-真实精度更高的 ADMET 可选：
-- padelpy（调用 PaDEL-Descriptor 软件）
+鐪熷疄绮惧害鏇撮珮鐨?ADMET 鍙€夛細
+- padelpy锛堣皟鐢?PaDEL-Descriptor 杞欢锛?
 - admetSAR 2.0 web API
-- 自训 QSAR 模型
+- 鑷 QSAR 妯″瀷
 """
 from __future__ import annotations
 
@@ -19,19 +19,19 @@ RDLogger.DisableLog("rdApp.*")
 
 
 def estimate_admet(smiles: str) -> dict:
-    """估算 ADMET 多目标评分。
+    """浼扮畻 ADMET 澶氱洰鏍囪瘎鍒嗐€?
 
     Returns:
         dict: {
             "valid": bool,
             "smiles": str,
-            "absorption": float,        # 1.0 完美，越低越差（基于 TPSA）
-            "bioavailability": float,   # 0.5/1.0，基于 Veber 规则
-            "herg_risk": float,         # 0/1，hERG 心脏毒性风险
-            "qed": float,               # 0-1，定量药物相似性（QED）
+            "absorption": float,        # 1.0 瀹岀編锛岃秺浣庤秺宸紙鍩轰簬 TPSA锛?
+            "bioavailability": float,   # 0.5/1.0锛屽熀浜?Veber 瑙勫垯
+            "herg_risk": float,         # 0/1锛宧ERG 蹇冭剰姣掓€ч闄?
+            "qed": float,               # 0-1锛屽畾閲忚嵂鐗╃浉浼兼€э紙QED锛?
             "tpsa": float,
             "rotatable_bonds": int,
-            "summary_score": float,     # 综合（0-1）
+            "summary_score": float,     # 缁煎悎锛?-1锛?
             "warnings": list[str],
         }
     """
@@ -50,39 +50,39 @@ def estimate_admet(smiles: str) -> dict:
 
     warnings = []
 
-    # ---------- 1. 吸收（基于 TPSA）----------
-    # 经典 Veber：TPSA ≤ 140 Å² 吸收良好
+    # ---------- 1. 鍚告敹锛堝熀浜?TPSA锛?---------
+    # 缁忓吀 Veber锛歍PSA 鈮?140 脜虏 鍚告敹鑹ソ
     if tpsa <= 140:
         absorption = 1.0
     elif tpsa <= 180:
         absorption = 0.5
     else:
         absorption = 0.0
-        warnings.append("TPSA>180：吸收差")
+        warnings.append("TPSA>180锛氬惛鏀跺樊")
 
-    # ---------- 2. 生物利用度（Veber 规则）----------
+    # ---------- 2. 鐢熺墿鍒╃敤搴︼紙Veber 瑙勫垯锛?---------
     if rot_bonds <= 10 and tpsa <= 140:
         bioavailability = 1.0
     elif rot_bonds <= 15:
         bioavailability = 0.5
-        warnings.append("rotatable_bonds 较多")
+        warnings.append("rotatable_bonds 杈冨")
     else:
         bioavailability = 0.0
         warnings.append("rotatable_bonds>15")
 
-    # ---------- 3. hERG 风险（粗筛：logP > 3.5 且有碱性氮）----------
+    # ---------- 3. hERG 椋庨櫓锛堢矖绛涳細logP > 3.5 涓旀湁纰辨€ф爱锛?---------
     has_basic_n = any(
         atom.GetAtomicNum() == 7
         and atom.GetFormalCharge() == 0
-        and atom.GetTotalNumHs() >= 1  # 有 H = 碱性
+        and atom.GetTotalNumHs() >= 1  # 鏈?H = 纰辨€?
         for atom in mol.GetAtoms()
     )
     herg_risk = 1.0 if (logp > 3.5 and has_basic_n) else 0.0
     if herg_risk:
-        warnings.append("hERG 风险偏高")
+        warnings.append("hERG 椋庨櫓鍋忛珮")
 
-    # ---------- 4. 综合 ----------
-    # QED 已经是 0-1 的综合药物相似度
+    # ---------- 4. 缁煎悎 ----------
+    # QED 宸茬粡鏄?0-1 鐨勭患鍚堣嵂鐗╃浉浼煎害
     summary_score = (
         0.3 * absorption
         + 0.3 * bioavailability

@@ -1,24 +1,24 @@
-"""diversity — Bemis-Murcko 骨架多样性与相似度
+"""tools/diversity.py - Bemis-Murcko scaffold diversity and Tanimoto similarity.
 
-核心：
-- get_scaffold(smi) → MurckoScaffold SMILES
-- scaffold_diversity(list) → 唯一骨架集合 + 数量
-- batch_scaffolds(list) → 每分子的骨架列表
+Core API:
+- get_scaffold(smi) -> MurckoScaffold SMILES
+- scaffold_diversity(list) -> unique scaffolds + counts
+- batch_scaffolds(list) -> per-molecule scaffolds
+- tanimoto_matrix(list) -> N x N similarity matrix
 """
 from __future__ import annotations
 
 from typing import Iterable
 
-from rdkit import Chem, RDLogger
-from rdkit.Chem.Scaffolds import MurckoScaffold
-from rdkit import DataStructs
+from rdkit import Chem, RDLogger, DataStructs
 from rdkit.Chem import AllChem
+from rdkit.Chem.Scaffolds import MurckoScaffold
 
 RDLogger.DisableLog("rdApp.*")
 
 
 def get_scaffold(smiles: str) -> str | None:
-    """返回 Bemis-Murcko 骨架 SMILES（去掉侧链）。失败返回 None。"""
+    """Return the Bemis-Murcko scaffold SMILES (side chains removed)."""
     if not smiles or not isinstance(smiles, str):
         return None
     mol = Chem.MolFromSmiles(smiles.strip())
@@ -36,22 +36,23 @@ def batch_scaffolds(smiles_list: Iterable[str]) -> list[str | None]:
 
 
 def scaffold_diversity(smiles_list: Iterable[str]) -> dict:
-    """统计唯一骨架数。
+    """Count unique scaffolds.
 
     Returns:
         dict: {
             "n_molecules": int,
             "n_valid_scaffolds": int,
             "n_unique_scaffolds": int,
-            "scaffolds": list[str],          # 排序后的唯一骨架
-            "diversity_ratio": float,        # unique/total
+            "scaffolds": list[str],       # sorted unique
+            "diversity_ratio": float,     # unique / valid
         }
     """
+    smiles_list = list(smiles_list)
     scaffolds = batch_scaffolds(smiles_list)
     valid = [s for s in scaffolds if s]
     unique = sorted(set(valid))
     return {
-        "n_molecules": len(list(smiles_list) if not isinstance(smiles_list, list) else smiles_list),
+        "n_molecules": len(smiles_list),
         "n_valid_scaffolds": len(valid),
         "n_unique_scaffolds": len(unique),
         "scaffolds": unique,
@@ -60,12 +61,12 @@ def scaffold_diversity(smiles_list: Iterable[str]) -> dict:
 
 
 def tanimoto_matrix(smiles_list: Iterable[str]) -> dict:
-    """计算分子间的 Tanimoto 相似度（基于 Morgan fingerprint）。
+    """Compute pairwise Tanimoto similarity (Morgan fingerprint, r=2, 2048 bits).
 
     Returns:
         dict: {
             "smiles": list[str],
-            "matrix": list[list[float]],   # N×N 对称矩阵
+            "matrix": list[list[float]],   # N x N symmetric
         }
     """
     smiles_list = list(smiles_list)

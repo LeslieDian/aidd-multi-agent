@@ -1,6 +1,6 @@
-"""tools — Phase 1 的 4 个独立评分工具
+"""tools 鈥?Phase 1 鐨?4 涓嫭绔嬭瘎鍒嗗伐鍏?
 
-每个工具都是**纯函数 + 标准化 JSON 输出**，可以被 Agent 直接传参调用。
+姣忎釜宸ュ叿閮芥槸**绾嚱鏁?+ 鏍囧噯鍖?JSON 杈撳嚭**锛屽彲浠ヨ Agent 鐩存帴浼犲弬璋冪敤銆?
 """
 from .validate_mol import validate_smiles, validate_batch, lipinski_pass
 from .admet_score import estimate_admet, admet_batch
