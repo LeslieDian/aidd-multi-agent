@@ -1,0 +1,29 @@
+# ============================================================
+# AIDD Multi-Agent Python 依赖
+# ============================================================
+# 安装：pip install -r requirements.txt
+# 注意：AutoDock Vina 二进制不通过 pip 装，见 docs/setup.md
+
+# 化学信息学核心
+rdkit>=2024.3.1
+numpy>=1.24
+pandas>=2.0
+
+# LLM API（OpenAI 兼容协议，DeepSeek/Qwen 都用这个）
+openai>=1.0
+
+# 工具
+python-dotenv>=1.0
+pyyaml>=6.0
+requests>=2.31
+tqdm>=4.66
+
+# Vina 前处理：SMILES → pdbqt
+# meeko 需要 RDKit 版本配套，建议同 conda 环境安装
+meeko>=0.3.0
+
+# 单元测试
+pytest>=7.4
+
+# 可选：更精确的 SA score（也可以手动从 rdkit Contrib 仓库下载 sascorer.py）
+# rdkit-installer>=1.0
