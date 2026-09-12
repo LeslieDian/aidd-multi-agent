@@ -1,0 +1,258 @@
+{
+  "round": 1,
+  "timestamp": "2026-09-12T22:13:50",
+  "target": "EGFR",
+  "focus": "Continue exploring quinazoline cores with diverse substituents; aim for MW 350-450.",
+  "generator_outputs": [
+    {
+      "model": "deepseek-chat",
+      "provider": "deepseek",
+      "smiles_list": [
+        "COc1cc2c(Nc3ccc(F)c(Cl)c3)ncnc2cc1OCCCN1CCOCC1",
+        "C#Cc1ccc(Nc2ncnc3cc(OCCOC)c(OCCOC)cc23)cc1",
+        "CN(C)C(=O)c1ccccc1NC(=O)c1ccc2c(c1)nc(Nc3ccc(Cl)c(F)c3)nc2",
+        "COc1cc2c(Nc3ccc(F)c(Cl)c3)ncnc2cc1OCCN1CCOCC1",
+        "C#Cc1ccc(Nc2ncnc3cc(OCCOC)c(OCCOC)cc23)cc1F"
+      ],
+      "rationale": "Exploring quinazoline cores with diverse substituents (morpholine, ethoxy, amide) to optimize hinge binding and maintain drug-like properties.",
+      "raw_length": 460
+    }
+  ],
+  "candidates": [
+    {
+      "smiles": "COc1cc2c(Nc3ccc(F)c(Cl)c3)ncnc2cc1OCCCN1CCOCC1",
+      "provider": "deepseek",
+      "model": "deepseek-chat",
+      "rationale": "Exploring quinazoline cores with diverse substituents (morpholine, ethoxy, amide) to optimize hinge binding and maintain drug-like properties.",
+      "validate": {
+        "valid": true,
+        "smiles": "COc1cc2c(Nc3ccc(F)c(Cl)c3)ncnc2cc1OCCCN1CCOCC1",
+        "mw": 446.91,
+        "logp": 4.28,
+        "hbd": 1,
+        "hba": 7,
+        "rotatable_bonds": 8,
+        "tpsa": 68.74,
+        "rings": 4,
+        "lipinski_pass": true,
+        "sa_score": 2.337357549756243
+      },
+      "admet": {
+        "valid": true,
+        "smiles": "COc1cc2c(Nc3ccc(F)c(Cl)c3)ncnc2cc1OCCCN1CCOCC1",
+        "absorption": 1.0,
+        "bioavailability": 1.0,
+        "herg_risk": 1.0,
+        "qed": 0.518,
+        "tpsa": 68.74,
+        "rotatable_bonds": 8,
+        "summary_score": 0.704,
+        "warnings": [
+          "hERG 椋庨櫓鍋忛珮"
+        ]
+      },
+      "dock": {
+        "smiles": "COc1cc2c(Nc3ccc(F)c(Cl)c3)ncnc2cc1OCCCN1CCOCC1",
+        "score": -3.001,
+        "valid": true,
+        "error": null
+      },
+      "scaffold": "c1ccc(Nc2ncnc3cc(OCCCN4CCOCC4)ccc23)cc1",
+      "composite_score": 0.627
+    },
+    {
+      "smiles": "C#Cc1ccc(Nc2ncnc3cc(OCCOC)c(OCCOC)cc23)cc1",
+      "provider": "deepseek",
+      "model": "deepseek-chat",
+      "rationale": "Exploring quinazoline cores with diverse substituents (morpholine, ethoxy, amide) to optimize hinge binding and maintain drug-like properties.",
+      "validate": {
+        "valid": true,
+        "smiles": "C#Cc1ccc(Nc2ncnc3cc(OCCOC)c(OCCOC)cc23)cc1",
+        "mw": 393.44,
+        "logp": 3.41,
+        "hbd": 1,
+        "hba": 7,
+        "rotatable_bonds": 10,
+        "tpsa": 74.73,
+        "rings": 3,
+        "lipinski_pass": true,
+        "sa_score": 2.449000635806941
+      },
+      "admet": {
+        "valid": true,
+        "smiles": "C#Cc1ccc(Nc2ncnc3cc(OCCOC)c(OCCOC)cc23)cc1",
+        "absorption": 1.0,
+        "bioavailability": 1.0,
+        "herg_risk": 0.0,
+        "qed": 0.418,
+        "tpsa": 74.73,
+        "rotatable_bonds": 10,
+        "summary_score": 0.884,
+        "warnings": []
+      },
+      "dock": {
+        "smiles": "C#Cc1ccc(Nc2ncnc3cc(OCCOC)c(OCCOC)cc23)cc1",
+        "score": -2.692,
+        "valid": true,
+        "error": null
+      },
+      "scaffold": "c1ccc(Nc2ncnc3ccccc23)cc1",
+      "composite_score": 0.642
+    },
+    {
+      "smiles": "CN(C)C(=O)c1ccccc1NC(=O)c1ccc2c(c1)nc(Nc3ccc(Cl)c(F)c3)nc2",
+      "provider": "deepseek",
+      "model": "deepseek-chat",
+      "rationale": "Exploring quinazoline cores with diverse substituents (morpholine, ethoxy, amide) to optimize hinge binding and maintain drug-like properties.",
+      "validate": {
+        "valid": true,
+        "smiles": "CN(C)C(=O)c1ccccc1NC(=O)c1ccc2cnc(Nc3ccc(Cl)c(F)c3)nc2c1",
+        "mw": 463.9,
+        "logp": 5.12,
+        "hbd": 2,
+        "hba": 5,
+        "rotatable_bonds": 5,
+        "tpsa": 87.22,
+        "rings": 4,
+        "lipinski_pass": false,
+        "sa_score": 2.292264866738071
+      },
+      "admet": {
+        "valid": true,
+        "smiles": "CN(C)C(=O)c1ccccc1NC(=O)c1ccc2cnc(Nc3ccc(Cl)c(F)c3)nc2c1",
+        "absorption": 1.0,
+        "bioavailability": 1.0,
+        "herg_risk": 1.0,
+        "qed": 0.429,
+        "tpsa": 87.22,
+        "rotatable_bonds": 5,
+        "summary_score": 0.686,
+        "warnings": [
+          "hERG 椋庨櫓鍋忛珮"
+        ]
+      },
+      "dock": {
+        "smiles": "CN(C)C(=O)c1ccccc1NC(=O)c1ccc2c(c1)nc(Nc3ccc(Cl)c(F)c3)nc2",
+        "score": -3.187,
+        "valid": true,
+        "error": null
+      },
+      "scaffold": "O=C(Nc1ccccc1)c1ccc2cnc(Nc3ccccc3)nc2c1",
+      "composite_score": 0.584
+    },
+    {
+      "smiles": "COc1cc2c(Nc3ccc(F)c(Cl)c3)ncnc2cc1OCCN1CCOCC1",
+      "provider": "deepseek",
+      "model": "deepseek-chat",
+      "rationale": "Exploring quinazoline cores with diverse substituents (morpholine, ethoxy, amide) to optimize hinge binding and maintain drug-like properties.",
+      "validate": {
+        "valid": true,
+        "smiles": "COc1cc2c(Nc3ccc(F)c(Cl)c3)ncnc2cc1OCCN1CCOCC1",
+        "mw": 432.88,
+        "logp": 3.89,
+        "hbd": 1,
+        "hba": 7,
+        "rotatable_bonds": 7,
+        "tpsa": 68.74,
+        "rings": 4,
+        "lipinski_pass": true,
+        "sa_score": 2.3181079849928317
+      },
+      "admet": {
+        "valid": true,
+        "smiles": "COc1cc2c(Nc3ccc(F)c(Cl)c3)ncnc2cc1OCCN1CCOCC1",
+        "absorption": 1.0,
+        "bioavailability": 1.0,
+        "herg_risk": 1.0,
+        "qed": 0.607,
+        "tpsa": 68.74,
+        "rotatable_bonds": 7,
+        "summary_score": 0.721,
+        "warnings": [
+          "hERG 椋庨櫓鍋忛珮"
+        ]
+      },
+      "dock": {
+        "smiles": "COc1cc2c(Nc3ccc(F)c(Cl)c3)ncnc2cc1OCCN1CCOCC1",
+        "score": -2.94,
+        "valid": true,
+        "error": null
+      },
+      "scaffold": "c1ccc(Nc2ncnc3cc(OCCN4CCOCC4)ccc23)cc1",
+      "composite_score": 0.581
+    },
+    {
+      "smiles": "C#Cc1ccc(Nc2ncnc3cc(OCCOC)c(OCCOC)cc23)cc1F",
+      "provider": "deepseek",
+      "model": "deepseek-chat",
+      "rationale": "Exploring quinazoline cores with diverse substituents (morpholine, ethoxy, amide) to optimize hinge binding and maintain drug-like properties.",
+      "validate": {
+        "valid": true,
+        "smiles": "C#Cc1ccc(Nc2ncnc3cc(OCCOC)c(OCCOC)cc23)cc1F",
+        "mw": 411.43,
+        "logp": 3.54,
+        "hbd": 1,
+        "hba": 7,
+        "rotatable_bonds": 10,
+        "tpsa": 74.73,
+        "rings": 3,
+        "lipinski_pass": true,
+        "sa_score": 2.5946752849743273
+      },
+      "admet": {
+        "valid": true,
+        "smiles": "C#Cc1ccc(Nc2ncnc3cc(OCCOC)c(OCCOC)cc23)cc1F",
+        "absorption": 1.0,
+        "bioavailability": 1.0,
+        "herg_risk": 1.0,
+        "qed": 0.404,
+        "tpsa": 74.73,
+        "rotatable_bonds": 10,
+        "summary_score": 0.681,
+        "warnings": [
+          "hERG 椋庨櫓鍋忛珮"
+        ]
+      },
+      "dock": {
+        "smiles": "C#Cc1ccc(Nc2ncnc3cc(OCCOC)c(OCCOC)cc23)cc1F",
+        "score": -2.739,
+        "valid": true,
+        "error": null
+      },
+      "scaffold": "c1ccc(Nc2ncnc3ccccc23)cc1",
+      "composite_score": 0.558
+    }
+  ],
+  "summary": {
+    "n_total": 5,
+    "n_valid": 5,
+    "valid_ratio": 1.0,
+    "n_docked": 5,
+    "n_unique_scaffolds": 4,
+    "avg_admet": 0.735,
+    "best_vina": -3.187,
+    "top_candidates": [
+      {
+        "smiles": "C#Cc1ccc(Nc2ncnc3cc(OCCOC)c(OCCOC)cc23)cc1",
+        "score": 0.642
+      },
+      {
+        "smiles": "COc1cc2c(Nc3ccc(F)c(Cl)c3)ncnc2cc1OCCCN1CCOCC1",
+        "score": 0.627
+      },
+      {
+        "smiles": "CN(C)C(=O)c1ccccc1NC(=O)c1ccc2c(c1)nc(Nc3ccc(Cl)c(F)c3)nc2",
+        "score": 0.584
+      }
+    ],
+    "round": 1
+  },
+  "judgment": {
+    "focus": "Continue exploring quinazoline cores with diverse substituents; aim for MW 350-450.",
+    "best_index": 0,
+    "reasoning": "Fallback focus used (judge unavailable).",
+    "summary": {
+      "error": "KeyError: 'Unknown provider: judge_MiniMax. Available: []'"
+    }
+  }
+}

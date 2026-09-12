@@ -20,6 +20,8 @@ config.local.yaml
 # 运行输出（每轮 JSON、体积会膨胀，只保留样例）
 runs/*.json
 runs/*.csv
+runs_real/
+runs_demo/
 !runs/.gitkeep
 !runs/samples/*.json
 

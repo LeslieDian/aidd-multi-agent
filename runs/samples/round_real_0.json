@@ -1,0 +1,256 @@
+{
+  "round": 0,
+  "timestamp": "2026-09-12T22:12:50",
+  "target": "EGFR",
+  "focus": "Continue exploring quinazoline cores with diverse substituents; aim for MW 350-450.",
+  "generator_outputs": [
+    {
+      "model": "deepseek-chat",
+      "provider": "deepseek",
+      "smiles_list": [
+        "COc1cc2ncnc(Nc3ccc(C#C)cc3)c2cc1OCCN1CCOCC1",
+        "C=CC(=O)Nc1cccc(Nc2ncnc3cc(OCCCN4CCOCC4)c(OC)cc23)c1",
+        "COc1cc2c(Nc3ccc(F)c(Cl)c3)ncnc2cc1OCCCN1CCN(C)CC1",
+        "C#Cc1ccc(Nc2ncnc3cc(OCCCN4CCOCC4)c(OC)cc23)cc1",
+        "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCCN1CCOCC1"
+      ],
+      "rationale": "Designed analogs by hybridizing key pharmacophores from erlotinib, gefitinib, and afatinib while introducing diverse scaffolds and substituents to optimize hinge binding and drug-like properties.",
+      "raw_length": 515
+    }
+  ],
+  "candidates": [
+    {
+      "smiles": "COc1cc2ncnc(Nc3ccc(C#C)cc3)c2cc1OCCN1CCOCC1",
+      "provider": "deepseek",
+      "model": "deepseek-chat",
+      "rationale": "Designed analogs by hybridizing key pharmacophores from erlotinib, gefitinib, and afatinib while introducing diverse scaffolds and substituents to optimize hinge binding and drug-like properties.",
+      "validate": {
+        "valid": true,
+        "smiles": "C#Cc1ccc(Nc2ncnc3cc(OC)c(OCCN4CCOCC4)cc23)cc1",
+        "mw": 404.47,
+        "logp": 3.07,
+        "hbd": 1,
+        "hba": 7,
+        "rotatable_bonds": 7,
+        "tpsa": 68.74,
+        "rings": 4,
+        "lipinski_pass": true,
+        "sa_score": 2.4334589977731547
+      },
+      "admet": {
+        "valid": true,
+        "smiles": "C#Cc1ccc(Nc2ncnc3cc(OC)c(OCCN4CCOCC4)cc23)cc1",
+        "absorption": 1.0,
+        "bioavailability": 1.0,
+        "herg_risk": 0.0,
+        "qed": 0.607,
+        "tpsa": 68.74,
+        "rotatable_bonds": 7,
+        "summary_score": 0.921,
+        "warnings": []
+      },
+      "dock": {
+        "smiles": "COc1cc2ncnc(Nc3ccc(C#C)cc3)c2cc1OCCN1CCOCC1",
+        "score": -3.003,
+        "valid": true,
+        "error": null
+      },
+      "scaffold": "c1ccc(Nc2ncnc3ccc(OCCN4CCOCC4)cc23)cc1",
+      "composite_score": 0.712
+    },
+    {
+      "smiles": "C=CC(=O)Nc1cccc(Nc2ncnc3cc(OCCCN4CCOCC4)c(OC)cc23)c1",
+      "provider": "deepseek",
+      "model": "deepseek-chat",
+      "rationale": "Designed analogs by hybridizing key pharmacophores from erlotinib, gefitinib, and afatinib while introducing diverse scaffolds and substituents to optimize hinge binding and drug-like properties.",
+      "validate": {
+        "valid": true,
+        "smiles": "C=CC(=O)Nc1cccc(Nc2ncnc3cc(OCCCN4CCOCC4)c(OC)cc23)c1",
+        "mw": 463.54,
+        "logp": 3.61,
+        "hbd": 2,
+        "hba": 8,
+        "rotatable_bonds": 10,
+        "tpsa": 97.84,
+        "rings": 4,
+        "lipinski_pass": true,
+        "sa_score": 2.4904999735418976
+      },
+      "admet": {
+        "valid": true,
+        "smiles": "C=CC(=O)Nc1cccc(Nc2ncnc3cc(OCCCN4CCOCC4)c(OC)cc23)c1",
+        "absorption": 1.0,
+        "bioavailability": 1.0,
+        "herg_risk": 1.0,
+        "qed": 0.348,
+        "tpsa": 97.84,
+        "rotatable_bonds": 10,
+        "summary_score": 0.67,
+        "warnings": [
+          "hERG 椋庨櫓鍋忛珮"
+        ]
+      },
+      "dock": {
+        "smiles": "C=CC(=O)Nc1cccc(Nc2ncnc3cc(OCCCN4CCOCC4)c(OC)cc23)c1",
+        "score": -2.248,
+        "valid": true,
+        "error": null
+      },
+      "scaffold": "c1ccc(Nc2ncnc3cc(OCCCN4CCOCC4)ccc23)cc1",
+      "composite_score": 0.552
+    },
+    {
+      "smiles": "COc1cc2c(Nc3ccc(F)c(Cl)c3)ncnc2cc1OCCCN1CCN(C)CC1",
+      "provider": "deepseek",
+      "model": "deepseek-chat",
+      "rationale": "Designed analogs by hybridizing key pharmacophores from erlotinib, gefitinib, and afatinib while introducing diverse scaffolds and substituents to optimize hinge binding and drug-like properties.",
+      "validate": {
+        "valid": true,
+        "smiles": "COc1cc2c(Nc3ccc(F)c(Cl)c3)ncnc2cc1OCCCN1CCN(C)CC1",
+        "mw": 459.95,
+        "logp": 4.19,
+        "hbd": 1,
+        "hba": 7,
+        "rotatable_bonds": 8,
+        "tpsa": 62.75,
+        "rings": 4,
+        "lipinski_pass": true,
+        "sa_score": 2.351234986543094
+      },
+      "admet": {
+        "valid": true,
+        "smiles": "COc1cc2c(Nc3ccc(F)c(Cl)c3)ncnc2cc1OCCCN1CCN(C)CC1",
+        "absorption": 1.0,
+        "bioavailability": 1.0,
+        "herg_risk": 1.0,
+        "qed": 0.507,
+        "tpsa": 62.75,
+        "rotatable_bonds": 8,
+        "summary_score": 0.701,
+        "warnings": [
+          "hERG 椋庨櫓鍋忛珮"
+        ]
+      },
+      "dock": {
+        "smiles": "COc1cc2c(Nc3ccc(F)c(Cl)c3)ncnc2cc1OCCCN1CCN(C)CC1",
+        "score": -2.968,
+        "valid": true,
+        "error": null
+      },
+      "scaffold": "c1ccc(Nc2ncnc3cc(OCCCN4CCNCC4)ccc23)cc1",
+      "composite_score": 0.573
+    },
+    {
+      "smiles": "C#Cc1ccc(Nc2ncnc3cc(OCCCN4CCOCC4)c(OC)cc23)cc1",
+      "provider": "deepseek",
+      "model": "deepseek-chat",
+      "rationale": "Designed analogs by hybridizing key pharmacophores from erlotinib, gefitinib, and afatinib while introducing diverse scaffolds and substituents to optimize hinge binding and drug-like properties.",
+      "validate": {
+        "valid": true,
+        "smiles": "C#Cc1ccc(Nc2ncnc3cc(OCCCN4CCOCC4)c(OC)cc23)cc1",
+        "mw": 418.5,
+        "logp": 3.46,
+        "hbd": 1,
+        "hba": 7,
+        "rotatable_bonds": 8,
+        "tpsa": 68.74,
+        "rings": 4,
+        "lipinski_pass": true,
+        "sa_score": 2.44903388111719
+      },
+      "admet": {
+        "valid": true,
+        "smiles": "C#Cc1ccc(Nc2ncnc3cc(OCCCN4CCOCC4)c(OC)cc23)cc1",
+        "absorption": 1.0,
+        "bioavailability": 1.0,
+        "herg_risk": 0.0,
+        "qed": 0.444,
+        "tpsa": 68.74,
+        "rotatable_bonds": 8,
+        "summary_score": 0.889,
+        "warnings": []
+      },
+      "dock": {
+        "smiles": "C#Cc1ccc(Nc2ncnc3cc(OCCCN4CCOCC4)c(OC)cc23)cc1",
+        "score": -2.94,
+        "valid": true,
+        "error": null
+      },
+      "scaffold": "c1ccc(Nc2ncnc3cc(OCCCN4CCOCC4)ccc23)cc1",
+      "composite_score": 0.645
+    },
+    {
+      "smiles": "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCCN1CCOCC1",
+      "provider": "deepseek",
+      "model": "deepseek-chat",
+      "rationale": "Designed analogs by hybridizing key pharmacophores from erlotinib, gefitinib, and afatinib while introducing diverse scaffolds and substituents to optimize hinge binding and drug-like properties.",
+      "validate": {
+        "valid": true,
+        "smiles": "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCCN1CCOCC1",
+        "mw": 446.91,
+        "logp": 4.28,
+        "hbd": 1,
+        "hba": 7,
+        "rotatable_bonds": 8,
+        "tpsa": 68.74,
+        "rings": 4,
+        "lipinski_pass": true,
+        "sa_score": 2.337357549756243
+      },
+      "admet": {
+        "valid": true,
+        "smiles": "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCCN1CCOCC1",
+        "absorption": 1.0,
+        "bioavailability": 1.0,
+        "herg_risk": 1.0,
+        "qed": 0.518,
+        "tpsa": 68.74,
+        "rotatable_bonds": 8,
+        "summary_score": 0.704,
+        "warnings": [
+          "hERG 椋庨櫓鍋忛珮"
+        ]
+      },
+      "dock": {
+        "smiles": "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCCN1CCOCC1",
+        "score": -3.003,
+        "valid": true,
+        "error": null
+      },
+      "scaffold": "c1ccc(Nc2ncnc3ccc(OCCCN4CCOCC4)cc23)cc1",
+      "composite_score": 0.627
+    }
+  ],
+  "summary": {
+    "n_total": 5,
+    "n_valid": 5,
+    "valid_ratio": 1.0,
+    "n_docked": 5,
+    "n_unique_scaffolds": 4,
+    "avg_admet": 0.777,
+    "best_vina": -3.003,
+    "top_candidates": [
+      {
+        "smiles": "COc1cc2ncnc(Nc3ccc(C#C)cc3)c2cc1OCCN1CCOCC1",
+        "score": 0.712
+      },
+      {
+        "smiles": "C#Cc1ccc(Nc2ncnc3cc(OCCCN4CCOCC4)c(OC)cc23)cc1",
+        "score": 0.645
+      },
+      {
+        "smiles": "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCCN1CCOCC1",
+        "score": 0.627
+      }
+    ],
+    "round": 0
+  },
+  "judgment": {
+    "focus": "Continue exploring quinazoline cores with diverse substituents; aim for MW 350-450.",
+    "best_index": 0,
+    "reasoning": "Fallback focus used (judge unavailable).",
+    "summary": {
+      "error": "KeyError: 'Unknown provider: judge_MiniMax. Available: []'"
+    }
+  }
+}

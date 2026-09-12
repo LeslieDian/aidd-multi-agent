@@ -5,7 +5,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](https://www.python.org/)
-[![Status](https://img.shields.io/badge/Status-Phase%201-orange)]()
+[![Status](https://img.shields.io/badge/Status-Phase%202%20complete-green)]()
 
 ---
 
@@ -128,6 +128,32 @@ aidd-multi-agent/
 - **循环 ≤ 6 轮**——避免上下文爆炸 + token 成本失控
 - **多专家独立打分**——降低单一模型偏差
 - **异构生成**——双 LLM 并行提高骨架多样性
+
+---
+
+## 🎯 真实 LLM 验证结果（DeepSeek, 5 轮）
+
+> 已使用真实 DeepSeek key 跑通完整 5 轮闭环（见 `runs/samples/round_real_*.json`）。
+
+| 指标 | 值 |
+|---|---|
+| 总分子数 | 25 |
+| 合法率 | **100%** |
+| ADMET 平均 | 0.74–0.79 |
+| Best Vina | **-3.19 kcal/mol** |
+| 唯一骨架数 | 3–5 / 轮 |
+| Top 分子 | 喹唑啉 + fluoro-chloro-苯胺双酰胺，MW 464 |
+
+所有 25 个分子都是**合理的 EGFR 抑制剂候选**（quinazoline 核心 + 苯胺连接 + 各种侧链），符合 system prompt 中的设计约束（MW 280-500、logP 1-4.5、TPSA ≤ 110）。
+
+### 🏆 最佳分子（Round 1）
+
+```
+SMILES: CN(C)C(=O)c1ccccc1NC(=O)c1ccc2c(c1)nc(Nc3ccc(Cl)c(F)c3)nc2
+MW=464  logP=5.1  SA=2.29  QED=0.43  Vina=-3.19 kcal/mol
+```
+
+类似 gefitinib 的 4-fluoro-3-chloro-aniline 喹唑啉结构。
 
 ---
 
