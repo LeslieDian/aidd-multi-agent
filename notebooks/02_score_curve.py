@@ -1,17 +1,22 @@
 """02_score_curve.py - Average score (ADMET + Vina) vs round.
 
-Input: runs/round_*.json
+Input: runs/round_*.json (or pass --runs-dir)
 Output: docs/figures/02_score_curve.png
 
 Goal: show that molecules improve on both ADMET and docking across iterations.
 """
+import argparse
 import json
+import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 
 
 def load_runs(runs_dir: str = "runs") -> list[dict]:
+    p = Path(runs_dir)
+    if not p.exists():
+        return []
     return [json.loads(f.read_text(encoding="utf-8")) for f in
             sorted(Path(runs_dir).glob("round_*.json"))]
 
@@ -59,15 +64,20 @@ def plot(rounds, admet_scores, vina_scores,
 
 
 def main():
-    runs = load_runs()
+    p = argparse.ArgumentParser()
+    p.add_argument("--runs-dir", default="runs")
+    p.add_argument("--out", default="docs/figures/02_score_curve.png")
+    args = p.parse_args()
+
+    runs = load_runs(args.runs_dir)
     if not runs:
-        print("[!] No runs/ data yet. Demo plot with synthetic data:")
+        print(f"[!] No data in {args.runs_dir}/. Demo plot with synthetic data:")
         rounds = [0, 1, 2, 3, 4]
         admet = [0.55, 0.62, 0.71, 0.78, 0.84]
         vina = [-6.2, -6.8, -7.4, -8.1, -8.7]
     else:
         rounds, admet, vina = compute_score_curve(runs)
-    plot(rounds, admet, vina)
+    plot(rounds, admet, vina, args.out)
 
 
 if __name__ == "__main__":

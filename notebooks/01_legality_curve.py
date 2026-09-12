@@ -1,10 +1,11 @@
 """01_legality_curve.py - Legality ratio vs round.
 
-Input: runs/round_*.json
+Input: runs/round_*.json (or pass --runs-dir)
 Output: docs/figures/01_legality_curve.png
 
 Goal: show that legality improves over iterations.
 """
+import argparse
 import json
 from pathlib import Path
 
@@ -14,6 +15,8 @@ import matplotlib.pyplot as plt
 def load_runs(runs_dir: str = "runs") -> list[dict]:
     """Load all round_*.json files, sorted by round number."""
     runs_path = Path(runs_dir)
+    if not runs_path.exists():
+        return []
     files = sorted(runs_path.glob("round_*.json"))
     runs = []
     for f in files:
@@ -22,7 +25,7 @@ def load_runs(runs_dir: str = "runs") -> list[dict]:
     return runs
 
 
-def compute_legality_curve(runs: list[dict]) -> tuple[list[int], list[float]]:
+def compute_legality_curve(runs):
     """Compute valid ratio per round."""
     rounds = []
     ratios = []
@@ -51,15 +54,20 @@ def plot(rounds, ratios, out_path="docs/figures/01_legality_curve.png"):
 
 
 def main():
-    runs = load_runs()
+    p = argparse.ArgumentParser()
+    p.add_argument("--runs-dir", default="runs")
+    p.add_argument("--out", default="docs/figures/01_legality_curve.png")
+    args = p.parse_args()
+
+    runs = load_runs(args.runs_dir)
     if not runs:
-        print("[!] No runs/ data yet. Run Phase 2 first: python loop.py")
+        print(f"[!] No data in {args.runs_dir}/. Run Phase 2 first: python loop.py")
         print("    Generating demo plot with synthetic data...")
         rounds = [0, 1, 2, 3, 4]
         ratios = [0.6, 0.7, 0.8, 0.85, 0.9]
     else:
         rounds, ratios = compute_legality_curve(runs)
-    plot(rounds, ratios)
+    plot(rounds, ratios, args.out)
 
 
 if __name__ == "__main__":

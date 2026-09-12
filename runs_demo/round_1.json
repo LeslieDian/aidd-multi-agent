@@ -1,0 +1,458 @@
+{
+  "round": 1,
+  "timestamp": "2026-09-12T18:24:40",
+  "target": "EGFR",
+  "focus": "Continue exploring quinazoline cores with diverse substituents; aim for MW 350-450.",
+  "generator_outputs": [
+    {
+      "model": "deepseek-chat",
+      "provider": "deepseek",
+      "smiles_list": [
+        "CC(=O)Oc1ccccc1C(=O)O",
+        "CC(C)Cc1ccc(C(C)C(=O)O)cc1",
+        "Cn1cnc2c1c(=O)n(C)c(=O)n2C",
+        "OC(=O)C1CCCCC1",
+        "CCO"
+      ],
+      "rationale": "Mock: 5 stable drug-like molecules.",
+      "raw_length": 179
+    },
+    {
+      "model": "MiniMax-M3",
+      "provider": "MiniMax",
+      "smiles_list": [
+        "CC(=O)Oc1ccccc1C(=O)O",
+        "CC(C)Cc1ccc(C(C)C(=O)O)cc1",
+        "Cn1cnc2c1c(=O)n(C)c(=O)n2C",
+        "OC(=O)C1CCCCC1",
+        "CCO"
+      ],
+      "rationale": "Mock: 5 stable drug-like molecules.",
+      "raw_length": 179
+    }
+  ],
+  "candidates": [
+    {
+      "smiles": "CC(=O)Oc1ccccc1C(=O)O",
+      "provider": "deepseek",
+      "model": "deepseek-chat",
+      "rationale": "Mock: 5 stable drug-like molecules.",
+      "validate": {
+        "valid": true,
+        "smiles": "CC(=O)Oc1ccccc1C(=O)O",
+        "mw": 180.16,
+        "logp": 1.31,
+        "hbd": 1,
+        "hba": 3,
+        "rotatable_bonds": 2,
+        "tpsa": 63.6,
+        "rings": 1,
+        "lipinski_pass": true,
+        "sa_score": 1.580039750008826
+      },
+      "admet": {
+        "valid": true,
+        "smiles": "CC(=O)Oc1ccccc1C(=O)O",
+        "absorption": 1.0,
+        "bioavailability": 1.0,
+        "herg_risk": 0.0,
+        "qed": 0.55,
+        "tpsa": 63.6,
+        "rotatable_bonds": 2,
+        "summary_score": 0.91,
+        "warnings": []
+      },
+      "dock": {
+        "smiles": "CC(=O)Oc1ccccc1C(=O)O",
+        "score": -0.5458,
+        "valid": true,
+        "error": null
+      },
+      "scaffold": "c1ccccc1",
+      "composite_score": 0.655
+    },
+    {
+      "smiles": "CC(C)Cc1ccc(C(C)C(=O)O)cc1",
+      "provider": "deepseek",
+      "model": "deepseek-chat",
+      "rationale": "Mock: 5 stable drug-like molecules.",
+      "validate": {
+        "valid": true,
+        "smiles": "CC(C)Cc1ccc(C(C)C(=O)O)cc1",
+        "mw": 206.28,
+        "logp": 3.07,
+        "hbd": 1,
+        "hba": 1,
+        "rotatable_bonds": 4,
+        "tpsa": 37.3,
+        "rings": 1,
+        "lipinski_pass": true,
+        "sa_score": 2.1917554204925054
+      },
+      "admet": {
+        "valid": true,
+        "smiles": "CC(C)Cc1ccc(C(C)C(=O)O)cc1",
+        "absorption": 1.0,
+        "bioavailability": 1.0,
+        "herg_risk": 0.0,
+        "qed": 0.822,
+        "tpsa": 37.3,
+        "rotatable_bonds": 4,
+        "summary_score": 0.964,
+        "warnings": []
+      },
+      "dock": {
+        "smiles": "CC(C)Cc1ccc(C(C)C(=O)O)cc1",
+        "score": -0.4127,
+        "valid": true,
+        "error": null
+      },
+      "scaffold": "c1ccccc1",
+      "composite_score": 0.662
+    },
+    {
+      "smiles": "Cn1cnc2c1c(=O)n(C)c(=O)n2C",
+      "provider": "deepseek",
+      "model": "deepseek-chat",
+      "rationale": "Mock: 5 stable drug-like molecules.",
+      "validate": {
+        "valid": true,
+        "smiles": "Cn1c(=O)c2c(ncn2C)n(C)c1=O",
+        "mw": 194.19,
+        "logp": -1.03,
+        "hbd": 0,
+        "hba": 3,
+        "rotatable_bonds": 0,
+        "tpsa": 61.82,
+        "rings": 2,
+        "lipinski_pass": true,
+        "sa_score": 2.29798245679401
+      },
+      "admet": {
+        "valid": true,
+        "smiles": "Cn1c(=O)c2c(ncn2C)n(C)c1=O",
+        "absorption": 1.0,
+        "bioavailability": 1.0,
+        "herg_risk": 0.0,
+        "qed": 0.538,
+        "tpsa": 61.82,
+        "rotatable_bonds": 0,
+        "summary_score": 0.908,
+        "warnings": []
+      },
+      "dock": {
+        "smiles": "Cn1cnc2c1c(=O)n(C)c(=O)n2C",
+        "score": -0.4854,
+        "valid": true,
+        "error": null
+      },
+      "scaffold": "O=c1[nH]c(=O)c2[nH]cnc2[nH]1",
+      "composite_score": 0.638
+    },
+    {
+      "smiles": "OC(=O)C1CCCCC1",
+      "provider": "deepseek",
+      "model": "deepseek-chat",
+      "rationale": "Mock: 5 stable drug-like molecules.",
+      "validate": {
+        "valid": true,
+        "smiles": "O=C(O)C1CCCCC1",
+        "mw": 128.17,
+        "logp": 1.65,
+        "hbd": 1,
+        "hba": 1,
+        "rotatable_bonds": 1,
+        "tpsa": 37.3,
+        "rings": 1,
+        "lipinski_pass": true,
+        "sa_score": 1.614844622610173
+      },
+      "admet": {
+        "valid": true,
+        "smiles": "O=C(O)C1CCCCC1",
+        "absorption": 1.0,
+        "bioavailability": 1.0,
+        "herg_risk": 0.0,
+        "qed": 0.583,
+        "tpsa": 37.3,
+        "rotatable_bonds": 1,
+        "summary_score": 0.917,
+        "warnings": []
+      },
+      "dock": {
+        "smiles": "OC(=O)C1CCCCC1",
+        "score": -0.6365,
+        "valid": true,
+        "error": null
+      },
+      "scaffold": "C1CCCCC1",
+      "composite_score": 0.658
+    },
+    {
+      "smiles": "CCO",
+      "provider": "deepseek",
+      "model": "deepseek-chat",
+      "rationale": "Mock: 5 stable drug-like molecules.",
+      "validate": {
+        "valid": true,
+        "smiles": "CCO",
+        "mw": 46.07,
+        "logp": -0.0,
+        "hbd": 1,
+        "hba": 1,
+        "rotatable_bonds": 0,
+        "tpsa": 20.23,
+        "rings": 0,
+        "lipinski_pass": true,
+        "sa_score": 1.9802570386349831
+      },
+      "admet": {
+        "valid": true,
+        "smiles": "CCO",
+        "absorption": 1.0,
+        "bioavailability": 1.0,
+        "herg_risk": 0.0,
+        "qed": 0.407,
+        "tpsa": 20.23,
+        "rotatable_bonds": 0,
+        "summary_score": 0.881,
+        "warnings": []
+      },
+      "dock": {
+        "smiles": "CCO",
+        "score": -0.414,
+        "valid": true,
+        "error": null
+      },
+      "scaffold": "",
+      "composite_score": 0.634
+    },
+    {
+      "smiles": "CC(=O)Oc1ccccc1C(=O)O",
+      "provider": "MiniMax",
+      "model": "MiniMax-M3",
+      "rationale": "Mock: 5 stable drug-like molecules.",
+      "validate": {
+        "valid": true,
+        "smiles": "CC(=O)Oc1ccccc1C(=O)O",
+        "mw": 180.16,
+        "logp": 1.31,
+        "hbd": 1,
+        "hba": 3,
+        "rotatable_bonds": 2,
+        "tpsa": 63.6,
+        "rings": 1,
+        "lipinski_pass": true,
+        "sa_score": 1.580039750008826
+      },
+      "admet": {
+        "valid": true,
+        "smiles": "CC(=O)Oc1ccccc1C(=O)O",
+        "absorption": 1.0,
+        "bioavailability": 1.0,
+        "herg_risk": 0.0,
+        "qed": 0.55,
+        "tpsa": 63.6,
+        "rotatable_bonds": 2,
+        "summary_score": 0.91,
+        "warnings": []
+      },
+      "dock": {
+        "smiles": "CC(=O)Oc1ccccc1C(=O)O",
+        "score": -0.8368,
+        "valid": true,
+        "error": null
+      },
+      "scaffold": "c1ccccc1",
+      "composite_score": 0.657
+    },
+    {
+      "smiles": "CC(C)Cc1ccc(C(C)C(=O)O)cc1",
+      "provider": "MiniMax",
+      "model": "MiniMax-M3",
+      "rationale": "Mock: 5 stable drug-like molecules.",
+      "validate": {
+        "valid": true,
+        "smiles": "CC(C)Cc1ccc(C(C)C(=O)O)cc1",
+        "mw": 206.28,
+        "logp": 3.07,
+        "hbd": 1,
+        "hba": 1,
+        "rotatable_bonds": 4,
+        "tpsa": 37.3,
+        "rings": 1,
+        "lipinski_pass": true,
+        "sa_score": 2.1917554204925054
+      },
+      "admet": {
+        "valid": true,
+        "smiles": "CC(C)Cc1ccc(C(C)C(=O)O)cc1",
+        "absorption": 1.0,
+        "bioavailability": 1.0,
+        "herg_risk": 0.0,
+        "qed": 0.822,
+        "tpsa": 37.3,
+        "rotatable_bonds": 4,
+        "summary_score": 0.964,
+        "warnings": []
+      },
+      "dock": {
+        "smiles": "CC(C)Cc1ccc(C(C)C(=O)O)cc1",
+        "score": -0.4803,
+        "valid": true,
+        "error": null
+      },
+      "scaffold": "c1ccccc1",
+      "composite_score": 0.663
+    },
+    {
+      "smiles": "Cn1cnc2c1c(=O)n(C)c(=O)n2C",
+      "provider": "MiniMax",
+      "model": "MiniMax-M3",
+      "rationale": "Mock: 5 stable drug-like molecules.",
+      "validate": {
+        "valid": true,
+        "smiles": "Cn1c(=O)c2c(ncn2C)n(C)c1=O",
+        "mw": 194.19,
+        "logp": -1.03,
+        "hbd": 0,
+        "hba": 3,
+        "rotatable_bonds": 0,
+        "tpsa": 61.82,
+        "rings": 2,
+        "lipinski_pass": true,
+        "sa_score": 2.29798245679401
+      },
+      "admet": {
+        "valid": true,
+        "smiles": "Cn1c(=O)c2c(ncn2C)n(C)c1=O",
+        "absorption": 1.0,
+        "bioavailability": 1.0,
+        "herg_risk": 0.0,
+        "qed": 0.538,
+        "tpsa": 61.82,
+        "rotatable_bonds": 0,
+        "summary_score": 0.908,
+        "warnings": []
+      },
+      "dock": {
+        "smiles": "Cn1cnc2c1c(=O)n(C)c(=O)n2C",
+        "score": -0.4253,
+        "valid": true,
+        "error": null
+      },
+      "scaffold": "O=c1[nH]c(=O)c2[nH]cnc2[nH]1",
+      "composite_score": 0.638
+    },
+    {
+      "smiles": "OC(=O)C1CCCCC1",
+      "provider": "MiniMax",
+      "model": "MiniMax-M3",
+      "rationale": "Mock: 5 stable drug-like molecules.",
+      "validate": {
+        "valid": true,
+        "smiles": "O=C(O)C1CCCCC1",
+        "mw": 128.17,
+        "logp": 1.65,
+        "hbd": 1,
+        "hba": 1,
+        "rotatable_bonds": 1,
+        "tpsa": 37.3,
+        "rings": 1,
+        "lipinski_pass": true,
+        "sa_score": 1.614844622610173
+      },
+      "admet": {
+        "valid": true,
+        "smiles": "O=C(O)C1CCCCC1",
+        "absorption": 1.0,
+        "bioavailability": 1.0,
+        "herg_risk": 0.0,
+        "qed": 0.583,
+        "tpsa": 37.3,
+        "rotatable_bonds": 1,
+        "summary_score": 0.917,
+        "warnings": []
+      },
+      "dock": {
+        "smiles": "OC(=O)C1CCCCC1",
+        "score": -0.6369,
+        "valid": true,
+        "error": null
+      },
+      "scaffold": "C1CCCCC1",
+      "composite_score": 0.658
+    },
+    {
+      "smiles": "CCO",
+      "provider": "MiniMax",
+      "model": "MiniMax-M3",
+      "rationale": "Mock: 5 stable drug-like molecules.",
+      "validate": {
+        "valid": true,
+        "smiles": "CCO",
+        "mw": 46.07,
+        "logp": -0.0,
+        "hbd": 1,
+        "hba": 1,
+        "rotatable_bonds": 0,
+        "tpsa": 20.23,
+        "rings": 0,
+        "lipinski_pass": true,
+        "sa_score": 1.9802570386349831
+      },
+      "admet": {
+        "valid": true,
+        "smiles": "CCO",
+        "absorption": 1.0,
+        "bioavailability": 1.0,
+        "herg_risk": 0.0,
+        "qed": 0.407,
+        "tpsa": 20.23,
+        "rotatable_bonds": 0,
+        "summary_score": 0.881,
+        "warnings": []
+      },
+      "dock": {
+        "smiles": "CCO",
+        "score": -0.4448,
+        "valid": true,
+        "error": null
+      },
+      "scaffold": "",
+      "composite_score": 0.634
+    }
+  ],
+  "summary": {
+    "n_total": 10,
+    "n_valid": 10,
+    "valid_ratio": 1.0,
+    "n_docked": 10,
+    "n_unique_scaffolds": 3,
+    "avg_admet": 0.916,
+    "best_vina": -0.8368,
+    "top_candidates": [
+      {
+        "smiles": "CC(C)Cc1ccc(C(C)C(=O)O)cc1",
+        "score": 0.663
+      },
+      {
+        "smiles": "CC(C)Cc1ccc(C(C)C(=O)O)cc1",
+        "score": 0.662
+      },
+      {
+        "smiles": "OC(=O)C1CCCCC1",
+        "score": 0.658
+      }
+    ],
+    "round": 1
+  },
+  "judgment": {
+    "focus": "Continue exploring quinazoline cores with diverse substituents; aim for MW 350-450.",
+    "best_index": 0,
+    "reasoning": "Fallback focus used (judge unavailable).",
+    "summary": {
+      "error": "KeyError: 'Unknown provider: judge_MiniMax. Available: []'"
+    }
+  }
+}

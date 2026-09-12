@@ -1,0 +1,79 @@
+{
+  "target": "EGFR",
+  "rounds_completed": 3,
+  "history": [
+    {
+      "n_total": 10,
+      "n_valid": 10,
+      "valid_ratio": 1.0,
+      "n_docked": 10,
+      "n_unique_scaffolds": 3,
+      "avg_admet": 0.916,
+      "best_vina": -0.7365,
+      "top_candidates": [
+        {
+          "smiles": "CC(C)Cc1ccc(C(C)C(=O)O)cc1",
+          "score": 0.663
+        },
+        {
+          "smiles": "CC(C)Cc1ccc(C(C)C(=O)O)cc1",
+          "score": 0.662
+        },
+        {
+          "smiles": "OC(=O)C1CCCCC1",
+          "score": 0.659
+        }
+      ],
+      "round": 0
+    },
+    {
+      "n_total": 10,
+      "n_valid": 10,
+      "valid_ratio": 1.0,
+      "n_docked": 10,
+      "n_unique_scaffolds": 3,
+      "avg_admet": 0.916,
+      "best_vina": -0.8368,
+      "top_candidates": [
+        {
+          "smiles": "CC(C)Cc1ccc(C(C)C(=O)O)cc1",
+          "score": 0.663
+        },
+        {
+          "smiles": "CC(C)Cc1ccc(C(C)C(=O)O)cc1",
+          "score": 0.662
+        },
+        {
+          "smiles": "OC(=O)C1CCCCC1",
+          "score": 0.658
+        }
+      ],
+      "round": 1
+    },
+    {
+      "n_total": 10,
+      "n_valid": 10,
+      "valid_ratio": 1.0,
+      "n_docked": 10,
+      "n_unique_scaffolds": 3,
+      "avg_admet": 0.916,
+      "best_vina": -0.7023,
+      "top_candidates": [
+        {
+          "smiles": "CC(C)Cc1ccc(C(C)C(=O)O)cc1",
+          "score": 0.663
+        },
+        {
+          "smiles": "CC(C)Cc1ccc(C(C)C(=O)O)cc1",
+          "score": 0.663
+        },
+        {
+          "smiles": "OC(=O)C1CCCCC1",
+          "score": 0.658
+        }
+      ],
+      "round": 2
+    }
+  ],
+  "final_focus": "Continue exploring quinazoline cores with diverse substituents; aim for MW 350-450."
+}

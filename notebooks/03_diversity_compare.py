@@ -1,17 +1,22 @@
 """03_diversity_compare.py - Compare scaffold diversity across generator models.
 
-Input: runs/round_*.json (each candidate tagged with model A1/A2)
+Input: runs/round_*.json (or pass --runs-dir)
 Output: docs/figures/03_diversity_compare.png
 
 Goal: show that heterogeneous models generate structurally diverse molecules.
 """
+import argparse
 import json
+import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 
 
 def load_runs(runs_dir: str = "runs") -> list[dict]:
+    p = Path(runs_dir)
+    if not p.exists():
+        return []
     return [json.loads(f.read_text(encoding="utf-8")) for f in
             sorted(Path(runs_dir).glob("round_*.json"))]
 
@@ -66,16 +71,21 @@ def plot(by_model, out_path="docs/figures/03_diversity_compare.png"):
 
 
 def main():
-    runs = load_runs()
+    p = argparse.ArgumentParser()
+    p.add_argument("--runs-dir", default="runs")
+    p.add_argument("--out", default="docs/figures/03_diversity_compare.png")
+    args = p.parse_args()
+
+    runs = load_runs(args.runs_dir)
     if not runs:
-        print("[!] No runs/ data yet. Demo plot with synthetic data:")
+        print(f"[!] No data in {args.runs_dir}/. Demo plot with synthetic data:")
         by_model = {
             "A1 (DeepSeek)": ["CCO", "CC(=O)O", "c1ccccc1"],
             "A2 (Qwen)":     ["CCN(CC)CC", "C1CCCCC1", "c1ccc2ccccc2c1"],
         }
     else:
         by_model = collect_by_model(runs)
-    plot(by_model)
+    plot(by_model, args.out)
 
 
 if __name__ == "__main__":
