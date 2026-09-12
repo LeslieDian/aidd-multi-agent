@@ -1,6 +1,6 @@
 {
   "round": 1,
-  "timestamp": "2026-09-12T18:24:40",
+  "timestamp": "2026-09-12T18:53:02",
   "target": "EGFR",
   "focus": "Continue exploring quinazoline cores with diverse substituents; aim for MW 350-450.",
   "generator_outputs": [
@@ -64,12 +64,12 @@
       },
       "dock": {
         "smiles": "CC(=O)Oc1ccccc1C(=O)O",
-        "score": -0.5458,
+        "score": -2.137,
         "valid": true,
         "error": null
       },
       "scaffold": "c1ccccc1",
-      "composite_score": 0.655
+      "composite_score": 0.667
     },
     {
       "smiles": "CC(C)Cc1ccc(C(C)C(=O)O)cc1",
@@ -103,12 +103,12 @@
       },
       "dock": {
         "smiles": "CC(C)Cc1ccc(C(C)C(=O)O)cc1",
-        "score": -0.4127,
+        "score": -2.622,
         "valid": true,
         "error": null
       },
       "scaffold": "c1ccccc1",
-      "composite_score": 0.662
+      "composite_score": 0.679
     },
     {
       "smiles": "Cn1cnc2c1c(=O)n(C)c(=O)n2C",
@@ -142,12 +142,12 @@
       },
       "dock": {
         "smiles": "Cn1cnc2c1c(=O)n(C)c(=O)n2C",
-        "score": -0.4854,
+        "score": -1.875,
         "valid": true,
         "error": null
       },
       "scaffold": "O=c1[nH]c(=O)c2[nH]cnc2[nH]1",
-      "composite_score": 0.638
+      "composite_score": 0.648
     },
     {
       "smiles": "OC(=O)C1CCCCC1",
@@ -181,12 +181,12 @@
       },
       "dock": {
         "smiles": "OC(=O)C1CCCCC1",
-        "score": -0.6365,
+        "score": -2.028,
         "valid": true,
         "error": null
       },
       "scaffold": "C1CCCCC1",
-      "composite_score": 0.658
+      "composite_score": 0.668
     },
     {
       "smiles": "CCO",
@@ -220,12 +220,12 @@
       },
       "dock": {
         "smiles": "CCO",
-        "score": -0.414,
+        "score": -1.135,
         "valid": true,
         "error": null
       },
       "scaffold": "",
-      "composite_score": 0.634
+      "composite_score": 0.639
     },
     {
       "smiles": "CC(=O)Oc1ccccc1C(=O)O",
@@ -259,12 +259,12 @@
       },
       "dock": {
         "smiles": "CC(=O)Oc1ccccc1C(=O)O",
-        "score": -0.8368,
+        "score": -2.164,
         "valid": true,
         "error": null
       },
       "scaffold": "c1ccccc1",
-      "composite_score": 0.657
+      "composite_score": 0.667
     },
     {
       "smiles": "CC(C)Cc1ccc(C(C)C(=O)O)cc1",
@@ -298,12 +298,12 @@
       },
       "dock": {
         "smiles": "CC(C)Cc1ccc(C(C)C(=O)O)cc1",
-        "score": -0.4803,
+        "score": -2.821,
         "valid": true,
         "error": null
       },
       "scaffold": "c1ccccc1",
-      "composite_score": 0.663
+      "composite_score": 0.68
     },
     {
       "smiles": "Cn1cnc2c1c(=O)n(C)c(=O)n2C",
@@ -337,12 +337,12 @@
       },
       "dock": {
         "smiles": "Cn1cnc2c1c(=O)n(C)c(=O)n2C",
-        "score": -0.4253,
+        "score": -1.884,
         "valid": true,
         "error": null
       },
       "scaffold": "O=c1[nH]c(=O)c2[nH]cnc2[nH]1",
-      "composite_score": 0.638
+      "composite_score": 0.648
     },
     {
       "smiles": "OC(=O)C1CCCCC1",
@@ -376,12 +376,12 @@
       },
       "dock": {
         "smiles": "OC(=O)C1CCCCC1",
-        "score": -0.6369,
+        "score": -1.836,
         "valid": true,
         "error": null
       },
       "scaffold": "C1CCCCC1",
-      "composite_score": 0.658
+      "composite_score": 0.667
     },
     {
       "smiles": "CCO",
@@ -415,12 +415,12 @@
       },
       "dock": {
         "smiles": "CCO",
-        "score": -0.4448,
+        "score": -1.097,
         "valid": true,
         "error": null
       },
       "scaffold": "",
-      "composite_score": 0.634
+      "composite_score": 0.639
     }
   ],
   "summary": {
@@ -430,19 +430,19 @@
     "n_docked": 10,
     "n_unique_scaffolds": 3,
     "avg_admet": 0.916,
-    "best_vina": -0.8368,
+    "best_vina": -2.821,
     "top_candidates": [
       {
         "smiles": "CC(C)Cc1ccc(C(C)C(=O)O)cc1",
-        "score": 0.663
+        "score": 0.68
       },
       {
         "smiles": "CC(C)Cc1ccc(C(C)C(=O)O)cc1",
-        "score": 0.662
+        "score": 0.679
       },
       {
         "smiles": "OC(=O)C1CCCCC1",
-        "score": 0.658
+        "score": 0.668
       }
     ],
     "round": 1

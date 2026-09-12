@@ -88,7 +88,8 @@ def test_dock_score():
     results = dock_batch(
         ["CCO"],
         receptor_pdb="data/1M17.pdbqt",
-        pocket_center=(11.0, 17.0, 28.0),
+        pocket_center=(22.014, 0.253, 52.794),
+        pocket_size=(27.7, 16.7, 19.1),
         exhaustiveness=4,
     )
     assert results[0]["valid"], f"docking failed: {results[0]['error']}"
