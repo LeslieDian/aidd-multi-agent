@@ -1,3 +1,64 @@
+# ============================================================
+# AIDD Multi-Agent 项目专用忽略规则
+# ============================================================
+
+# API 密钥与本地配置（绝对不能入库）
+.env
+.env.local
+config.local.yaml
+*.key
+*.secret
+
+# 分子结构文件（体积大、可由 PDB/PubChem 重新生成）
+*.pdb
+*.pdbqt
+*.sdf
+*.mol
+*.mol2
+*.xyz
+
+# 运行输出（每轮 JSON、体积会膨胀，只保留样例）
+runs/*.json
+runs/*.csv
+!runs/.gitkeep
+!runs/samples/*.json
+
+# 原始数据 / 缓存
+data/raw/
+data/cache/
+data/docking/
+data/conformers/
+*.sdf.gz
+
+# Vina / Meeko 临时文件
+*.dlg
+vina_out/
+meeko_cache/
+
+# 训练 / 检查点（未来扩展）
+checkpoints/
+*.ckpt
+*.pt
+*.pth
+
+# IDE / 编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# 日志
+*.log
+logs/
+
+# Notebooks checkpoint
+.ipynb_checkpoints/
+
+# ============================================================
+# 以下为 Python 通用模板（保留 GitHub 默认）
+# ============================================================
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
