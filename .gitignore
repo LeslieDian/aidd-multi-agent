@@ -22,6 +22,7 @@ runs/*.json
 runs/*.csv
 runs_real/
 runs_demo/
+runs_phase3/
 !runs/.gitkeep
 !runs/samples/*.json
 
