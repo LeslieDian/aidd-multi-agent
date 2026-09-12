@@ -73,6 +73,7 @@ def run_loop(
     rounds_log = []
     summary_history = []
     focus = ""
+    weakness = ""
 
     for round_num in range(max_rounds):
         if verbose:
@@ -86,6 +87,7 @@ def run_loop(
             providers=provider_names,
             n_per_provider=n_per_provider,
             focus=focus,
+            weakness=weakness,
             use_mock=use_mock,
         )
         candidates = flatten_generator_results(gen_results)
@@ -120,10 +122,28 @@ def run_loop(
         # ----- Agent C: judge -----
         if verbose:
             print(f"  [C] judging round...")
-        judgment = judge_round(enriched, llm_cfg, round_num, use_mock=use_mock)
+        judgment = judge_round(enriched, config, round_num, use_mock=use_mock)
         focus = judgment["focus"]
+        weakness = judgment.get("weakness", "")
         if verbose:
+            print(f"  [C] weakness: {weakness[:80]}")
             print(f"  [C] next focus: {focus[:120]}")
+
+        # ----- Per-provider diversity (heterogeneous generation evidence) -----
+        per_provider = _per_provider_stats(enriched)
+        summary["per_provider"] = per_provider
+        if verbose and per_provider:
+            for prov, st in per_provider.items():
+                if prov == "__overlap__":
+                    continue
+                print(f"  [D] {prov}: {st['count']} mols, "
+                      f"{st['n_unique_scaffolds']} unique scaffolds, "
+                      f"best_Vina={st['best_vina']}")
+            if "__overlap__" in per_provider:
+                ov = per_provider["__overlap__"]
+                print(f"  [D] scaffold overlap ({ov['providers'][0]} vs "
+                      f"{ov['providers'][1]}): {ov['overlap_ratio']} "
+                      f"({ov['intersection']}/{ov['union']})")
 
         # ----- Save round JSON -----
         round_record = {
@@ -166,6 +186,42 @@ def run_loop(
         encoding="utf-8",
     )
     return overall
+
+
+def _per_provider_stats(enriched: list[dict]) -> dict:
+    """Per-provider summary: count, unique scaffolds, best Vina, scaffold overlap."""
+    from collections import defaultdict
+    by_prov: dict[str, list[dict]] = defaultdict(list)
+    for c in enriched:
+        if c["validate"].get("valid"):
+            by_prov[c.get("provider", "?")].append(c)
+    stats = {}
+    for prov, cs in by_prov.items():
+        scafs = {c["scaffold"] for c in cs if c.get("scaffold")}
+        vina_scores = [c["dock"]["score"] for c in cs
+                       if c["dock"].get("score") is not None]
+        stats[prov] = {
+            "count": len(cs),
+            "n_unique_scaffolds": len(scafs),
+            "best_vina": min(vina_scores) if vina_scores else None,
+            "avg_composite": round(
+                sum(c["composite_score"] for c in cs) / max(len(cs), 1), 3),
+        }
+    # Pairwise scaffold overlap (Tanimoto of scaffold sets)
+    providers = list(by_prov.keys())
+    if len(providers) >= 2:
+        a_scafs = {c["scaffold"] for c in by_prov[providers[0]] if c.get("scaffold")}
+        b_scafs = {c["scaffold"] for c in by_prov[providers[1]] if c.get("scaffold")}
+        if a_scafs or b_scafs:
+            inter = len(a_scafs & b_scafs)
+            union = len(a_scafs | b_scafs) or 1
+            stats["__overlap__"] = {
+                "providers": providers,
+                "intersection": inter,
+                "union": len(a_scafs | b_scafs),
+                "overlap_ratio": round(inter / union, 3),
+            }
+    return stats
 
 
 def main():

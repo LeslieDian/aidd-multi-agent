@@ -75,7 +75,7 @@ llm:
   # Note: MiniMax currently returns 401 (key issue); using deepseek-only until fixed.
   generators:
     - deepseek
-    # - MiniMax  # temporarily disabled (401 auth error)
+    - MiniMax
 
 # ----------------------------------------------------------
 # Scoring thresholds

@@ -78,6 +78,7 @@ def generate_with_provider(
     config: dict,
     n: int = 5,
     focus: str = "",
+    weakness: str = "",
     use_mock: bool = False,
 ) -> dict:
     """Call one LLM provider once, return parsed JSON.
@@ -89,7 +90,13 @@ def generate_with_provider(
 
     client = get_client(provider_name, config, mock=use_mock)
     focus_section = f"Focus this round on: {focus}" if focus else ""
-    user = USER_PROMPT_TEMPLATE.replace("__N__", str(n)).replace("__FOCUS__", focus_section)
+    weakness_section = f"Address this structural weakness: {weakness}" if weakness else ""
+    user = (
+        USER_PROMPT_TEMPLATE
+        .replace("__N__", str(n))
+        .replace("__FOCUS__", focus_section)
+        .replace("__WEAKNESS__", weakness_section)
+    )
     system = SYSTEM_PROMPT.replace("__N__", str(n))
 
     raw = client.chat(system=system, user=user, json_mode=True)
@@ -115,6 +122,7 @@ def generate_candidates(
     providers: Iterable[str] | None = None,
     n_per_provider: int = 5,
     focus: str = "",
+    weakness: str = "",
     use_mock: bool = False,
     max_workers: int = 4,
 ) -> list[dict]:
@@ -132,7 +140,7 @@ def generate_candidates(
         futures = {
             ex.submit(
                 generate_with_provider,
-                p, config, n_per_provider, focus, use_mock,
+                p, config, n_per_provider, focus, weakness, use_mock,
             ): p
             for p in providers
         }

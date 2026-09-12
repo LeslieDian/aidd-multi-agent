@@ -5,7 +5,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](https://www.python.org/)
-[![Status](https://img.shields.io/badge/Status-Phase%202%20complete-green)]()
+[![Status](https://img.shields.io/badge/Status-Phase%203%20complete-blue)]()
 
 ---
 
@@ -131,9 +131,11 @@ aidd-multi-agent/
 
 ---
 
-## 🎯 真实 LLM 验证结果（DeepSeek, 5 轮）
+## 🎯 真实 LLM 验证结果
 
-> 已使用真实 DeepSeek key 跑通完整 5 轮闭环（见 `runs/samples/round_real_*.json`）。
+### Phase 2（2-Agent，DeepSeek only，5 轮）
+
+> `runs/samples/round_real_*.json` — 25 个真实分子
 
 | 指标 | 值 |
 |---|---|
@@ -142,18 +144,44 @@ aidd-multi-agent/
 | ADMET 平均 | 0.74–0.79 |
 | Best Vina | **-3.19 kcal/mol** |
 | 唯一骨架数 | 3–5 / 轮 |
-| Top 分子 | 喹唑啉 + fluoro-chloro-苯胺双酰胺，MW 464 |
 
-所有 25 个分子都是**合理的 EGFR 抑制剂候选**（quinazoline 核心 + 苯胺连接 + 各种侧链），符合 system prompt 中的设计约束（MW 280-500、logP 1-4.5、TPSA ≤ 110）。
+### Phase 3（4-Agent 完整版：并行 A1+A2 + 强化 Judge C）
 
-### 🏆 最佳分子（Round 1）
+> `runs/samples/round_phase3_*.json` — 25 个分子（5 轮 × 5 candidates），MiniMax 因 key 401 仅跑通 judge 探测，实际生成本位 DeepSeek
+
+| 指标 | 值 |
+|---|---|
+| 总分子数 | 25 |
+| 合法率 | **100%** |
+| **Best Vina** | **-3.83 kcal/mol**（Round 1） |
+| 唯一骨架数 | 3–5 / 轮 |
+| Judge 输出 | 每一轮都是**具体可执行**的修改建议（非泛泛） |
+
+### 🏆 最佳分子（Phase 3, Round 1）
 
 ```
 SMILES: CN(C)C(=O)c1ccccc1NC(=O)c1ccc2c(c1)nc(Nc3ccc(Cl)c(F)c3)nc2
-MW=464  logP=5.1  SA=2.29  QED=0.43  Vina=-3.19 kcal/mol
+MW=464  logP=5.1  SA=2.29  QED=0.43  Vina=-3.83 kcal/mol
 ```
 
 类似 gefitinib 的 4-fluoro-3-chloro-aniline 喹唑啉结构。
+
+### 🧠 Judge C 真实输出示例（Phase 3 升级后）
+
+**Round 0** 反馈：
+> "All candidates lack a strong hydrogen-bond donor to the hinge region Met793
+>  and show high hERG risk due to basic amine."
+
+**Round 1** 反馈：
+> "All candidates have an N-methylated anilino nitrogen, eliminating the key
+>  N-H donor required for a hydrogen bond to the Met793 backbone carbonyl in
+>  the EGFR hinge region."
+
+**Round 2** 反馈：
+> "All candidates lack a solubilizing group on the quinazoline core, leading
+>  to poor aqueous solubility and potential hERG liability."
+
+每轮的 focus 都指向**特定原子/基团**的修改（anilino NH、morpholine、喹唑啉 6/7 位等），不是泛泛的"继续探索"。
 
 ---
 
