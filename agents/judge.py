@@ -39,13 +39,24 @@ Bad (too vague): "Continue exploring quinazoline cores"
 Good: "Replace the morpholine on candidate [0] with a piperazine bearing an N-methyl, should drop logP by ~0.8 and improve hinge engagement"
 Good: "All candidates lack a hydrogen-bond donor to Met793; add a secondary amine on the western aryl ring"
 
+SELF-REFLECTION (Phase 4.2):
+When a "Previous focus" and "Previous candidates summary" are provided,
+you MUST also reflect on whether your prior suggestion worked:
+- Did the new molecules actually incorporate the prior focus? (e.g. did they add the morpholine you suggested?)
+- Did Vina / ADMET improve, worsen, or stay flat?
+- If the suggestion failed, do you pivot (different angle) or double down (refine wording)?
+- DO NOT just repeat your previous focus uncritically.
+
 Output STRICT JSON only:
 {{
   "focus": "ONE specific 1-2 sentence instruction (max 250 chars)",
   "best_index": 0,
   "weakness": "the structural weakness you identified (1 sentence)",
   "expected_change": "what property should improve (e.g. 'logP -0.5')",
-  "reasoning": "why this matters for EGFR binding (1 sentence)"
+  "reasoning": "why this matters for EGFR binding (1 sentence)",
+  "reflection": "ONE sentence evaluating the previous round's outcome (max 200 chars; empty string if round 0)",
+  "confidence": 0.0-1.0,
+  "adopted_count": 0-N   // how many of the candidates this round visibly adopted the previous focus
 }}
 """
 
@@ -54,11 +65,16 @@ def judge_round(
     enriched: list[dict],
     config: dict,
     round_num: int,
+    previous_focus: str = "",
+    previous_summary: dict | None = None,
     use_mock: bool = False,
 ) -> dict:
     """Judge one round's results, return focus for next round.
 
-    Returns dict with keys: focus, best_index, reasoning, summary.
+    Phase 4.2: now also returns reflection + confidence + adopted_count.
+
+    Returns dict with keys: focus, best_index, weakness, expected_change,
+    reasoning, reflection, confidence, adopted_count, summary.
     On failure, returns a generic fallback focus.
     """
     # Judge provider: probe with a tiny test request, fall back if it fails
@@ -99,11 +115,29 @@ def judge_round(
             f"Vina={d.get('score', '?')} | composite={c.get('composite_score', '?')}\n"
             f"    warnings: {warn_str}"
         )
+
     user_prompt = (
         "Review this EGFR inhibitor round and identify ONE structural "
-        "weakness shared by the candidates, then write the next-round "
-        "focus:\n\n" + "\n".join(summary_lines)
+        "weakness shared by the candidates, then write the next-round focus.\n\n"
+        + "\n".join(summary_lines)
     )
+
+    # Phase 4.2: inject previous round context for self-reflection
+    if previous_focus:
+        prev_vina = (previous_summary or {}).get("best_vina")
+        prev_avg = (previous_summary or {}).get("avg_admet")
+        prev_best = (previous_summary or {}).get("best_smiles")
+        reflection_section = (
+            f"\n\nPREVIOUS ROUND CONTEXT (for self-reflection):\n"
+            f"- Previous focus: {previous_focus}\n"
+            f"- Previous best Vina: {prev_vina}\n"
+            f"- Previous best smiles: {prev_best}\n"
+            f"- Previous avg ADMET: {prev_avg}\n\n"
+            f"Reflect: did the new molecules adopt your previous focus? "
+            f"Did Vina / ADMET improve? Should you pivot or double down?\n"
+            f"Fill 'reflection', 'confidence', and 'adopted_count' accordingly."
+        )
+        user_prompt = user_prompt + reflection_section
 
     fallback = {
         "focus": "Replace the western aryl ring with a smaller heterocycle to improve Vina binding.",
@@ -111,6 +145,9 @@ def judge_round(
         "weakness": "(fallback: judge unavailable)",
         "expected_change": "logP -0.5",
         "reasoning": "Fallback focus used (LLM judge error).",
+        "reflection": "",
+        "confidence": 0.0,
+        "adopted_count": 0,
         "summary": {"error": "judge fallback"},
     }
 
@@ -118,12 +155,33 @@ def judge_round(
         client = get_client(provider_name, config, mock=use_mock)
         raw = client.chat(SYSTEM_PROMPT, user_prompt, json_mode=True)
         parsed = _extract_json(raw)
+
+        # Round 0 (or any round without previous_focus): reflection must be
+        # empty because there is nothing to reflect on. Don't trust LLM here.
+        if previous_focus:
+            try:
+                conf = float(parsed.get("confidence", 0.5))
+                conf = max(0.0, min(1.0, conf))
+            except (TypeError, ValueError):
+                conf = 0.5
+            try:
+                adopted = int(parsed.get("adopted_count", 0))
+                adopted = max(0, adopted)
+            except (TypeError, ValueError):
+                adopted = 0
+            reflection_text = str(parsed.get("reflection", "")).strip()[:300]
+        else:
+            conf, adopted, reflection_text = 0.0, 0, ""
+
         return {
             "focus": str(parsed.get("focus", "")).strip()[:300],
             "best_index": int(parsed.get("best_index", 0)),
             "weakness": str(parsed.get("weakness", "")).strip(),
             "expected_change": str(parsed.get("expected_change", "")).strip(),
             "reasoning": str(parsed.get("reasoning", "")).strip(),
+            "reflection": reflection_text,
+            "confidence": conf,
+            "adopted_count": adopted,
             "summary": parsed,
         }
     except Exception as e:

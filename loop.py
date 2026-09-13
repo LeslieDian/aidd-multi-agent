@@ -171,12 +171,26 @@ def run_loop(
         # ----- Agent C: judge -----
         if verbose:
             print(f"  [C] judging round...")
-        judgment = judge_round(enriched, config, round_num, use_mock=use_mock)
+        # Phase 4.2: pass previous focus + summary for self-reflection
+        previous_summary = summary_history[-1] if summary_history else None
+        judgment = judge_round(
+            enriched, config, round_num,
+            previous_focus=focus,             # focus from prior round (empty on round 0)
+            previous_summary=previous_summary,
+            use_mock=use_mock,
+        )
         focus = judgment["focus"]
         weakness = judgment.get("weakness", "")
+        reflection = judgment.get("reflection", "")
+        confidence = judgment.get("confidence", 0.0)
+        adopted_count = judgment.get("adopted_count", 0)
         if verbose:
             print(f"  [C] weakness: {weakness[:80]}")
             print(f"  [C] next focus: {focus[:120]}")
+            if reflection:
+                print(f"  [C] reflection: {reflection[:120]}  (confidence={confidence:.2f})")
+            if adopted_count:
+                print(f"  [C] adopted previous focus in {adopted_count}/{summary['n_valid']} molecules")
 
         # ----- Per-provider diversity (heterogeneous generation evidence) -----
         per_provider = _per_provider_stats(enriched)

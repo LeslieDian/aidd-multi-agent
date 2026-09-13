@@ -104,6 +104,22 @@ class MockLLMClient:
 
     def chat(self, system: str, user: str, json_mode: bool = False, **kwargs) -> str:
         if json_mode:
+            # Phase 4.2: include reflection/confidence/adopted_count so mock
+            # behaves like a real Phase 4.2 judge (for tests).
+            # Detect judge vs generator from system prompt keywords.
+            if "experienced medicinal chemist leading" in system:
+                # Judge-style response
+                return json.dumps({
+                    "focus": "Add a morpholine to improve aqueous solubility and Vina binding.",
+                    "best_index": 0,
+                    "weakness": "All candidates lack a solubilizing group on the western aryl ring.",
+                    "expected_change": "logP -0.5",
+                    "reasoning": "Adding morpholine should drop logP and improve solubility per erlotinib SAR.",
+                    "reflection": "Previous round added morpholine and Vina improved by 0.3, so keep that direction.",
+                    "confidence": 0.7,
+                    "adopted_count": 2,
+                })
+            # Default: generator-style response (SMILES list)
             return json.dumps({
                 "smiles_list": [
                     "CC(=O)Oc1ccccc1C(=O)O",   # aspirin
