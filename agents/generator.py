@@ -49,6 +49,11 @@ Rules:
 USER_PROMPT_TEMPLATE = """Generate __N__ new candidate EGFR inhibitor SMILES.
 __FOCUS__
 
+__WEAKNESS__
+
+__MEMORY__
+
+__FAILED__
 Return ONLY the JSON object.
 """
 
@@ -79,9 +84,14 @@ def generate_with_provider(
     n: int = 5,
     focus: str = "",
     weakness: str = "",
+    memory_context: str = "",
+    failed_prompt: str = "",
     use_mock: bool = False,
 ) -> dict:
     """Call one LLM provider once, return parsed JSON.
+
+    Phase 4.1: memory_context (WorkingMemory) and failed_prompt (FailedLigandSet)
+    are injected into the user prompt so the generator has context from prior rounds.
 
     Returns: {"model": str, "provider": str, "smiles_list": [...], "rationale": str}
     Raises on parsing failure.
@@ -91,11 +101,14 @@ def generate_with_provider(
     client = get_client(provider_name, config, mock=use_mock)
     focus_section = f"Focus this round on: {focus}" if focus else ""
     weakness_section = f"Address this structural weakness: {weakness}" if weakness else ""
+    memory_section = f"Context from prior rounds: {memory_context}" if memory_context else ""
     user = (
         USER_PROMPT_TEMPLATE
         .replace("__N__", str(n))
         .replace("__FOCUS__", focus_section)
         .replace("__WEAKNESS__", weakness_section)
+        .replace("__MEMORY__", memory_section)
+        .replace("__FAILED__", failed_prompt)
     )
     system = SYSTEM_PROMPT.replace("__N__", str(n))
 
@@ -123,10 +136,14 @@ def generate_candidates(
     n_per_provider: int = 5,
     focus: str = "",
     weakness: str = "",
+    memory_context: str = "",
+    failed_prompt: str = "",
     use_mock: bool = False,
     max_workers: int = 4,
 ) -> list[dict]:
     """Generate candidates from multiple providers in parallel.
+
+    Phase 4.1: memory_context and failed_prompt are passed to every provider.
 
     Returns one dict per provider call. Failed calls are returned with
     `error` field instead of raising, so the loop can continue.
@@ -140,7 +157,8 @@ def generate_candidates(
         futures = {
             ex.submit(
                 generate_with_provider,
-                p, config, n_per_provider, focus, weakness, use_mock,
+                p, config, n_per_provider, focus, weakness,
+                memory_context, failed_prompt, use_mock,
             ): p
             for p in providers
         }
