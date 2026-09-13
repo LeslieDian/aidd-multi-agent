@@ -48,11 +48,12 @@ llm:
       max_tokens: 2048
 
     # ----- generator A2: MiniMax M3 (MiniMax latest, 1M context) -----
-    # NOTE: base_url is case-sensitive. The working endpoint is
-    # "api.MiniMax.chat" (camelCase), not "api.minimax.io".
-    # OpenAI-compatible endpoint.
+    # NOTE: base_url is case-sensitive. Verified working endpoint (2026-09-13):
+    #   https://api.minimaxi.com/v1     (international, this user's account)
+    #   https://api.MiniMax.chat/v1    (may also work for other accounts)
+    # OpenAI-compatible protocol.
     MiniMax:
-      base_url: https://api.MiniMax.chat/v1
+      base_url: https://api.minimaxi.com/v1
       api_key_env: MiniMax_API_KEY
       model: MiniMax-M3
       temperature: 1.0          # recommended by MiniMax docs
@@ -64,7 +65,7 @@ llm:
 
     # ----- judge C: MiniMax-M3 thinking enabled (best reasoning) -----
     judge_MiniMax:
-      base_url: https://api.MiniMax.chat/v1
+      base_url: https://api.minimaxi.com/v1
       api_key_env: MiniMax_API_KEY
       model: MiniMax-M3
       temperature: 0.3
