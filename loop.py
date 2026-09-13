@@ -280,8 +280,16 @@ def run_loop(
 
         rounds_log.append(round_record)
 
-        # ----- LoopController handles early stop now; we no longer need the inline check -----
-        # (replaced by state-based stop at top of next iteration)
+        # ----- Phase 4.1 bugfix: also check stop AFTER a round, not only before.
+        # If the round that just finished pushed us past the patience threshold
+        # (or token budget, or HITL veto), stop now instead of waiting for the
+        # next round's pre-check.
+        post_stop, post_reason = loop_controller.should_stop(state)
+        if post_stop:
+            if verbose:
+                print(f"  [controller] stop after round {round_num}: "
+                      f"{loop_controller.explain(post_reason)}")
+            break
 
     # ----- Phase 4.1: End-of-loop HITL candidate selection -----
     if hitl and rounds_log:
