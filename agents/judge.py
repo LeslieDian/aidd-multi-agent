@@ -15,6 +15,7 @@ import json
 import re
 
 from .llm import get_client
+from tools.diversity import adoption_stats
 
 
 SYSTEM_PROMPT = """You are an experienced medicinal chemist leading an
@@ -182,6 +183,12 @@ def judge_round(
         "reflection": "",
         "confidence": 0.0,
         "adopted_count": 0,
+        "adoption_deterministic": {
+            "n_total": 0, "n_valid_sim": 0, "n_adopted": 0,
+            "adoption_rate": None, "max_similarity": None,
+            "mean_similarity": None, "threshold": 0.7, "reference": None,
+        },
+        "adoption_llm_vs_det_drift": None,
         "summary": {"error": "judge fallback"},
     }
 
@@ -208,6 +215,40 @@ def judge_round(
         else:
             conf, adopted, reflection_text = 0.0, 0, ""
 
+        # Phase 4.3 (P1-3 fix): deterministic adoption check via Tanimoto
+        # similarity to the previous round's best SMILES. This is the
+        # ground-truth reference for the Judge's LLM-estimated `adopted_count`.
+        # We always compute the structural similarity (cheap and useful as
+        # a learning-curve metric) regardless of whether previous_focus exists.
+        adoption_threshold = float(
+            (config.get("judge", {}) or {}).get(
+                "adoption_tanimoto_threshold",
+                (config.get("llm", {}) or {}).get(
+                    "adoption_tanimoto_threshold", 0.7
+                ),
+            )
+        )
+        ref_smiles = (previous_summary or {}).get("best_smiles")
+        current_smiles = [c.get("smiles") for c in ranked if c.get("smiles")]
+        det = adoption_stats(
+            current_smiles, ref_smiles or "", threshold=adoption_threshold
+        ) if ref_smiles else {
+            "n_total": len(current_smiles),
+            "n_valid_sim": 0,
+            "n_adopted": 0,
+            "adoption_rate": None,
+            "max_similarity": None,
+            "mean_similarity": None,
+            "threshold": adoption_threshold,
+            "reference": None,
+        }
+        # LLM-vs-deterministic drift: a large absolute gap flags that the
+        # Judge is hallucinating adoption. Sign is informative (over/under).
+        if previous_focus and ref_smiles:
+            drift = adopted - det["n_adopted"]
+        else:
+            drift = None
+
         return {
             "status": "ok",
             "provider": provider_name,
@@ -227,6 +268,9 @@ def judge_round(
             "reflection": reflection_text,
             "confidence": conf,
             "adopted_count": adopted,
+            # Phase 4.3 (P1-3): structural reality check
+            "adoption_deterministic": det,
+            "adoption_llm_vs_det_drift": drift,
             "summary": parsed,
         }
     except Exception as e:

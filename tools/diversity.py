@@ -91,6 +91,66 @@ def tanimoto_matrix(smiles_list: Iterable[str]) -> dict:
     return {"smiles": smiles_list, "matrix": matrix}
 
 
+def tanimoto_to_reference(smiles: str, reference: str) -> float | None:
+    """Tanimoto similarity of `smiles` to a single `reference` (Morgan r=2).
+
+    Returns:
+        float in [0, 1] if both parse, else None.
+    """
+    if not smiles or not reference:
+        return None
+    ref_mol = Chem.MolFromSmiles(reference.strip())
+    cand_mol = Chem.MolFromSmiles(smiles.strip())
+    if ref_mol is None or cand_mol is None:
+        return None
+    ref_fp = AllChem.GetMorganFingerprintAsBitVect(ref_mol, radius=2, nBits=2048)
+    cand_fp = AllChem.GetMorganFingerprintAsBitVect(cand_mol, radius=2, nBits=2048)
+    return round(DataStructs.TanimotoSimilarity(ref_fp, cand_fp), 3)
+
+
+def batch_tanimoto_to_reference(
+    smiles_list: Iterable[str],
+    reference: str,
+) -> list[float | None]:
+    """Tanimoto similarity of each candidate in `smiles_list` to one reference.
+
+    Returns a list the same length as `smiles_list`; entries are None if
+    either the candidate or the reference failed to parse.
+    """
+    return [tanimoto_to_reference(s, reference) for s in smiles_list]
+
+
+def adoption_stats(
+    smiles_list: Iterable[str],
+    reference: str,
+    threshold: float = 0.7,
+) -> dict:
+    """Compute how many of `smiles_list` 'adopt' `reference` (Tanimoto > threshold).
+
+    Returns a dict with:
+        - n_total: int
+        - n_valid_sim: int (candidates with non-None similarity)
+        - n_adopted: int (similarity > threshold)
+        - adoption_rate: float (n_adopted / max(n_valid_sim, 1))
+        - max_similarity: float | None
+        - mean_similarity: float | None
+        - threshold: float
+    """
+    sims = batch_tanimoto_to_reference(smiles_list, reference)
+    valid = [s for s in sims if s is not None]
+    n_adopted = sum(1 for s in valid if s > threshold)
+    return {
+        "n_total": len(sims),
+        "n_valid_sim": len(valid),
+        "n_adopted": n_adopted,
+        "adoption_rate": round(n_adopted / max(len(valid), 1), 3),
+        "max_similarity": round(max(valid), 3) if valid else None,
+        "mean_similarity": round(sum(valid) / len(valid), 3) if valid else None,
+        "threshold": threshold,
+        "reference": reference,
+    }
+
+
 # ----------------- CLI -----------------
 
 def _main():

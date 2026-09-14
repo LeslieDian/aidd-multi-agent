@@ -17,9 +17,9 @@ opportunity in the AIDD multi-agent system. Issues are categorized by severity
 
 | Severity | Open | Resolved (2026-09-14) |
 |---|---|---|
-| P0 blocker | 1 | 2 (MiniMax 401, failed_ligands cap, WorkingMem persist) |
-| P1 important | 3 | 1 (best_molecules persist + reflection sees molecules) |
-| P2 polish | 2 | 1 (thresholds to config) |
+| P0 blocker | 0 | 3 (MiniMax 401, failed_ligands cap, WorkingMem persist) |
+| P1 important | 1 | 3 (best_molecules persist, reflection sees molecules, deterministic adoption) |
+| P2 polish | 1 | 2 (thresholds to config, agent-level metrics) |
 | P3 future | 4 | 0 |
 
 ---
@@ -137,6 +137,16 @@ in its JSON output. The Judge may over/under-count.
 compute Tanimoto similarity to previous-round best, count as "adopted"
 if similarity > 0.7. Compare to LLM estimate as a sanity metric.
 
+**Status**: ✅ RESOLVED 2026-09-14. `tools/diversity.adoption_stats()`
+computes per-round Tanimoto similarity to the previous best; threshold
+default 0.7, configurable via `config.yaml` `judge.adoption_tanimoto_threshold`.
+Every `judgment` dict now carries:
+- `adoption_deterministic.{n_adopted, adoption_rate, max_similarity,
+  mean_similarity, threshold, reference}`
+- `adoption_llm_vs_det_drift` (LLM claimed - deterministic count)
+A large absolute drift flags Judge hallucination; tracked across rounds
+in `metrics.json`'s `curves.adoption_llm_vs_det_drift`.
+
 ---
 
 ### P1-4. Reflection only sees previous focus text, not actual molecules
@@ -213,6 +223,21 @@ but no integrated "agent improvement rate" metric.
 - `best_vina_delta` (R0 best vs final best)
 - `scaffold_diversity_curve`
 
+**Status**: ✅ RESOLVED 2026-09-14. New `agents/agent_metrics.py` ships:
+
+`metrics.json` per run with:
+- `curves.valid_rate / best_vina / scaffold_diversity / avg_admet`
+- `curves.adoption_rate_llm / adoption_rate_deterministic / adoption_llm_vs_det_drift`
+- `aggregates.{best_vina_first, best_vina_last, best_vina_delta,
+  valid_rate_improvement, adoption_rate_avg_llm,
+  adoption_rate_avg_det, adoption_llm_vs_det_drift_avg}`
+- `verdict.{agent_is_learning, rationale}` — True if best_vina
+  dropped by >= 0.1 kcal/mol OR last 3 rounds non-increasing OR
+  scaffolds doubled; False otherwise; None if insufficient data.
+
+`summary.json` gets a flat `agent_metrics` block for at-a-glance review
+plus a `see_also` pointer to `metrics.json`.
+
 ---
 
 ## P3 — Future research
@@ -263,8 +288,10 @@ categories, line plot of best-Vina-over-time, scaffold network graph.
 | P0-2 | failed_ligands unbounded growth | 2026-09-14 | (Phase 4.3) |
 | P0-3 | WorkingMemory strategy_chain window too narrow | 2026-09-14 | (Phase 4.3) |
 | P1-1 | best_molecules not persisted | 2026-09-14 | (Phase 4.3) |
+| P1-3 | adopted_count LLM-estimated | 2026-09-14 | (Phase 4.3) |
 | P1-4 | Reflection only sees focus text | 2026-09-14 | (Phase 4.3) |
 | P2-1 | Thresholds hard-coded | 2026-09-14 | (Phase 4.3) |
+| P2-3 | No Agent-level evaluation framework | 2026-09-14 | (Phase 4.3) |
 | Loop Ctrl | `should_stop` only checked pre-round | 2026-09-13 | (loop.py fix) |
 | Phase4.1 | Foundation (WorkingMem + FailedSet + LoopCtrl + HITL) | 2026-09-13 | `382e7ae` |
 | Phase4.2 | Self-Reflection Judge | 2026-09-13 | `023b9f2` |

@@ -37,6 +37,8 @@ from agents.loop_controller import LoopController, LoopState, LoopConfig
 from agents.failed_set import FailedLigandSet
 from agents.working_memory import WorkingMemory
 from agents.hitl import HITLCheckpoint
+# Phase 4.3 (P2-3): agent-level metrics aggregation
+from agents.agent_metrics import compute_agent_metrics
 
 
 def load_config(path: str = "config.yaml") -> dict:
@@ -393,10 +395,45 @@ def run_loop(
             "memory_rounds": len(memory.recent_rounds),
         },
     }
+
+    # ----- Phase 4.3 (P2-3): aggregate agent-level metrics -----
+    judgments = [r.get("judgment", {}) for r in rounds_log]
+    metrics = compute_agent_metrics(
+        summary_history=summary_history,
+        judgments=judgments,
+        loop_state=overall["loop_state"],
+    )
+    overall["agent_metrics"] = {
+        "best_vina_first": metrics["aggregates"]["best_vina_first"],
+        "best_vina_last": metrics["aggregates"]["best_vina_last"],
+        "best_vina_delta": metrics["aggregates"]["best_vina_delta"],
+        "valid_rate_improvement": metrics["aggregates"]["valid_rate_improvement"],
+        "adoption_rate_avg_llm": metrics["aggregates"]["adoption_rate_avg_llm"],
+        "adoption_rate_avg_det": metrics["aggregates"]["adoption_rate_avg_det"],
+        "adoption_llm_vs_det_drift_avg": metrics["aggregates"]["adoption_llm_vs_det_drift_avg"],
+        "agent_is_learning": metrics["verdict"]["agent_is_learning"],
+        "verdict_rationale": metrics["verdict"]["rationale"],
+        "see_also": "metrics.json",
+    }
     (out_path / "summary.json").write_text(
         json.dumps(overall, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
+    # Full metrics dump (curves + verdict) goes to metrics.json
+    (out_path / "metrics.json").write_text(
+        json.dumps(metrics, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    if verbose:
+        v = metrics["aggregates"]
+        print(
+            f"\n[metrics] best_vina {v['best_vina_first']} -> {v['best_vina_last']} "
+            f"(delta={v['best_vina_delta']}); learning={metrics['verdict']['agent_is_learning']}"
+        )
+        print(
+            f"[metrics] adoption LLM={v['adoption_rate_avg_llm']} "
+            f"det={v['adoption_rate_avg_det']} drift={v['adoption_llm_vs_det_drift_avg']}"
+        )
     return overall
 
 
