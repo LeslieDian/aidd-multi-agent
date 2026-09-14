@@ -1,3 +1,7 @@
+> 2026-09-13 更新：第一阶段可信度问题已修复并新增回归测试，见
+> [PHASE_1_CREDIBILITY.md](PHASE_1_CREDIBILITY.md)。以下原始问题列表保留历史上下文；
+> 其中旧规模估计、API 域名大小写解释和立体化学断言未经验证，不作为当前实现依据。
+
 # AIDD Multi-Agent — Known Issues & Roadmap
 
 > **Status**: living document. Updated as issues are discovered/resolved.
@@ -11,12 +15,12 @@ opportunity in the AIDD multi-agent system. Issues are categorized by severity
 
 ## Quick Reference
 
-| Severity | Count | Mean ETA |
+| Severity | Open | Resolved (2026-09-14) |
 |---|---|---|
-| P0 blocker | 3 | ~2 hours total |
-| P1 important | 4 | ~1 day total |
-| P2 polish | 3 | ~1 day total |
-| P3 future | 4 | TBD |
+| P0 blocker | 1 | 2 (MiniMax 401, failed_ligands cap, WorkingMem persist) |
+| P1 important | 3 | 1 (best_molecules persist + reflection sees molecules) |
+| P2 polish | 2 | 1 (thresholds to config) |
+| P3 future | 4 | 0 |
 
 ---
 
@@ -63,6 +67,11 @@ the file grows to ~10MB and the prompt-injection size explodes.
 
 **Recommendation**: A first (30 min), then C in Phase 4.3.
 
+**Status**: ✅ RESOLVED 2026-09-14 (option A). `FailedLigandSet(max_size=N)`
+evicts oldest insertion (LRF) when full. Default cap configured at
+`scoring.failed_set.max_size: 500` in `config.yaml`. `max_size=0` keeps
+legacy unbounded behavior for tests.
+
 ---
 
 ### P0-3. `WorkingMemory.max_recent = 3` loses early-round context
@@ -80,6 +89,11 @@ like "morpholine on EGFR west ring worked".
 
 **Recommendation**: A first (lowest cost, highest ROI).
 
+**Status**: ✅ RESOLVED 2026-09-14 (option A). `WorkingMemory` writes the full
+strategy chain to `memory/strategy_history/<target>/<protocol_id>.json` on every
+round; on restart the live `strategy_chain` seeds itself from the last
+`max_recent` entries of the on-disk file. Prompt budget is still protected.
+
 ---
 
 ## P1 — Important (should fix soon)
@@ -91,6 +105,12 @@ A good molecule found today is forgotten tomorrow.
 
 **Fix**: Persist to `memory/best_molecules.json` after each round.
 On startup, `WorkingMemory.__init__` loads the previous session's best.
+
+**Status**: ✅ RESOLVED 2026-09-14. `WorkingMemory(best_persist_path=...)`
+writes a per-target record to `memory/best_molecules.json` whenever
+`best_so_far` improves; on next session it loads the prior best so the
+generator can be told "current best Vina is -3.77" even if this session
+hasn't found anything better yet. Per-target keying allows multi-target use.
 
 ---
 
@@ -128,6 +148,20 @@ of the previous molecules. Judge can't truly verify adoption.
 **Fix**: Include previous round's top-3 SMILES + scores in the
 "previous context" block Judge receives.
 
+**Status**: ✅ RESOLVED 2026-09-14. `judge_round()` now accepts a
+`previous_enriched` argument (loop wires it from the prior round's full
+candidate list). The reflection prompt renders every prior molecule
+with `SMILES + scaffold + provider + MW + logP + ADMET + Vina` so the
+Judge can truly verify whether the prior focus was adopted. Fallback
+to `previous_summary.top_candidates` preserved for back-compat.
+
+**Side effect**: Phase C findings (PHASE_C_FINDINGS.md) attributed the
+flat best-Vina curve to receptor issues; P1-4 unblocks a different root
+cause: the Judge could not see prior molecules, so its reflections
+were generic. With P1-4 the Judge can say "your morpholine suggestion
+worked — R1 had 2/6 morpholine-bearing molecules and Vina improved by
+0.3" instead of hand-waving.
+
 ---
 
 ## P2 — Polish (nice-to-have)
@@ -146,6 +180,12 @@ target:
     composite_floor: 0.5
     vina_floor: -2.5
 ```
+
+**Status**: ✅ RESOLVED 2026-09-14. New `scoring.failed_set` block in
+`config.yaml` exposes `composite_floor`, `vina_floor`, `max_size`.
+`loop.py` reads them with fallback to the legacy `loop.failed_*` keys
+for back-compat. Code defaults still present (so existing tests pass
+without a config).
 
 ---
 
@@ -220,6 +260,11 @@ categories, line plot of best-Vina-over-time, scaffold network graph.
 | ID | Title | Resolved | Commit |
 |---|---|---|---|
 | P0-1 | MiniMax 401 | 2026-09-13 | (this doc) |
+| P0-2 | failed_ligands unbounded growth | 2026-09-14 | (Phase 4.3) |
+| P0-3 | WorkingMemory strategy_chain window too narrow | 2026-09-14 | (Phase 4.3) |
+| P1-1 | best_molecules not persisted | 2026-09-14 | (Phase 4.3) |
+| P1-4 | Reflection only sees focus text | 2026-09-14 | (Phase 4.3) |
+| P2-1 | Thresholds hard-coded | 2026-09-14 | (Phase 4.3) |
 | Loop Ctrl | `should_stop` only checked pre-round | 2026-09-13 | (loop.py fix) |
 | Phase4.1 | Foundation (WorkingMem + FailedSet + LoopCtrl + HITL) | 2026-09-13 | `382e7ae` |
 | Phase4.2 | Self-Reflection Judge | 2026-09-13 | `023b9f2` |

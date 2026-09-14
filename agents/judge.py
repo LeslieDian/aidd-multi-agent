@@ -23,11 +23,11 @@ generated candidates and write a SPECIFIC, ACTIONABLE focus instruction
 for the next round.
 
 Key EGFR facts to anchor your reasoning:
-- ATP pocket has a hinge region with Met793 backbone NH (h-bond acceptor)
+- ATP pocket has a hinge backbone NH (hydrogen-bond donor; verify residue numbering against receptor)
 - Hydrophobic pocket lined by Leu694, Val702, Ala719, Leu820
 - DFG motif at the activation loop
-- Reference drugs: erlotinib (-7 to -8 kcal/mol), gefitinib, afatinib
-- Strong inhibitors usually score <-7 kcal/mol on Vina with 22 A box
+- Reference drugs: erlotinib, gefitinib; afatinib is a covalent inhibitor.
+- Docking scores depend on protocol and do not establish measured affinity.
 
 Your focus instruction MUST name:
 1. A SPECIFIC structural element to change (e.g. "morpholine", "aniline NH", "quinazoline N1")
@@ -67,35 +67,30 @@ def judge_round(
     round_num: int,
     previous_focus: str = "",
     previous_summary: dict | None = None,
+    previous_enriched: list[dict] | None = None,
     use_mock: bool = False,
 ) -> dict:
     """Judge one round's results, return focus for next round.
 
     Phase 4.2: now also returns reflection + confidence + adopted_count.
+    Phase 4.3 (P1-4 fix): if previous_enriched is provided, include every
+    prior SMILES (with scaffold/MW/logP/Vina/ADMET/provider) in the
+    reflection prompt. The Judge can then verify whether molecules this
+    round actually adopted last round's focus, not just hand-wave
+    "vina went down so my suggestion worked".
 
     Returns dict with keys: focus, best_index, weakness, expected_change,
     reasoning, reflection, confidence, adopted_count, summary.
-    On failure, returns a generic fallback focus.
+    On failure, returns an explicit error and no new strategy.
     """
-    # Judge provider: probe with a tiny test request, fall back if it fails
-    from .llm import get_client as _gc
-    judge_pref = config.get("llm", {}).get("judge", "deepseek")
-    provider_name = None
-    for probe in [judge_pref, "deepseek", "MiniMax"]:
-        try:
-            client = _gc(probe, config, mock=use_mock)
-            # Make a tiny test call to verify auth works
-            client.chat("hi", "ping", max_tokens=5)
-            provider_name = probe
-            break
-        except Exception:
-            continue
-    if provider_name is None:
-        provider_name = "deepseek"  # last resort, will likely fail and trigger fallback focus
+    provider_name = config.get("llm", {}).get("judge", "deepseek")
 
     # Build compact input: top 5 candidates
     valid = [c for c in enriched if c["validate"]["valid"]]
-    ranked = sorted(valid, key=lambda c: -c["composite_score"])[:5]
+    ranked = sorted(valid, key=lambda c: (
+        c.get("composite_score") is not None,
+        c.get("composite_score") if c.get("composite_score") is not None else c.get("property_score") or 0.
+    ), reverse=True)[:5]
 
     summary_lines = [
         f"Round {round_num}: {len(enriched)} candidates, {len(valid)} valid."
@@ -107,7 +102,7 @@ def judge_round(
         warnings = a.get("warnings", [])
         warn_str = "; ".join(warnings) if warnings else "none"
         summary_lines.append(
-            f"[{i}] provider={c.get('provider', '?')} | "
+            f"[{i}] provider={c.get('provider', '?')} status={c.get('evaluation_status', 'unknown')} | "
             f"smiles={c['smiles']}\n"
             f"    MW={v.get('mw', '?')} logP={v.get('logp', '?')} "
             f"SA={v.get('sa_score', '?')} Lipinski={v.get('lipinski_pass', '?')} | "
@@ -120,19 +115,55 @@ def judge_round(
         "Review this EGFR inhibitor round and identify ONE structural "
         "weakness shared by the candidates, then write the next-round focus.\n\n"
         + "\n".join(summary_lines)
+        + "\nMissing scores are unknown, not success. ADMET values are descriptor heuristics. "
+          "Do not assert binding contacts without pose analysis. Structural suggestions are hypotheses. "
+          "adopted_count covers only the displayed candidates and is an LLM estimate."
     )
 
-    # Phase 4.2: inject previous round context for self-reflection
+    # Phase 4.2 + 4.3 (P1-4): inject previous round context for self-reflection.
+    # If previous_enriched is provided we render every prior candidate with
+    # SMILES + scaffold + MW + logP + ADMET + Vina + provider so the Judge can
+    # truly verify whether the prior focus was adopted. Falls back to the
+    # compressed previous_summary top_candidates when no enriched list is
+    # available (e.g. round-0 startup or tests).
     if previous_focus:
         prev_vina = (previous_summary or {}).get("best_vina")
         prev_avg = (previous_summary or {}).get("avg_admet")
         prev_best = (previous_summary or {}).get("best_smiles")
+
+        prev_mol_lines = []
+        if previous_enriched:
+            for i, c in enumerate(previous_enriched):
+                if not c.get("validate", {}).get("valid"):
+                    continue
+                v = c.get("validate", {}) or {}
+                a = c.get("admet", {}) or {}
+                d = c.get("dock", {}) or {}
+                prev_mol_lines.append(
+                    f"  [{i}] prov={c.get('provider', '?')} "
+                    f"smi={c.get('smiles')} "
+                    f"scaffold={c.get('scaffold', '?')} | "
+                    f"MW={v.get('mw', '?')} logP={v.get('logp', '?')} "
+                    f"ADMET={a.get('summary_score', '?')} "
+                    f"Vina={d.get('score', '?')}"
+                )
+        elif previous_summary:
+            # Fallback: compressed top-3 with smiles + score only
+            for i, tc in enumerate((previous_summary or {}).get("top_candidates", [])):
+                prev_mol_lines.append(
+                    f"  [{i}] smi={tc.get('smiles')} score={tc.get('score')} "
+                    f"Vina={tc.get('vina')}"
+                )
+
         reflection_section = (
             f"\n\nPREVIOUS ROUND CONTEXT (for self-reflection):\n"
             f"- Previous focus: {previous_focus}\n"
             f"- Previous best Vina: {prev_vina}\n"
-            f"- Previous best smiles: {prev_best}\n"
-            f"- Previous avg ADMET: {prev_avg}\n\n"
+            f"- Previous best SMILES: {prev_best}\n"
+            f"- Previous avg ADMET: {prev_avg}\n"
+            f"- Previous candidates ({len(prev_mol_lines)} molecules):\n"
+            + ("\n".join(prev_mol_lines) if prev_mol_lines else "  (no candidate detail available)")
+            + "\n\n"
             f"Reflect: did the new molecules adopt your previous focus? "
             f"Did Vina / ADMET improve? Should you pivot or double down?\n"
             f"Fill 'reflection', 'confidence', and 'adopted_count' accordingly."
@@ -140,10 +171,13 @@ def judge_round(
         user_prompt = user_prompt + reflection_section
 
     fallback = {
-        "focus": "Replace the western aryl ring with a smaller heterocycle to improve Vina binding.",
+        "focus": "",
+        "status": "error",
+        "provider": provider_name,
+        "is_mock": use_mock,
         "best_index": 0,
         "weakness": "(fallback: judge unavailable)",
-        "expected_change": "logP -0.5",
+        "expected_change": "",
         "reasoning": "Fallback focus used (LLM judge error).",
         "reflection": "",
         "confidence": 0.0,
@@ -151,6 +185,7 @@ def judge_round(
         "summary": {"error": "judge fallback"},
     }
 
+    client, raw = None, None
     try:
         client = get_client(provider_name, config, mock=use_mock)
         raw = client.chat(SYSTEM_PROMPT, user_prompt, json_mode=True)
@@ -166,7 +201,7 @@ def judge_round(
                 conf = 0.5
             try:
                 adopted = int(parsed.get("adopted_count", 0))
-                adopted = max(0, adopted)
+                adopted = min(len(ranked), max(0, adopted))
             except (TypeError, ValueError):
                 adopted = 0
             reflection_text = str(parsed.get("reflection", "")).strip()[:300]
@@ -174,8 +209,18 @@ def judge_round(
             conf, adopted, reflection_text = 0.0, 0, ""
 
         return {
+            "status": "ok",
+            "provider": provider_name,
+            "model": client.model,
+            "is_mock": use_mock,
+            "usage": getattr(client, "last_usage", {}),
+            "prompt": {"system": SYSTEM_PROMPT, "user": user_prompt},
+            "raw_response": raw,
+            "adoption_method": "llm_estimate_displayed_candidates",
+            "adoption_denominator": len(ranked),
             "focus": str(parsed.get("focus", "")).strip()[:300],
-            "best_index": int(parsed.get("best_index", 0)),
+            "best_index": min(max(0, int(parsed.get("best_index", 0))), len(ranked) - 1) if ranked else None,
+            "displayed_candidate_ids": [c.get("candidate_id") for c in ranked],
             "weakness": str(parsed.get("weakness", "")).strip(),
             "expected_change": str(parsed.get("expected_change", "")).strip(),
             "reasoning": str(parsed.get("reasoning", "")).strip(),
@@ -186,6 +231,9 @@ def judge_round(
         }
     except Exception as e:
         fallback["summary"] = {"error": f"{type(e).__name__}: {e}"}
+        fallback.update(prompt={"system": SYSTEM_PROMPT, "user": user_prompt},
+                        raw_response=raw, usage=getattr(client, "last_usage", {}),
+                        model=getattr(client, "model", None))
         return fallback
 
 

@@ -20,6 +20,13 @@ class FailedLigandSet:
     """Set of canonical SMILES that failed (composite<V_thresh OR vina>V_thresh).
 
     Persists to JSON so knowledge survives across sessions.
+
+    Phase 4.3 (P0-2 fix): `max_size` caps the on-disk + in-memory set to
+    prevent unbounded growth (the pre-fix bug accumulated one entry per
+    failure across sessions indefinitely). When the cap is hit, the
+    *oldest* insertion is evicted (LRF / FIFO). Pass `max_size=0` (the
+    default) to keep the original unbounded behavior — useful for tests
+    that want to assert exact membership.
     """
 
     DEFAULT_PATH = Path("memory/failed_ligands.json")
@@ -29,11 +36,15 @@ class FailedLigandSet:
         path: Path | str | None = None,
         threshold_composite: float = 0.5,
         threshold_vina: float = -2.5,
+        max_size: int = 0,
     ):
         self.path = Path(path) if path else self.DEFAULT_PATH
         self.threshold_composite = threshold_composite
         self.threshold_vina = threshold_vina
+        self.max_size = max(0, int(max_size))
         self.failed: set[str] = set()
+        # Reasons are kept in insertion order (Python 3.7+ dict) so the
+        # LRF eviction in `add_failed` can pop the oldest entry.
         self.reasons: dict[str, str] = {}
         self._load()
 
@@ -53,6 +64,11 @@ class FailedLigandSet:
             return False
         if canon in self.failed:
             return False
+        # Phase 4.3 (P0-2): LRF eviction before insertion
+        if self.max_size and len(self.reasons) >= self.max_size:
+            oldest = next(iter(self.reasons))
+            self.reasons.pop(oldest, None)
+            self.failed.discard(oldest)
         self.failed.add(canon)
         self.reasons[canon] = reason
         self._save()

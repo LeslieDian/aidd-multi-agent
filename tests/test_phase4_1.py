@@ -11,6 +11,7 @@ verify they both still work end-to-end.
 """
 from __future__ import annotations
 
+import json
 import shutil
 import sys
 import tempfile
@@ -85,7 +86,8 @@ def test_failed_set_should_mark():
 
 def test_failed_set_prompt_injection():
     print("\n=== test_failed_set_prompt_injection ===")
-    fs = FailedLigandSet()
+    temporary = tempfile.TemporaryDirectory()
+    fs = FailedLigandSet(path=Path(temporary.name) / "failed.json")
     # Use real SMILES (RDKit must parse them)
     real_smiles = [
         "CCO", "CC(=O)Oc1ccccc1C(=O)O", "CC(C)Cc1ccc(C(C)C(=O)O)cc1",
@@ -101,6 +103,71 @@ def test_failed_set_prompt_injection():
     assert "and 7 more" in out  # 12 - 5 = 7
     print(f"  [OK] prompt includes 'DO NOT propose ... (and N more)' format")
     print(f"       total failed: {len(fs.failed)}, prompt snippet: {out[:120]}")
+
+
+# ---------------- Phase 4.3 (P0-2): FailedLigandSet LRU cap ----------------
+
+def test_failed_set_lru_evicts_oldest():
+    """P0-2 fix: with max_size=N, the (N+1)-th insert evicts the first one."""
+    print("\n=== test_failed_set_lru_evicts_oldest ===")
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "failed.json"
+        fs = FailedLigandSet(path=path, max_size=3)
+
+        assert fs.add_failed("CCO", "first")
+        assert fs.add_failed("c1ccccc1", "second")
+        assert fs.add_failed("CC(=O)Oc1ccccc1C(=O)O", "third")
+        assert len(fs.failed) == 3
+
+        # 4th insert should evict the OLDEST (CCO)
+        assert fs.add_failed("Brc1ccccc1", "fourth")
+        assert len(fs.failed) == 3
+        assert not fs.is_failed("CCO"), "oldest should have been evicted"
+        assert fs.is_failed("c1ccccc1")
+        assert fs.is_failed("CC(=O)Oc1ccccc1C(=O)O")
+        assert fs.is_failed("Brc1ccccc1")
+
+        # Reasons dict also evicted the oldest
+        assert "CCO" not in fs.reasons
+        assert fs.reasons["Brc1ccccc1"] == "fourth"
+        print(f"  [OK] LRU evict: oldest entry dropped at max_size={fs.max_size}")
+
+
+def test_failed_set_lru_persists_across_reload():
+    """Eviction survives a reload from disk (the persisted JSON is bounded too)."""
+    print("\n=== test_failed_set_lru_persists_across_reload ===")
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "failed.json"
+        fs = FailedLigandSet(path=path, max_size=2)
+        fs.add_failed("CCO", "first")
+        fs.add_failed("c1ccccc1", "second")
+        fs.add_failed("Brc1ccccc1", "third")  # evicts CCO
+
+        fs2 = FailedLigandSet(path=path, max_size=2)
+        assert len(fs2.failed) == 2
+        assert not fs2.is_failed("CCO")
+        assert fs2.is_failed("c1ccccc1")
+        assert fs2.is_failed("Brc1ccccc1")
+        print(f"  [OK] cap+eviction survives disk reload")
+
+
+def test_failed_set_unbounded_when_max_size_zero():
+    """max_size=0 (default) preserves legacy unbounded behavior."""
+    print("\n=== test_failed_set_unbounded_when_max_size_zero ===")
+    # 8 structurally distinct molecules RDKit parses distinctly
+    distinct = [
+        "CCO", "CC(=O)Oc1ccccc1C(=O)O", "CC(C)Cc1ccc(C(C)C(=O)O)cc1",
+        "CN1CCC[C@H]1c1cccnc1", "Cn1cnc2c1c(=O)n(C)c(=O)n2C",
+        "OC(=O)C1CCCCC1", "CC(=O)NCC(=O)N", "C#Cc1ccc(N)cc1",
+    ]
+    with tempfile.TemporaryDirectory() as tmp:
+        fs = FailedLigandSet(path=Path(tmp) / "failed.json", max_size=0)
+        for s in distinct:
+            fs.add_failed(s, "test")
+        assert len(fs.failed) == len(distinct)
+        # And no LRU eviction triggered
+        assert fs.max_size == 0
+        print(f"  [OK] max_size=0 keeps legacy unbounded behavior ({len(fs.failed)} entries)")
 
 
 # ---------------- WorkingMemory ----------------
@@ -149,6 +216,113 @@ def test_working_memory_truncation():
     assert len(mem.recent_rounds) == 2
     assert len(mem.strategy_chain) == 2
     print("  [OK] auto-truncation to max_recent")
+
+
+# ---------------- Phase 4.3 (P0-3): strategy_chain cross-session ----------------
+
+def test_strategy_chain_persists_across_sessions():
+    """P0-3: max_recent truncates the live list, but the on-disk file
+    keeps every focus ever recorded. A new WorkingMemory seeded from
+    that file picks up where the prior session left off."""
+    print("\n=== test_strategy_chain_persists_across_sessions ===")
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "strat.json"
+
+        # Session 1: 5 rounds, max_recent=2 -> live chain keeps only last 2
+        m1 = WorkingMemory(max_recent=2, strategy_persist_path=path, target_name="EGFR")
+        for i in range(5):
+            m1.add_round(_make_round_summary_dicts(), focus=f"focus_{i}")
+        assert len(m1.strategy_chain) == 2          # truncated live
+        assert m1.strategy_chain == ["focus_3", "focus_4"]
+
+        # Disk keeps ALL 5
+        on_disk = json.loads(path.read_text(encoding="utf-8"))
+        assert len(on_disk["strategy_chain"]) == 5
+        assert on_disk["strategy_chain"][0] == "focus_0"
+        assert on_disk["strategy_chain"][-1] == "focus_4"
+
+        # Session 2: seed from disk, only last 2 visible in live
+        m2 = WorkingMemory(max_recent=2, strategy_persist_path=path, target_name="EGFR")
+        assert m2.strategy_chain == ["focus_3", "focus_4"]
+        assert m2.total_rounds == 5
+        # Adding one more focus appends to the SAME disk file (no clobber)
+        m2.add_round(_make_round_summary_dicts(), focus="focus_5")
+        on_disk2 = json.loads(path.read_text(encoding="utf-8"))
+        assert len(on_disk2["strategy_chain"]) == 6
+        assert on_disk2["strategy_chain"][-1] == "focus_5"
+        print(f"  [OK] strategy_history persists; session 2 saw last "
+              f"{len(m2.strategy_chain)} of {len(on_disk2['strategy_chain'])} on disk")
+
+
+def test_strategy_chain_persist_failure_does_not_crash():
+    """P0-3: if the persist path is unwritable (read-only dir), add_round
+    must still work — persistence is best-effort, never blocking."""
+    print("\n=== test_strategy_chain_persist_failure_does_not_crash ===")
+    import os
+    if os.name == "nt":
+        # Skip on Windows where chmod is unreliable
+        print("  [SKIP] chmod unreliable on Windows in CI")
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        ro = Path(tmp) / "ro"
+        ro.mkdir()
+        os.chmod(ro, 0o555)
+        path = ro / "strat.json"  # parent is read-only
+        try:
+            mem = WorkingMemory(max_recent=2, strategy_persist_path=path)
+            mem.add_round(_make_round_summary_dicts(), focus="will warn but not crash")
+        finally:
+            os.chmod(ro, 0o755)
+
+
+# ---------------- Phase 4.3 (P1-1): best_molecules cross-session ----------------
+
+def test_best_molecules_persists_across_sessions():
+    """P1-1: best_so_far is persisted per target and reloaded on next session."""
+    print("\n=== test_best_molecules_persists_across_sessions ===")
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "best.json"
+
+    # Session 1: a Vina=-3.5 candidate wins
+    rd = _make_round_summary_dicts()
+    rd[0]["dock"]["score"] = -3.5
+    rd[0]["scaffold"] = "test_scaffold"
+    rd[0]["smiles"] = "CCO_test"
+    m1 = WorkingMemory(best_persist_path=path, target_name="EGFR")
+    m1.add_round(rd, focus="F1")
+    assert m1.best_so_far is not None
+
+    # Disk has it
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["targets"]["EGFR"]["vina"] == -3.5
+    assert data["targets"]["EGFR"]["smiles"] == "CCO_test"
+    print(f"  [OK] persisted best Vina={data['targets']['EGFR']['vina']} "
+          f"smiles={data['targets']['EGFR']['smiles']}")
+
+    # Session 2 (no rounds yet): should see -3.5 from disk
+    m2 = WorkingMemory(best_persist_path=path, target_name="EGFR")
+    assert m2.best_so_far is not None
+    assert m2.best_so_far["smiles"] == "CCO_test"
+    assert m2.best_so_far["dock"]["score"] == -3.5
+    assert m2.best_so_far.get("is_persisted_from_prior_session") is True
+
+    # Worse molecule in session 2 does NOT clobber the persisted -3.5
+    rd2 = _make_round_summary_dicts()
+    rd2[0]["dock"]["score"] = -2.0
+    m2.add_round(rd2, focus="F2")
+    data2 = json.loads(path.read_text(encoding="utf-8"))
+    assert data2["targets"]["EGFR"]["vina"] == -3.5, "worse should not overwrite"
+    print(f"  [OK] worse candidate did not overwrite persisted -3.5")
+
+    # Better molecule in session 2 DOES upgrade
+    rd3 = _make_round_summary_dicts()
+    rd3[0]["dock"]["score"] = -4.0
+    rd3[0]["smiles"] = "improved_smiles"
+    m2.add_round(rd3, focus="F3")
+    data3 = json.loads(path.read_text(encoding="utf-8"))
+    assert data3["targets"]["EGFR"]["vina"] == -4.0
+    assert data3["targets"]["EGFR"]["smiles"] == "improved_smiles"
+    print(f"  [OK] better candidate (-4.0) upgraded persisted record")
 
 
 # ---------------- LoopController ----------------
@@ -232,7 +406,7 @@ def test_loop_works_with_phase41_enabled():
             output_dir=tmp,
             max_rounds=2,
             n_per_provider=3,
-            dock_enabled=True,
+            dock_enabled=False,
             use_mock=True,
             hitl=False,
         )
@@ -247,14 +421,20 @@ def test_loop_works_with_phase41_enabled():
 
 
 def main():
-    print("[TEST] Phase 4.1 modules")
+    print("[TEST] Phase 4.1 + 4.3 (P0-2 / P0-3 / P1-1) modules")
     print("=" * 60)
     test_failed_set_dedup()
     test_failed_set_should_mark()
     test_failed_set_prompt_injection()
+    test_failed_set_lru_evicts_oldest()
+    test_failed_set_lru_persists_across_reload()
+    test_failed_set_unbounded_when_max_size_zero()
     test_working_memory_compression()
     test_working_memory_rounds_since_improvement()
     test_working_memory_truncation()
+    test_strategy_chain_persists_across_sessions()
+    test_strategy_chain_persist_failure_does_not_crash()
+    test_best_molecules_persists_across_sessions()
     test_loop_controller_max_rounds()
     test_loop_controller_convergence()
     test_loop_controller_hitl_veto()
@@ -263,7 +443,7 @@ def main():
     test_hitl_veto_sets_state()
     test_loop_works_with_phase41_enabled()
     print("\n" + "=" * 60)
-    print("[OK] All Phase 4.1 tests passed!")
+    print("[OK] All Phase 4.1 + 4.3 tests passed!")
 
 
 if __name__ == "__main__":

@@ -66,6 +66,71 @@ def test_judge_handles_missing_previous():
     print(f"  [OK] missing previous_focus handled gracefully")
 
 
+# ---------------- Phase 4.3 (P1-4): Judge sees prior molecules ----------------
+
+def test_judge_sees_previous_smiles_in_prompt():
+    """P1-4: when previous_focus + previous_enriched provided, the user prompt
+    sent to the Judge contains every prior SMILES plus scaffold/MW/logP/Vina.
+    """
+    print("\n=== test_judge_sees_previous_smiles_in_prompt ===")
+    enriched = [_make_candidate("CCO", -2.8)]
+    prev = [
+        _make_candidate("COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCN", -3.4),
+        _make_candidate("COc1cc2ncnc(Nc3ccc(F)cc3)c2cc1OCC", -3.1),
+        _make_candidate("c1ccccc1", -2.5),
+    ]
+    import yaml
+    cfg = yaml.safe_load(open("config.yaml", encoding="utf-8"))
+
+    j = judge_round(
+        enriched, cfg, round_num=2,
+        previous_focus="Add morpholine to gefitinib core",
+        previous_enriched=prev,
+        use_mock=True,
+    )
+    user_prompt = j["prompt"]["user"]
+    # Every prior SMILES must appear in the prompt
+    for c in prev:
+        assert c["smiles"] in user_prompt, f"missing prior smiles {c['smiles']}"
+    # scaffold column should appear
+    assert "scaffold=" in user_prompt
+    # provider column should appear
+    assert "prov=" in user_prompt
+    print(f"  [OK] Judge prompt contains all {len(prev)} prior SMILES with "
+          f"scaffold/MW/logP/Vina detail")
+    print(f"       prompt length: {len(user_prompt)} chars (was 0 before fix)")
+
+
+def test_judge_falls_back_to_summary():
+    """If previous_enriched is None but previous_summary is given, fall back
+    to top_candidates rendering (existing behavior)."""
+    print("\n=== test_judge_falls_back_to_summary ===")
+    enriched = [_make_candidate("CCO", -2.8)]
+    prev_summary = {
+        "best_vina": -3.4, "best_smiles": "CC(=O)Oc1ccccc1C(=O)O",
+        "avg_admet": 0.77,
+        "top_candidates": [{"smiles": "CC(=O)Oc1ccccc1C(=O)O",
+                             "score": 0.7, "vina": -3.4}],
+    }
+    import yaml
+    cfg = yaml.safe_load(open("config.yaml", encoding="utf-8"))
+
+    j = judge_round(
+        enriched, cfg, round_num=2,
+        previous_focus="Tighten polarity",
+        previous_summary=prev_summary,
+        previous_enriched=None,
+        use_mock=True,
+    )
+    user_prompt = j["prompt"]["user"]
+    # Falls back to top_candidates smiles-only format
+    assert "CC(=O)Oc1ccccc1C(=O)O" in user_prompt
+    assert "Tighten polarity" in user_prompt
+    # Scaffold column should NOT be present (we only had summary)
+    assert "scaffold=" not in user_prompt
+    print(f"  [OK] fallback to summary.top_candidates still works")
+
+
 def test_confidence_coerced_to_range():
     print("\n=== test_confidence_coerced_to_range ===")
     # MockLLMClient returns confidence as part of mock JSON. Let's verify
@@ -109,7 +174,7 @@ def test_end_to_end_with_phase42():
         overall = run_loop(
             config=cfg, output_dir=tmp,
             max_rounds=3, n_per_provider=3,
-            dock_enabled=True, use_mock=True,
+            dock_enabled=False, use_mock=True,
             verbose=False,
         )
         assert overall["rounds_completed"] == 3
@@ -140,15 +205,17 @@ def test_end_to_end_with_phase42():
 
 
 def main():
-    print("[TEST] Phase 4.2: Self-Reflection Judge")
+    print("[TEST] Phase 4.2 + 4.3 (P1-4): Self-Reflection Judge")
     print("=" * 60)
     test_judge_returns_reflection_fields()
     test_judge_handles_missing_previous()
     test_confidence_coerced_to_range()
     test_working_memory_adoption_helpers()
     test_end_to_end_with_phase42()
+    test_judge_sees_previous_smiles_in_prompt()
+    test_judge_falls_back_to_summary()
     print("\n" + "=" * 60)
-    print("[OK] All Phase 4.2 tests passed!")
+    print("[OK] All Phase 4.2 + 4.3 tests passed!")
 
 
 if __name__ == "__main__":

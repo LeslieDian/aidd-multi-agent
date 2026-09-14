@@ -18,6 +18,10 @@ Output: runs/round_0.json ... runs/round_{n-1}.json + summary.json
 from __future__ import annotations
 
 import argparse
+import copy
+import uuid
+from tools.provenance import digest, file_hash, evaluation_protocol
+from tools.dock_score import validate_receptor
 import json
 import sys
 from datetime import datetime
@@ -74,13 +78,36 @@ def run_loop(
 
     Phase 4.1: integrates WorkingMemory + FailedLigandSet + LoopController + HITLCheckpoint.
     """
+    config = copy.deepcopy(config)
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:8]
     out_path = Path(output_dir)
+    if any(out_path.glob("round_*.json")) or (out_path / "manifest.json").exists():
+        raise FileExistsError("Output already contains a run; use a new output directory")
     out_path.mkdir(parents=True, exist_ok=True)
 
     target = config["target"]
     scoring = config["scoring"]
     llm_cfg = config["llm"]
     provider_names = llm_cfg.get("generators", [])
+    if target.get("name") != "EGFR":
+        raise ValueError("Current prompts are EGFR-specific; other targets are not supported yet")
+    if not use_mock:
+        from agents.llm import get_client
+        for provider in set(provider_names + [llm_cfg.get("judge", "deepseek")]):
+            get_client(provider, config, mock=False)  # credential/config preflight, no API call
+    if dock_enabled:
+        validate_receptor(target["receptor_pdbqt"])
+    protocol = evaluation_protocol(target, scoring, dock_enabled)
+    protocol_id = digest(protocol)
+    manifest = {"schema_version": 2, "run_id": run_id, "is_mock": use_mock,
+                "protocol_id": protocol_id, "protocol": protocol,
+                "llm": {name: {k: v for k, v in settings.items() if k != "api_key_env" and "key" not in k.lower()}
+                        for name, settings in llm_cfg.get("providers", {}).items()},
+                "reference_registry_sha256": file_hash("data/reference_compounds.json"),
+                "sa_fragment_model_sha256": file_hash("tools/fpscores.pkl.gz"),
+                "code_hashes": {str(p): file_hash(p) for p in
+                                [Path("loop.py"), *Path("agents").glob("*.py"), *Path("tools").glob("*.py")]}}
+    (out_path / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
     # ----- Phase 4.1 modules -----
     loop_cfg_dict = config.get("loop", {})
@@ -90,18 +117,44 @@ def run_loop(
         judge_convergence_patience=loop_cfg_dict.get("judge_convergence_patience", 2),
     ))
     state = LoopState()
-    memory = WorkingMemory(max_recent=loop_cfg_dict.get("memory_max_recent", 3))
+    # Phase 4.3 (P0-3 / P1-1): persistence paths for strategy history + best molecules
+    memory_strategy_path = (
+        Path("memory/strategy_history") / target["name"] / (protocol_id + ".json")
+    )
+    memory_best_path = Path("memory/best_molecules.json")
+    memory = WorkingMemory(
+        max_recent=loop_cfg_dict.get("memory_max_recent", 3),
+        strategy_persist_path=memory_strategy_path,
+        best_persist_path=memory_best_path,
+        target_name=target["name"],
+    )
+    # Phase 4.3 (P2-1 fix): read thresholds from scoring.failed_set with
+    # backward-compat fallback to loop.failed_* (legacy keys).
+    failed_cfg = (scoring or {}).get("failed_set", {}) or {}
     failed_set = FailedLigandSet(
-        path=loop_cfg_dict.get("failed_set_path", "memory/failed_ligands.json"),
-        threshold_composite=loop_cfg_dict.get("failed_threshold_composite", 0.5),
-        threshold_vina=loop_cfg_dict.get("failed_threshold_vina", -2.5),
+        path=(out_path / "mock_memory.json" if use_mock else
+              Path("memory/v2") / target["name"] / (protocol_id + ".json")),
+        threshold_composite=loop_cfg_dict.get(
+            "failed_threshold_composite",
+            failed_cfg.get("composite_floor", 0.5),
+        ),
+        threshold_vina=loop_cfg_dict.get(
+            "failed_threshold_vina",
+            failed_cfg.get("vina_floor", -2.5),
+        ),
+        max_size=loop_cfg_dict.get(
+            "failed_max_size",
+            failed_cfg.get("max_size", 0),
+        ),
     )
     hitl_cp = HITLCheckpoint(require_approval=hitl)
 
     rounds_log = []
     summary_history = []
+    enriched_history: list[list[dict]] = []  # Phase 4.3 (P1-4): keep last round's enriched list
     focus = ""
     weakness = ""
+    stop_reason = "max_rounds_reached"
 
     # ----- Pre-loop HITL checkpoint -----
     if hitl:
@@ -115,6 +168,7 @@ def run_loop(
         state.round = round_num
         stop, reason = loop_controller.should_stop(state)
         if stop:
+            stop_reason = reason
             if verbose:
                 print(f"\n[STOP] {reason}: {loop_controller.explain(reason)}")
             break
@@ -124,6 +178,10 @@ def run_loop(
             print(f"\n=== Round {round_num} ===")
             print(f"  [memory] {mem_ctx.splitlines()[0]}")
             print(f"  [focus] {focus[:80] if focus else '(initial)'}")
+
+        focus_used = focus
+        previous_summary = summary_history[-1] if summary_history else None
+        previous_enriched = enriched_history[-1] if enriched_history else None
 
         # ----- Agent A: generate (with WorkingMemory + FailedLigandSet) -----
         if verbose:
@@ -140,10 +198,17 @@ def run_loop(
             use_mock=use_mock,
         )
         candidates = flatten_generator_results(gen_results)
+        for i, candidate in enumerate(candidates):
+            candidate.update(candidate_id=f"{run_id}:r{round_num}:c{i}", run_id=run_id,
+                             round=round_num, focus_used=focus_used, is_mock=use_mock)
+        (out_path / f"proposals_{round_num}.json").write_text(
+            json.dumps(gen_results, indent=2, ensure_ascii=False), encoding="utf-8")
+        state.tokens_used += sum(r.get("usage", {}).get("total_tokens", 0) or 0 for r in gen_results)
         if verbose:
             print(f"  [A] got {len(candidates)} raw candidates from {len(gen_results)} providers")
 
         if not candidates:
+            stop_reason = "no_candidates"
             if verbose:
                 print(f"  [!] no candidates generated; stopping loop")
             break
@@ -156,15 +221,17 @@ def run_loop(
             scoring_config=scoring,
             target_config=target,
             dock_enabled=dock_enabled,
+            artifact_dir=str(out_path / "artifacts"),
         )
 
         # ----- Round summary -----
         summary = summarize_round(enriched)
         summary["round"] = round_num
         summary_history.append(summary)
+        enriched_history.append(enriched)  # Phase 4.3 (P1-4): keep for next-round Judge
         if verbose:
             print(f"  [B] valid={summary['n_valid']}/{summary['n_total']} "
-                  f"avg_ADMET={summary['avg_admet']:.3f} "
+                  f"avg_ADMET={summary['avg_admet']} "
                   f"unique_scaffolds={summary['n_unique_scaffolds']} "
                   f"best_Vina={summary['best_vina']}")
 
@@ -172,13 +239,14 @@ def run_loop(
         if verbose:
             print(f"  [C] judging round...")
         # Phase 4.2: pass previous focus + summary for self-reflection
-        previous_summary = summary_history[-1] if summary_history else None
         judgment = judge_round(
             enriched, config, round_num,
             previous_focus=focus,             # focus from prior round (empty on round 0)
             previous_summary=previous_summary,
+            previous_enriched=previous_enriched,  # Phase 4.3 (P1-4): full prior candidate list
             use_mock=use_mock,
         )
+        state.tokens_used += judgment.get("usage", {}).get("total_tokens", 0) or 0
         focus = judgment["focus"]
         weakness = judgment.get("weakness", "")
         reflection = judgment.get("reflection", "")
@@ -209,11 +277,11 @@ def run_loop(
                       f"({ov['intersection']}/{ov['union']})")
 
         # ----- Phase 4.1: WorkingMemory.update -----
-        memory.add_round(enriched, focus)
+        memory.add_round(enriched, focus_used)
 
         # ----- Phase 4.1: FailedLigandSet update -----
         for c in enriched:
-            if failed_set.should_mark_failed(
+            if c.get("evaluation_status") == "complete" and not use_mock and failed_set.should_mark_failed(
                 c["composite_score"], c["dock"].get("score")
             ):
                 reason = (
@@ -226,26 +294,26 @@ def run_loop(
 
         # ----- LoopController: track best Vina -----
         round_best_vina = summary.get("best_vina")
+        prior_best = state.best_vina
         state.note_round_result(round_best_vina)
         if verbose:
             print(f"  [controller] rounds_without_improvement = "
                   f"{state.rounds_without_vina_improvement}")
 
-        # ----- Phase 4.1: HITL on Vina breakthrough -----
-        if hitl:
-            prev = state.last_round_best_vina  # set by note_round_result? no - it's the previous round
-            # Use prior best (before this round's update)
-            if round_num > 0 and round_best_vina is not None:
-                prior_best = (
-                    summary_history[-1].get("best_vina")
-                    if summary_history else None
-                )
-                if prior_best is not None and round_best_vina < prior_best:
-                    hitl_cp.on_vina_breakthrough(prior_best, round_best_vina)
+        if hitl and prior_best is not None and round_best_vina is not None:
+            if round_best_vina < prior_best:
+                state.hitl_veto = not hitl_cp.on_vina_breakthrough(prior_best, round_best_vina)
 
         # ----- Save round JSON -----
         round_record = {
             "round": round_num,
+            "run_id": run_id,
+            "protocol_id": protocol_id,
+            "is_mock": use_mock,
+            "focus_used": focus_used,
+            "focus_next": focus,
+            "previous_summary": previous_summary,
+            "tokens_used": state.tokens_used,
             "timestamp": datetime.now().isoformat(timespec="seconds"),
             "target": target["name"],
             "focus": focus,
@@ -279,6 +347,9 @@ def run_loop(
             print(f"  [save] {round_file}")
 
         rounds_log.append(round_record)
+        if judgment.get("status") == "error":
+            stop_reason = "judge_error"
+            break  # preserve evidence, do not execute an invented fallback strategy
 
         # ----- Phase 4.1 bugfix: also check stop AFTER a round, not only before.
         # If the round that just finished pushed us past the patience threshold
@@ -286,6 +357,7 @@ def run_loop(
         # next round's pre-check.
         post_stop, post_reason = loop_controller.should_stop(state)
         if post_stop:
+            stop_reason = post_reason
             if verbose:
                 print(f"  [controller] stop after round {round_num}: "
                       f"{loop_controller.explain(post_reason)}")
@@ -297,7 +369,7 @@ def run_loop(
         all_top = []
         for r in rounds_log:
             for c in r.get("candidates", []):
-                if c.get("validate", {}).get("valid"):
+                if c.get("evaluation_status") == "complete":
                     all_top.append(c)
         all_top.sort(key=lambda c: c.get("composite_score", 0), reverse=True)
         chosen = hitl_cp.select_synthesis_candidates(all_top[:5])
@@ -306,6 +378,10 @@ def run_loop(
 
     # ----- Final summary -----
     overall = {
+        "run_id": run_id, "protocol_id": protocol_id, "is_mock": use_mock,
+        "output_dir": str(out_path.resolve()), "tokens_used": state.tokens_used,
+        "status": "error" if stop_reason in ("judge_error", "no_candidates") else "finished",
+        "stop_reason": stop_reason,
         "target": target["name"],
         "rounds_completed": len(rounds_log),
         "history": summary_history,
@@ -341,7 +417,7 @@ def _per_provider_stats(enriched: list[dict]) -> dict:
             "n_unique_scaffolds": len(scafs),
             "best_vina": min(vina_scores) if vina_scores else None,
             "avg_composite": round(
-                sum(c["composite_score"] for c in cs) / max(len(cs), 1), 3),
+                sum(c["composite_score"] for c in cs if c.get("composite_score") is not None) / max(sum(c.get("composite_score") is not None for c in cs), 1), 3) if any(c.get("composite_score") is not None for c in cs) else None,
         }
     # Pairwise scaffold overlap (Tanimoto of scaffold sets)
     providers = list(by_prov.keys())
@@ -368,21 +444,23 @@ def main():
     p.add_argument("--n", type=int, default=5, help="candidates per provider per round")
     p.add_argument("--no-dock", action="store_true", help="skip Vina (faster)")
     p.add_argument("--mock", action="store_true", help="use mock LLM (no API key needed)")
+    p.add_argument("--hitl", action="store_true")
     p.add_argument("--quiet", action="store_true")
     args = p.parse_args()
 
     config = load_config(args.config)
     overall = run_loop(
         config=config,
-        output_dir=args.output,
+        output_dir=str(Path(args.output) / (("mock_" if args.mock else "run_") + datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:6])),
         max_rounds=args.rounds,
         n_per_provider=args.n,
         dock_enabled=not args.no_dock,
         use_mock=args.mock,
         verbose=not args.quiet,
+        hitl=args.hitl,
     )
-    print(f"\n[OK] loop finished: {overall['rounds_completed']} rounds -> {args.output}/")
-    print(f"     summary: {args.output}/summary.json")
+    print(f"\n[OK] loop finished: {overall['rounds_completed']} rounds -> {overall.get('output_dir', args.output)}")
+    print(f"     run_id: {overall.get('run_id')}")
 
 
 if __name__ == "__main__":
