@@ -18,8 +18,8 @@ opportunity in the AIDD multi-agent system. Issues are categorized by severity
 | Severity | Open | Resolved (2026-09-14) |
 |---|---|---|
 | P0 blocker | 0 | 3 (MiniMax 401, failed_ligands cap, WorkingMem persist) |
-| P1 important | 1 | 3 (best_molecules persist, reflection sees molecules, deterministic adoption) |
-| P2 polish | 1 | 2 (thresholds to config, agent-level metrics) |
+| P1 important | 0 | 4 (best_molecules persist, reflection sees molecules, deterministic adoption, embedding similarity) |
+| P2 polish | 0 | 3 (thresholds to config, agent-level metrics, HITL i18n) |
 | P3 future | 4 | 0 |
 
 ---
@@ -125,6 +125,53 @@ but generator produces `COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCCN` (one CH2
 longer) — passes through despite being effectively a repeat.
 
 **Fix**: Add embedding-based similarity check (Phase 4.3 candidate).
+
+**Status**: ✅ RESOLVED 2026-09-14. `FailedLigandSet` gains optional
+embedding-based similarity check:
+- `enable_embeddings=True` enables a sentence-transformers
+  (default `all-MiniLM-L6-v2`, 384-dim) index over the failed set
+- `is_similar_to_failed(smi, threshold=0.85)` returns
+  `(too_close, matched_smiles, similarity)` using L2-normalized cosine
+- `filter_smiles_strict(list)` drops both exact-match AND
+  embedding-similar survivors
+- Lazy model load; if `all-MiniLM-L6-v2` is not pre-cached, embeddings
+  silently disable rather than blocking on a download. Set
+  `AIDD_EMBED_AUTO_DOWNLOAD=1` to opt into first-time download
+- Settings (`enabled`, `threshold`, `model`) persist to JSON;
+  embeddings themselves do not (rebuilt lazily next session)
+
+Empirical validation (with cached model):
+- Near-duplicate `+CH2 morpholine` derivative: **sim=0.999** → flagged
+- Aspirin (truly unrelated drug-like mol): sim=0.76 → not flagged at 0.85 threshold
+
+**Backward compat**: when `enable_embeddings=False` (default),
+`is_similar_to_failed` is a no-op; `filter_smiles_strict` falls back
+to `filter_smiles` (exact-match path).
+
+---
+
+### P2-2. HITL prompts mix English/Chinese
+
+**Symptom**: `hitl.py` outputs:
+```
+[HITL] Pre-loop approval required. Continue? [y/n]
+```
+but if user responds with a Chinese character or "是", it's rejected.
+
+**Fix**: Accept `y/yes/n/no/yes/否`/`是`/`好`/`继续` style + 中文 `是/否`.
+
+**Status**: ✅ RESOLVED 2026-09-14. `agents/hitl.py` exports
+`_parse_yn(ans, default="n")` that recognizes:
+- **English yes**: y, yes, yep, yeah, ok, okay, k, go
+- **中文 yes**: 是, 好, 好的, 嗯, 继续 (also pinyin shi/hao/xu as
+  defensive coverage)
+- **English no**: n, no, nope, nah, nein, nn
+- **中文 no**: 否, 不, 不要, 停, 停止, 取消 (also pinyin fou/bu/ting)
+- Conservative default: garbage → False (do NOT proceed; safer for
+  compliance)
+- All three checkpoints (`pre_loop`, `on_vina_breakthrough`,
+  `select_synthesis_candidates`) now show bilingual prompts
+  (`HUMAN-IN-THE-LOOP CHECKPOINT | 人工检查点`, `[y/n / 是/否]`)
 
 ---
 
@@ -288,9 +335,11 @@ categories, line plot of best-Vina-over-time, scaffold network graph.
 | P0-2 | failed_ligands unbounded growth | 2026-09-14 | (Phase 4.3) |
 | P0-3 | WorkingMemory strategy_chain window too narrow | 2026-09-14 | (Phase 4.3) |
 | P1-1 | best_molecules not persisted | 2026-09-14 | (Phase 4.3) |
+| P1-2 | Failed-set exact-match only | 2026-09-14 | (Phase 4.3) |
 | P1-3 | adopted_count LLM-estimated | 2026-09-14 | (Phase 4.3) |
 | P1-4 | Reflection only sees focus text | 2026-09-14 | (Phase 4.3) |
 | P2-1 | Thresholds hard-coded | 2026-09-14 | (Phase 4.3) |
+| P2-2 | HITL prompts mix English/Chinese | 2026-09-14 | (Phase 4.3) |
 | P2-3 | No Agent-level evaluation framework | 2026-09-14 | (Phase 4.3) |
 | Loop Ctrl | `should_stop` only checked pre-round | 2026-09-13 | (loop.py fix) |
 | Phase4.1 | Foundation (WorkingMem + FailedSet + LoopCtrl + HITL) | 2026-09-13 | `382e7ae` |

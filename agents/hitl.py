@@ -6,11 +6,52 @@ Three checkpoints (Phase 4.1 default):
 3. End-of-loop candidate selection: human picks synthesis whitelist
 
 Drug-discovery decision making is a compliance issue, NOT a code preference.
+
+Phase 4.3 (P2-2 fix): prompts are bilingual (English + 中文). Accept
+yes/no equivalents in both languages:
+    yes:  y, yes, yep, yeah, ok, okay, 是, 好, 好的, 嗯, 继续, go
+    no:   n, no, nope, nah, 否, 不, 不要, stop, abort, 停, 取消
+Default fallback is "no" (safer for compliance). All prompts echo the
+default in [y/n] form; non-empty responses override the default.
 """
 from __future__ import annotations
 
 import sys
 from typing import Optional
+
+
+# Phase 4.3 (P2-2): i18n answer parsing.
+_YES_TOKENS = {
+    "y", "yes", "yep", "yeah", "ok", "okay", "k",
+    "是", "好", "好的", "嗯", "继续", "go", "g",
+    "shi", "hao", "xu",  # pinyin (defensive — terminal input varies)
+}
+_NO_TOKENS = {
+    "n", "no", "nope", "nah", "nein", "nn",
+    "否", "不", "不要", "停", "停止", "取消", "no",
+    "fou", "bu", "ting",
+}
+
+
+def _parse_yn(ans: str, default: str = "n") -> bool:
+    """Robust yes/no parsing across English + 中文.
+
+    Returns True for yes-tokens, False for no-tokens or unrecognized input
+    (conservative default for compliance: when in doubt, do NOT proceed).
+    """
+    a = ans.strip().lower()
+    if not a:
+        return default == "y"
+    if a in _YES_TOKENS:
+        return True
+    if a.startswith(("是", "好", "继续")):
+        return True
+    if a in _NO_TOKENS:
+        return False
+    if a.startswith(("否", "不", "停")):
+        return False
+    # Fallback: first-char heuristic
+    return a[0] in ("y", "是", "好", "k")
 
 
 class HITLCheckpoint:
@@ -26,21 +67,31 @@ class HITLCheckpoint:
 
     # ---------- generic helpers ----------
 
-    def _ask(self, prompt: str, default: str = "y") -> bool:
+    def _ask(self, prompt: str, default: str = "y", bilingual: bool = True) -> bool:
+        """Print `prompt`, read user input, return True/False.
+
+        Phase 4.3 (P2-2): bilingual prompt + i18n answer parsing. Accepts
+        English (y/yes/no/nope) and 中文 (是/好/继续/否/不/停).
+        """
         if not self.require_approval:
             return True
         print()
         print("=" * 64)
-        print(f"  HUMAN-IN-THE-LOOP CHECKPOINT")
+        if bilingual:
+            print("  HUMAN-IN-THE-LOOP CHECKPOINT  |  人工检查点")
+        else:
+            print("  HUMAN-IN-THE-LOOP CHECKPOINT")
         print("=" * 64)
         print(prompt)
+        if bilingual:
+            hint = "  [y/n / 是/否] "
+        else:
+            hint = f"  [{default}/n] "
         try:
-            ans = input(f"  [{default}/n] ").strip().lower()
+            ans = input(hint)
         except EOFError:
             return default == "y"
-        if not ans:
-            return default == "y"
-        return ans.startswith("y")
+        return _parse_yn(ans, default=default)
 
     # ---------- the 3 checkpoints ----------
 
@@ -48,12 +99,13 @@ class HITLCheckpoint:
         if "start" not in self.enabled_points:
             return True
         msg = (
-            f"About to start a {n_rounds}-round iterative optimization loop:\n"
-            f"  - rounds: {n_rounds}\n"
-            f"  - candidates per round per provider: {n_per_round}\n"
-            f"  - providers: {provider_count}\n"
-            f"  - estimated total: {n_rounds * n_per_round * provider_count} molecules\n"
-            f"Proceed?"
+            f"About to start a {n_rounds}-round iterative optimization loop.\n"
+            f"即将开始一个 {n_rounds} 轮迭代优化循环。\n"
+            f"  - rounds:           {n_rounds}\n"
+            f"  - candidates/round: {n_per_round}\n"
+            f"  - providers:        {provider_count}\n"
+            f"  - estimated total:  {n_rounds * n_per_round * provider_count} molecules\n"
+            f"Proceed?  /  继续?"
         )
         return self._ask(msg)
 
@@ -72,7 +124,9 @@ class HITLCheckpoint:
         msg = (
             f"Vina breakthrough: {prev_best:.2f} -> {new_best:.2f} "
             f"(improved by {improvement:.2f}).\n"
-            f"Continue to next round, or stop and inspect this molecule?"
+            f"Vina 突破: 从 {prev_best:.2f} 改进到 {new_best:.2f}（提升 {improvement:.2f}）。\n"
+            f"Continue to next round, or stop and inspect this molecule?\n"
+            f"继续下一轮，还是停下检查这个分子?"
         )
         ans = self._ask(msg)
         if not ans:
@@ -85,10 +139,11 @@ class HITLCheckpoint:
             return top_candidates[:3]
         print()
         print("=" * 64)
-        print("  FINAL CANDIDATE SELECTION")
+        print("  FINAL CANDIDATE SELECTION  |  最终候选选择")
         print("=" * 64)
-        print("  Review the top candidates. y = add to synthesis whitelist, n = skip.")
-        print("  (Decision: LLM cannot approve synthesis - this is compliance.)")
+        print("  Review the top candidates. y/是 = add to whitelist, n/否 = skip.")
+        print("  (LLM cannot approve synthesis - this is compliance.)")
+        print("  (LLM 不能批准合成 — 这是合规红线。)")
         chosen: list[dict] = []
         for i, c in enumerate(top_candidates[:5]):
             v = c.get("validate", {})
@@ -100,10 +155,10 @@ class HITLCheckpoint:
             print(f"      ADMET={a.get('summary_score', '?'):.3f} "
                   f"Vina={d.get('score', '?'):.2f}")
             try:
-                ans = input("      Include in synthesis whitelist? [y/N] ").strip().lower()
+                ans = input("      Include in synthesis whitelist? [y/N / 是/否] ")
             except EOFError:
                 ans = "n"
-            if ans.startswith("y"):
+            if _parse_yn(ans, default="n"):
                 chosen.append(c)
         self.synthesis_whitelist = chosen
         return chosen

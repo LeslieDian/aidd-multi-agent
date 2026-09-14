@@ -111,6 +111,17 @@ scoring:
     composite_floor: 0.5        # composite_score < this -> mark failed
     vina_floor: -2.5            # vina_score > this  -> mark failed (more negative = better)
     max_size: 500               # Phase 4.3 (P0-2 fix): LRF eviction cap; 0 = unlimited
+    # Phase 4.3 (P1-2 fix): embedding-based similarity check. When enabled,
+    # FailedLigandSet encodes each SMILES with sentence-transformers and
+    # treats any new candidate whose top-1 cosine similarity to the failed
+    # set exceeds `threshold` as also-failed. Catches near-duplicates the
+    # exact-match path misses (e.g. an extra CH2 on a known-bad scaffold).
+    # Lazy model load; falls back silently to exact-match if
+    # sentence-transformers / torch are unavailable.
+    embeddings:
+      enabled: false            # opt-in (sentence-transformers dep)
+      threshold: 0.85           # cosine sim >= this -> structurally too close
+      model: all-MiniLM-L6-v2   # 384-dim, ~80 MB, fast on CPU
 
 # ----------------------------------------------------------
 # Loop configuration

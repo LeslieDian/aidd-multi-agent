@@ -148,6 +148,17 @@ def run_loop(
             "failed_max_size",
             failed_cfg.get("max_size", 0),
         ),
+        # Phase 4.3 (P1-2): optional embedding-based similarity filter.
+        # Off by default; opt in via config.yaml scoring.failed_set.embeddings.enabled.
+        enable_embeddings=bool(
+            (failed_cfg.get("embeddings") or {}).get("enabled", False)
+        ),
+        embedding_threshold=float(
+            (failed_cfg.get("embeddings") or {}).get("threshold", 0.85)
+        ),
+        embedding_model=str(
+            (failed_cfg.get("embeddings") or {}).get("model", "all-MiniLM-L6-v2")
+        ),
     )
     hitl_cp = HITLCheckpoint(require_approval=hitl)
 
