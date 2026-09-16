@@ -1,0 +1,131 @@
+PATCH COMMITTED [{"patch_execution": 1, "status": "OK", "table_counts_unchanged": true}, {"patch_execution": 2, "status": "OK", "table_counts_unchanged": true}, {"tables_preserved": true, "rows_preserved": true, "counts": {"campaigns": 1, "runs": 1, "molecules": 17, "proposals": 25, "evaluations": 100, "filter_events": 50, "strategy_memories": 8, "artifacts": 6}}]
+
+COMMAND: python -B scripts/selfcheck_db.py --skip-schema
+CONNECTED {"database": "aidd", "role": "aidd", "server_version": "16.15"}
+EXTENSIONS [{"extname": "rdkit", "extversion": "4.6.1", "nspname": "public"}, {"extname": "vector", "extversion": "0.8.6", "nspname": "public"}]
+SCHEMA {"tables": ["artifacts", "campaigns", "evaluations", "filter_events", "molecules", "proposals", "runs", "strategy_memories"], "repeat_ddl": "SKIPPED (existing tables)", "column_type": "vector"}
+IMPORT_1 {"status": "already_imported", "run_id": 1, "revision_hash": "0a5fc5ed9c874bb39b2f0bc061c9ca0cec9076cd2660c1a943cb4790db08b000", "rows_added": {"campaigns": 0, "runs": 0, "molecules": 0, "proposals": 0, "evaluations": 0, "filter_events": 0, "strategy_memories": 0, "artifacts": 0}}
+IMPORT_2 {"status": "already_imported", "run_id": 1, "revision_hash": "0a5fc5ed9c874bb39b2f0bc061c9ca0cec9076cd2660c1a943cb4790db08b000", "rows_added": {"campaigns": 0, "runs": 0, "molecules": 0, "proposals": 0, "evaluations": 0, "filter_events": 0, "strategy_memories": 0, "artifacts": 0}}
+IDEMPOTENT {"unchanged_counts": true, "counts": {"campaigns": 1, "runs": 1, "molecules": 17, "proposals": 25, "evaluations": 100, "filter_events": 50, "strategy_memories": 8, "artifacts": 6}}
+TANIMOTO {"query": "COc1cc2ncnc(Nc3ccc(C#C)cc3)c2cc1OCCN1CCOCC1", "threshold": "> 0.4", "all_hits": [{"id": 1, "canonical_smiles": "C#Cc1ccc(Nc2ncnc3cc(OC)c(OCCN4CCOCC4)cc23)cc1", "similarity": 1.0}, {"id": 4, "canonical_smiles": "C#Cc1ccc(Nc2ncnc3cc(OCCCN4CCOCC4)c(OC)cc23)cc1", "similarity": 0.9166666666666666}, {"id": 12, "canonical_smiles": "C#Cc1ccc(Nc2ncnc3cc(OC)c(OCCCN4CCOCC4)cc23)cc1", "similarity": 0.9166666666666666}, {"id": 14, "canonical_smiles": "COc1cc2c(Nc3ccc(C#N)cc3)ncnc2cc1OCCCN1CCOCC1", "similarity": 0.7692307692307693}, {"id": 15, "canonical_smiles": "COc1cc2c(Nc3ccc(F)cc3)ncnc2cc1OCCCN1CCOCC1", "similarity": 0.7230769230769231}, {"id": 9, "canonical_smiles": "COc1cc2c(Nc3ccc(F)c(Cl)c3)ncnc2cc1OCCN1CCOCC1", "similarity": 0.7058823529411765}, {"id": 13, "canonical_smiles": "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCN1CCOCC1", "similarity": 0.7058823529411765}, {"id": 7, "canonical_smiles": "C#Cc1ccc(Nc2ncnc3cc(OCCOC)c(OCCOC)cc23)cc1", "similarity": 0.6557377049180327}, {"id": 5, "canonical_smiles": "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCCN1CCOCC1", "similarity": 0.647887323943662}, {"id": 6, "canonical_smiles": "COc1cc2c(Nc3ccc(F)c(Cl)c3)ncnc2cc1OCCCN1CCOCC1", "similarity": 0.647887323943662}, {"id": 2, "canonical_smiles": "C=CC(=O)Nc1cccc(Nc2ncnc3cc(OCCCN4CCOCC4)c(OC)cc23)c1", "similarity": 0.5769230769230769}, {"id": 3, "canonical_smiles": "COc1cc2c(Nc3ccc(F)c(Cl)c3)ncnc2cc1OCCCN1CCN(C)CC1", "similarity": 0.5333333333333333}, {"id": 20, "canonical_smiles": "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCCN1CCN(C)CC1", "similarity": 0.5333333333333333}, {"id": 10, "canonical_smiles": "C#Cc1ccc(Nc2ncnc3cc(OCCOC)c(OCCOC)cc23)cc1F", "similarity": 0.49295774647887325}, {"id": 23, "canonical_smiles": "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OC", "similarity": 0.4411764705882353}], "matches_exact_scan": true}
+SUBSTRUCTURE {"smarts": "c1ccccc1", "hit_count": 17}
+SERVER_CHEMISTRY {"canonical_smiles": "C#Cc1ccc(Nc2ncnc3cc(OC)c(OCCN4CCOCC4)cc23)cc1", "formula": "C23H24N4O3", "molecular_weight": 404.4700012207031, "logp": 3.0743000507354736, "bits": 2048, "chemistry_profile": {"bits": "2048", "policy": "parse-canonical-v1-preserve-components-charge-stereo", "radius": "2", "rdkit_version": "0.76.0", "cartridge_version": "4.6.1"}}
+INVALID_SMILES {"preserved_raw": true, "molecule_id": null, "no_fingerprint": true, "error": "mol_from_smiles returned NULL: invalid SMILES"}
+REJECTED {"case": "campaigns:update", "sqlstate": "55000"}
+REJECTED {"case": "campaigns:delete", "sqlstate": "55000"}
+REJECTED {"case": "runs:update", "sqlstate": "55000"}
+REJECTED {"case": "runs:delete", "sqlstate": "55000"}
+REJECTED {"case": "molecules:update", "sqlstate": "55000"}
+REJECTED {"case": "molecules:delete", "sqlstate": "55000"}
+REJECTED {"case": "proposals:update", "sqlstate": "55000"}
+REJECTED {"case": "proposals:delete", "sqlstate": "55000"}
+REJECTED {"case": "evaluations:update", "sqlstate": "55000"}
+REJECTED {"case": "evaluations:delete", "sqlstate": "55000"}
+REJECTED {"case": "filter_events:update", "sqlstate": "55000"}
+REJECTED {"case": "filter_events:delete", "sqlstate": "55000"}
+REJECTED {"case": "strategy_memories:update", "sqlstate": "55000"}
+REJECTED {"case": "strategy_memories:delete", "sqlstate": "55000"}
+REJECTED {"case": "artifacts:update", "sqlstate": "55000"}
+REJECTED {"case": "artifacts:delete", "sqlstate": "55000"}
+EMBEDDING_METADATA {"missing_metadata_rejected": true}
+REJECTED {"case": "invalid_smiles_without_error", "sqlstate": "23514"}
+REJECTED {"case": "error_with_numeric_score", "sqlstate": "23514"}
+REJECTED {"case": "wrong_dimension", "sqlstate": "23514"}
+REJECTED {"case": "wrong_hash", "sqlstate": "23514"}
+REJECTED {"case": "artifact_without_hash", "sqlstate": "23514"}
+REJECTED {"case": "noncanonical_structure", "sqlstate": "23514"}
+REJECTED {"case": "wrong_fingerprint_width", "sqlstate": "23514"}
+CONSTRAINT_TESTS {"temporary_rows_rolled_back": true}
+FRESH_IMPORT {"first": {"status": "imported", "run_id": 2, "revision_hash": "0a5fc5ed9c874bb39b2f0bc061c9ca0cec9076cd2660c1a943cb4790db08b000", "rows_added": {"campaigns": 1, "runs": 1, "molecules": 0, "proposals": 25, "evaluations": 100, "filter_events": 50, "strategy_memories": 5, "artifacts": 6}}, "second": {"status": "already_imported", "run_id": 2, "revision_hash": "0a5fc5ed9c874bb39b2f0bc061c9ca0cec9076cd2660c1a943cb4790db08b000", "rows_added": {"campaigns": 0, "runs": 0, "molecules": 0, "proposals": 0, "evaluations": 0, "filter_events": 0, "strategy_memories": 0, "artifacts": 0}}, "will_roll_back": true}
+FRESH_IMPORT_ROLLBACK {"counts_unchanged": true}
+VECTOR_COSINE {"synthetic": true, "repeat_insert": "no duplicates", "hits": [{"id": 7, "content": "Synthetic vector A", "embedding_model": "selftest", "embedding_version": "v1", "embedding_dimension": 3, "cosine_distance": 0.0}, {"id": 8, "content": "Synthetic vector B", "embedding_model": "selftest", "embedding_version": "v1", "embedding_dimension": 3, "cosine_distance": 0.02985753301900307}, {"id": 9, "content": "Synthetic vector C", "embedding_model": "selftest", "embedding_version": "v1", "embedding_dimension": 3, "cosine_distance": 1.0}], "excluded_from_normal_search": true}
+HNSW_PLAN {"QUERY PLAN": [{"Plan": {"Node Type": "Limit", "Parallel Aware": false, "Async Capable": false, "Startup Cost": 4.01, "Total Cost": 8.02, "Plan Rows": 1, "Plan Width": 16, "Plans": [{"Node Type": "Index Scan", "Parent Relationship": "Outer", "Parallel Aware": false, "Async Capable": false, "Scan Direction": "Forward", "Index Name": "memories_selftest_cosine_hnsw", "Relation Name": "strategy_memories", "Alias": "strategy_memories", "Startup Cost": 4.01, "Total Cost": 8.02, "Plan Rows": 1, "Plan Width": 16, "Order By": "((embedding)::vector(3) <=> '[1,0,0]'::vector(3))"}]}}]}
+FINAL_COUNTS {"campaigns": 1, "runs": 1, "molecules": 17, "proposals": 25, "evaluations": 100, "filter_events": 50, "strategy_memories": 8, "artifacts": 6}
+SELF_CHECK PASSED (committed)
+
+EXIT_CODE: 0
+
+COMMAND: python -B scripts/migrate_runs_to_db.py --skip-schema
+{
+  "status": "already_imported",
+  "run_id": 1,
+  "revision_hash": "0a5fc5ed9c874bb39b2f0bc061c9ca0cec9076cd2660c1a943cb4790db08b000",
+  "rows_added": {
+    "campaigns": 0,
+    "runs": 0,
+    "molecules": 0,
+    "proposals": 0,
+    "evaluations": 0,
+    "filter_events": 0,
+    "strategy_memories": 0,
+    "artifacts": 0
+  }
+}
+
+EXIT_CODE: 0
+
+COMMAND: python -B scripts/migrate_runs_to_db.py --skip-schema
+{
+  "status": "already_imported",
+  "run_id": 1,
+  "revision_hash": "0a5fc5ed9c874bb39b2f0bc061c9ca0cec9076cd2660c1a943cb4790db08b000",
+  "rows_added": {
+    "campaigns": 0,
+    "runs": 0,
+    "molecules": 0,
+    "proposals": 0,
+    "evaluations": 0,
+    "filter_events": 0,
+    "strategy_memories": 0,
+    "artifacts": 0
+  }
+}
+
+EXIT_CODE: 0
+
+COMMAND: python -B scripts/selfcheck_db.py --skip-schema
+CONNECTED {"database": "aidd", "role": "aidd", "server_version": "16.15"}
+EXTENSIONS [{"extname": "rdkit", "extversion": "4.6.1", "nspname": "public"}, {"extname": "vector", "extversion": "0.8.6", "nspname": "public"}]
+SCHEMA {"tables": ["artifacts", "campaigns", "evaluations", "filter_events", "molecules", "proposals", "runs", "strategy_memories"], "repeat_ddl": "SKIPPED (existing tables)", "column_type": "vector"}
+IMPORT_1 {"status": "already_imported", "run_id": 1, "revision_hash": "0a5fc5ed9c874bb39b2f0bc061c9ca0cec9076cd2660c1a943cb4790db08b000", "rows_added": {"campaigns": 0, "runs": 0, "molecules": 0, "proposals": 0, "evaluations": 0, "filter_events": 0, "strategy_memories": 0, "artifacts": 0}}
+IMPORT_2 {"status": "already_imported", "run_id": 1, "revision_hash": "0a5fc5ed9c874bb39b2f0bc061c9ca0cec9076cd2660c1a943cb4790db08b000", "rows_added": {"campaigns": 0, "runs": 0, "molecules": 0, "proposals": 0, "evaluations": 0, "filter_events": 0, "strategy_memories": 0, "artifacts": 0}}
+IDEMPOTENT {"unchanged_counts": true, "counts": {"campaigns": 1, "runs": 1, "molecules": 17, "proposals": 25, "evaluations": 100, "filter_events": 50, "strategy_memories": 8, "artifacts": 6}}
+TANIMOTO {"query": "COc1cc2ncnc(Nc3ccc(C#C)cc3)c2cc1OCCN1CCOCC1", "threshold": "> 0.4", "all_hits": [{"id": 1, "canonical_smiles": "C#Cc1ccc(Nc2ncnc3cc(OC)c(OCCN4CCOCC4)cc23)cc1", "similarity": 1.0}, {"id": 4, "canonical_smiles": "C#Cc1ccc(Nc2ncnc3cc(OCCCN4CCOCC4)c(OC)cc23)cc1", "similarity": 0.9166666666666666}, {"id": 12, "canonical_smiles": "C#Cc1ccc(Nc2ncnc3cc(OC)c(OCCCN4CCOCC4)cc23)cc1", "similarity": 0.9166666666666666}, {"id": 14, "canonical_smiles": "COc1cc2c(Nc3ccc(C#N)cc3)ncnc2cc1OCCCN1CCOCC1", "similarity": 0.7692307692307693}, {"id": 15, "canonical_smiles": "COc1cc2c(Nc3ccc(F)cc3)ncnc2cc1OCCCN1CCOCC1", "similarity": 0.7230769230769231}, {"id": 9, "canonical_smiles": "COc1cc2c(Nc3ccc(F)c(Cl)c3)ncnc2cc1OCCN1CCOCC1", "similarity": 0.7058823529411765}, {"id": 13, "canonical_smiles": "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCN1CCOCC1", "similarity": 0.7058823529411765}, {"id": 7, "canonical_smiles": "C#Cc1ccc(Nc2ncnc3cc(OCCOC)c(OCCOC)cc23)cc1", "similarity": 0.6557377049180327}, {"id": 5, "canonical_smiles": "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCCN1CCOCC1", "similarity": 0.647887323943662}, {"id": 6, "canonical_smiles": "COc1cc2c(Nc3ccc(F)c(Cl)c3)ncnc2cc1OCCCN1CCOCC1", "similarity": 0.647887323943662}, {"id": 2, "canonical_smiles": "C=CC(=O)Nc1cccc(Nc2ncnc3cc(OCCCN4CCOCC4)c(OC)cc23)c1", "similarity": 0.5769230769230769}, {"id": 3, "canonical_smiles": "COc1cc2c(Nc3ccc(F)c(Cl)c3)ncnc2cc1OCCCN1CCN(C)CC1", "similarity": 0.5333333333333333}, {"id": 20, "canonical_smiles": "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCCN1CCN(C)CC1", "similarity": 0.5333333333333333}, {"id": 10, "canonical_smiles": "C#Cc1ccc(Nc2ncnc3cc(OCCOC)c(OCCOC)cc23)cc1F", "similarity": 0.49295774647887325}, {"id": 23, "canonical_smiles": "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OC", "similarity": 0.4411764705882353}], "matches_exact_scan": true}
+SUBSTRUCTURE {"smarts": "c1ccccc1", "hit_count": 17}
+SERVER_CHEMISTRY {"canonical_smiles": "C#Cc1ccc(Nc2ncnc3cc(OC)c(OCCN4CCOCC4)cc23)cc1", "formula": "C23H24N4O3", "molecular_weight": 404.4700012207031, "logp": 3.0743000507354736, "bits": 2048, "chemistry_profile": {"bits": "2048", "policy": "parse-canonical-v1-preserve-components-charge-stereo", "radius": "2", "rdkit_version": "0.76.0", "cartridge_version": "4.6.1"}}
+INVALID_SMILES {"preserved_raw": true, "molecule_id": null, "no_fingerprint": true, "error": "mol_from_smiles returned NULL: invalid SMILES"}
+REJECTED {"case": "campaigns:update", "sqlstate": "55000"}
+REJECTED {"case": "campaigns:delete", "sqlstate": "55000"}
+REJECTED {"case": "runs:update", "sqlstate": "55000"}
+REJECTED {"case": "runs:delete", "sqlstate": "55000"}
+REJECTED {"case": "molecules:update", "sqlstate": "55000"}
+REJECTED {"case": "molecules:delete", "sqlstate": "55000"}
+REJECTED {"case": "proposals:update", "sqlstate": "55000"}
+REJECTED {"case": "proposals:delete", "sqlstate": "55000"}
+REJECTED {"case": "evaluations:update", "sqlstate": "55000"}
+REJECTED {"case": "evaluations:delete", "sqlstate": "55000"}
+REJECTED {"case": "filter_events:update", "sqlstate": "55000"}
+REJECTED {"case": "filter_events:delete", "sqlstate": "55000"}
+REJECTED {"case": "strategy_memories:update", "sqlstate": "55000"}
+REJECTED {"case": "strategy_memories:delete", "sqlstate": "55000"}
+REJECTED {"case": "artifacts:update", "sqlstate": "55000"}
+REJECTED {"case": "artifacts:delete", "sqlstate": "55000"}
+EMBEDDING_METADATA {"missing_metadata_rejected": true}
+REJECTED {"case": "invalid_smiles_without_error", "sqlstate": "23514"}
+REJECTED {"case": "error_with_numeric_score", "sqlstate": "23514"}
+REJECTED {"case": "wrong_dimension", "sqlstate": "23514"}
+REJECTED {"case": "wrong_hash", "sqlstate": "23514"}
+REJECTED {"case": "artifact_without_hash", "sqlstate": "23514"}
+REJECTED {"case": "noncanonical_structure", "sqlstate": "23514"}
+REJECTED {"case": "wrong_fingerprint_width", "sqlstate": "23514"}
+MOLECULE_WRITE {"canonical_smiles": "CCO", "formula": "C2H6O", "bits": 2048}
+VECTOR_WRITE {"new_row_retrieved": true, "cosine_distance": 0, "will_roll_back": true}
+CONSTRAINT_TESTS {"temporary_rows_rolled_back": true}
+FRESH_IMPORT {"first": {"status": "imported", "run_id": 3, "revision_hash": "0a5fc5ed9c874bb39b2f0bc061c9ca0cec9076cd2660c1a943cb4790db08b000", "rows_added": {"campaigns": 1, "runs": 1, "molecules": 0, "proposals": 25, "evaluations": 100, "filter_events": 50, "strategy_memories": 5, "artifacts": 6}}, "second": {"status": "already_imported", "run_id": 3, "revision_hash": "0a5fc5ed9c874bb39b2f0bc061c9ca0cec9076cd2660c1a943cb4790db08b000", "rows_added": {"campaigns": 0, "runs": 0, "molecules": 0, "proposals": 0, "evaluations": 0, "filter_events": 0, "strategy_memories": 0, "artifacts": 0}}, "will_roll_back": true}
+FRESH_IMPORT_ROLLBACK {"counts_unchanged": true}
+VECTOR_COSINE {"synthetic": true, "repeat_insert": "no duplicates", "hits": [{"id": 7, "content": "Synthetic vector A", "embedding_model": "selftest", "embedding_version": "v1", "embedding_dimension": 3, "cosine_distance": 0.0}, {"id": 8, "content": "Synthetic vector B", "embedding_model": "selftest", "embedding_version": "v1", "embedding_dimension": 3, "cosine_distance": 0.02985753301900307}, {"id": 9, "content": "Synthetic vector C", "embedding_model": "selftest", "embedding_version": "v1", "embedding_dimension": 3, "cosine_distance": 1.0}], "excluded_from_normal_search": true}
+HNSW_PLAN {"QUERY PLAN": [{"Plan": {"Node Type": "Limit", "Parallel Aware": false, "Async Capable": false, "Startup Cost": 4.01, "Total Cost": 8.02, "Plan Rows": 1, "Plan Width": 16, "Plans": [{"Node Type": "Index Scan", "Parent Relationship": "Outer", "Parallel Aware": false, "Async Capable": false, "Scan Direction": "Forward", "Index Name": "memories_selftest_cosine_hnsw", "Relation Name": "strategy_memories", "Alias": "strategy_memories", "Startup Cost": 4.01, "Total Cost": 8.02, "Plan Rows": 1, "Plan Width": 16, "Order By": "((embedding)::vector(3) <=> '[1,0,0]'::vector(3))"}]}}]}
+FINAL_COUNTS {"campaigns": 1, "runs": 1, "molecules": 17, "proposals": 25, "evaluations": 100, "filter_events": 50, "strategy_memories": 8, "artifacts": 6}
+SELF_CHECK PASSED (committed)
+
+EXIT_CODE: 0
