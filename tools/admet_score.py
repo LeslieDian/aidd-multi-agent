@@ -1,40 +1,65 @@
-"""admet_score 鈥?鍩轰簬 RDKit 鎻忚堪绗︾殑 ADMET 杩戜技璇勫垎
+"""Transparent RDKit descriptor heuristics used for early AIDD triage.
 
-娉ㄦ剰锛氳繖鏄?*浼扮畻**锛屼笉鏄湡瀹?ADMET 棰勬祴锛堟病鏈夐泦鎴?admetSAR / SwissADME锛夈€?
-閫傚悎鍦?Agent 闂幆閲屽仛**蹇€熺矖绛?*鈥斺€旀妸鏄庢樉涓嶅悎鐞嗙殑鍒嗗瓙鍓旀帀銆?
-
-鐪熷疄绮惧害鏇撮珮鐨?ADMET 鍙€夛細
-- padelpy锛堣皟鐢?PaDEL-Descriptor 杞欢锛?
-- admetSAR 2.0 web API
-- 鑷 QSAR 妯″瀷
+These values are screening signals. They are not measured ADMET endpoints or
+calibrated toxicity probabilities. The continuous hERG risk score is an
+explicit heuristic so multi-objective optimization can detect safety drift.
 """
 from __future__ import annotations
 
+import math
 from typing import Iterable
 
 from rdkit import Chem, RDLogger
-from rdkit.Chem import Descriptors, Lipinski, QED
+from rdkit.Chem import Descriptors, Lipinski, QED, rdMolDescriptors
 
 RDLogger.DisableLog("rdApp.*")
 
 
-def estimate_admet(smiles: str) -> dict:
-    """浼扮畻 ADMET 澶氱洰鏍囪瘎鍒嗐€?
+def _is_carbonyl_or_sulfonyl_neighbor(atom: Chem.Atom) -> bool:
+    """Approximate whether a nitrogen is deactivated as amide/sulfonamide."""
+    for neighbor in atom.GetNeighbors():
+        if neighbor.GetAtomicNum() not in {6, 16}:
+            continue
+        for bond in neighbor.GetBonds():
+            other = bond.GetOtherAtom(neighbor)
+            if other.GetIdx() == atom.GetIdx():
+                continue
+            if other.GetAtomicNum() in {8, 16} and bond.GetBondTypeAsDouble() >= 1.9:
+                return True
+    return False
 
-    Returns:
-        dict: {
-            "valid": bool,
-            "smiles": str,
-            "absorption": float,        # 1.0 瀹岀編锛岃秺浣庤秺宸紙鍩轰簬 TPSA锛?
-            "bioavailability": float,   # 0.5/1.0锛屽熀浜?Veber 瑙勫垯
-            "herg_risk": float,         # 0/1锛宧ERG 蹇冭剰姣掓€ч闄?
-            "qed": float,               # 0-1锛屽畾閲忚嵂鐗╃浉浼兼€э紙QED锛?
-            "tpsa": float,
-            "rotatable_bonds": int,
-            "summary_score": float,     # 缁煎悎锛?-1锛?
-            "warnings": list[str],
-        }
-    """
+
+def _basic_nitrogen_profile(mol: Chem.Mol) -> tuple[int, float]:
+    """Return count and weighted basicity proxy for nitrogen environments."""
+    count = 0
+    score = 0.0
+    for atom in mol.GetAtoms():
+        if atom.GetAtomicNum() != 7 or atom.GetFormalCharge() < 0:
+            continue
+        if _is_carbonyl_or_sulfonyl_neighbor(atom):
+            continue
+        if atom.GetIsAromatic() and atom.GetTotalNumHs() > 0:
+            continue
+        count += 1
+        if atom.GetIsAromatic():
+            # Pyridine/quinazoline-like nitrogens are much weaker bases than
+            # aliphatic amines; keep a small contribution instead of treating
+            # them as equivalent hERG drivers.
+            score += 0.15
+        elif any(neighbor.GetIsAromatic() for neighbor in atom.GetNeighbors()):
+            # Aniline-like nitrogen is resonance-deactivated.
+            score += 0.35
+        else:
+            score += 1.0
+    return count, score
+
+
+def _sigmoid(value: float) -> float:
+    return 1.0 / (1.0 + math.exp(-value))
+
+
+def estimate_admet(smiles: str) -> dict:
+    """Estimate transparent descriptor-based ADMET and safety proxies."""
     if not smiles or not isinstance(smiles, str):
         return {"valid": False, "smiles": str(smiles), "error": "empty input"}
 
@@ -42,75 +67,85 @@ def estimate_admet(smiles: str) -> dict:
     if mol is None:
         return {"valid": False, "smiles": smiles, "error": "Invalid SMILES"}
 
-    tpsa = Descriptors.TPSA(mol)
-    rot_bonds = Lipinski.NumRotatableBonds(mol)
-    logp = Descriptors.MolLogP(mol)
-    mw = Descriptors.MolWt(mol)
-    qed = QED.qed(mol)
+    tpsa = float(Descriptors.TPSA(mol))
+    rot_bonds = int(Lipinski.NumRotatableBonds(mol))
+    logp = float(Descriptors.MolLogP(mol))
+    mw = float(Descriptors.MolWt(mol))
+    qed = float(QED.qed(mol))
+    aromatic_rings = int(rdMolDescriptors.CalcNumAromaticRings(mol))
+    basic_nitrogens, basic_nitrogen_score = _basic_nitrogen_profile(mol)
+    warnings: list[str] = []
 
-    warnings = []
-
-    # ---------- 1. 鍚告敹锛堝熀浜?TPSA锛?---------
-    # 缁忓吀 Veber锛歍PSA 鈮?140 脜虏 鍚告敹鑹ソ
     if tpsa <= 140:
         absorption = 1.0
     elif tpsa <= 180:
         absorption = 0.5
+        warnings.append("TPSA>140: reduced passive-absorption proxy")
     else:
         absorption = 0.0
-        warnings.append("TPSA>180锛氬惛鏀跺樊")
+        warnings.append("TPSA>180: poor passive-absorption proxy")
 
-    # ---------- 2. 鐢熺墿鍒╃敤搴︼紙Veber 瑙勫垯锛?---------
     if rot_bonds <= 10 and tpsa <= 140:
         bioavailability = 1.0
     elif rot_bonds <= 15:
         bioavailability = 0.5
-        warnings.append("rotatable_bonds 杈冨")
+        warnings.append("Veber flexibility/polarity warning")
     else:
         bioavailability = 0.0
         warnings.append("rotatable_bonds>15")
 
-    # ---------- 3. hERG 椋庨櫓锛堢矖绛涳細logP > 3.5 涓旀湁纰辨€ф爱锛?---------
-    has_basic_n = any(
-        atom.GetAtomicNum() == 7
-        and atom.GetFormalCharge() == 0
-        and atom.GetTotalNumHs() >= 1  # 鏈?H = 纰辨€?
-        for atom in mol.GetAtoms()
-    )
-    herg_risk = 1.0 if (logp > 3.5 and has_basic_n) else 0.0
+    if basic_nitrogen_score > 0:
+        lipophilic_term = _sigmoid((logp - 3.5) / 0.6)
+        basic_term = min(1.0, basic_nitrogen_score)
+        aromatic_term = min(1.0, aromatic_rings / 3.0)
+        size_term = max(0.0, min(1.0, (mw - 350.0) / 250.0))
+        herg_risk_score = min(
+            1.0,
+            basic_term * (0.75 * lipophilic_term + 0.15 * aromatic_term)
+            + 0.10 * size_term,
+        )
+    else:
+        herg_risk_score = 0.0
+    herg_risk = 1.0 if herg_risk_score >= 0.5 else 0.0
     if herg_risk:
-        warnings.append("hERG 椋庨櫓鍋忛珮")
+        warnings.append("hERG descriptor-risk proxy >= 0.5")
 
-    # ---------- 4. 缁煎悎 ----------
-    # QED 宸茬粡鏄?0-1 鐨勭患鍚堣嵂鐗╃浉浼煎害
-    summary_score = (
-        0.3 * absorption
-        + 0.3 * bioavailability
-        + 0.2 * (1 - herg_risk)
-        + 0.2 * qed
-    )
+    admet_quality_score = 0.375 * absorption + 0.375 * bioavailability + 0.25 * qed
+    safety_score = 1.0 - herg_risk_score
+    summary_score = 0.8 * admet_quality_score + 0.2 * safety_score
 
     return {
         "valid": True,
         "smiles": Chem.MolToSmiles(mol),
-        "absorption": round(absorption, 3),
-        "bioavailability": round(bioavailability, 3),
-        "herg_risk": round(herg_risk, 3),
-        "qed": round(qed, 3),
-        "tpsa": round(tpsa, 2),
+        "method": "rdkit_descriptor_heuristic_v2",
+        "is_trained_admet_model": False,
+        "interpretation": (
+            "Screening heuristics, not measured ADMET or calibrated toxicity probabilities"
+        ),
+        "absorption": absorption,
+        "bioavailability": bioavailability,
+        "herg_risk": herg_risk,
+        "herg_risk_score": round(herg_risk_score, 6),
+        "safety_score": round(safety_score, 6),
+        "qed": round(qed, 6),
+        "logp": round(logp, 6),
+        "mw": round(mw, 6),
+        "tpsa": round(tpsa, 6),
         "rotatable_bonds": rot_bonds,
-        "summary_score": round(summary_score, 3),
+        "aromatic_rings": aromatic_rings,
+        "basic_nitrogen_count": basic_nitrogens,
+        "basic_nitrogen_score": round(basic_nitrogen_score, 6),
+        "admet_quality_score": round(admet_quality_score, 6),
+        "summary_score": round(summary_score, 6),
         "warnings": warnings,
     }
 
 
 def admet_batch(smiles_list: Iterable[str]) -> list[dict]:
-    return [estimate_admet(s) for s in smiles_list]
+    return [estimate_admet(smiles) for smiles in smiles_list]
 
 
-# ----------------- CLI -----------------
-
-def _main():
+def _main() -> None:
     import json
     import sys
 

@@ -18,13 +18,16 @@ from tools import dock_batch
 # Updated to match config.yaml (erlotinib geometric center in 1M17, +6 A padding)
 CENTER = (22.014, 0.253, 52.794)
 SIZE = (27.7, 16.7, 19.1)
-RECEPTOR = "data/1M17.pdbqt"
+RECEPTOR = "data/prepared/1M17_v1.pdbqt"
+
+from tools.references import load_references
+REFERENCES = load_references()
 
 PANEL = [
     # (name, SMILES, expected_category)
-    ("erlotinib",   "C#Cc1ccc(Nc2ncnc3cc(OCCOC)c(OCCOC)cc23)cc1",  "EGFR inhibitor"),
-    ("gefitinib",   "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCCN1CCOCC1", "EGFR inhibitor"),
-    ("afatinib",    "CN(C)C(=O)C1=CC=CC=C1C(=O)Nc1ncnc2cc(NCc3ccc(C)cc3)c(OC)cc12", "EGFR inhibitor"),
+    ("erlotinib", REFERENCES["erlotinib"]["smiles"],  "EGFR inhibitor"),
+    ("gefitinib", REFERENCES["gefitinib"]["smiles"], "EGFR inhibitor"),
+    ("afatinib", REFERENCES["afatinib"]["smiles"], "EGFR inhibitor"),
     ("ibuprofen",   "CC(C)Cc1ccc(C(C)C(=O)O)cc1", "decoy (anti-inflammatory)"),
     ("aspirin",     "CC(=O)Oc1ccccc1C(=O)O", "decoy (analgesic)"),
     ("ethanol",     "CCO", "decoy (too small)"),

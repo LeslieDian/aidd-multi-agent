@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "target": "EGFR",
+  "strategy_chain": [
+    "Replace the meta-F on the western aniline (c3ccc(OC)c(F)c3) of candidates like [0] with a meta-acrylamide warhead (CH2=CHC(=O)NH-) to engage Cys797 covalently, mimicking afatinib.",
+    "On candidate [0], keep the meta-acrylamide warhead but REMOVE the 7-OMe (leave 6-OMe only, like afatinib) and ADD a 3'-Cl to the western aniline; should drop MW ~50, reduce logP ~0.7, and improve hydrophobic pocket fit.",
+    "On candidate [3], swap the 7-OMe for a 3-morpholinopropoxy group (gefitinib-style ether); preserves the covalent acrylamide+3'-Cl warhead for Cys797 but should clear hERG flag and improve solubility.",
+    "Re-add a 3'-Cl (or 3'-F) on the western aniline of morpholinopropoxy candidates [1]-[4]; current unsubstituted aniline forfeits Leu694/Val702 hydrophobic contacts and elevates hERG risk via exposed basic side chain."
+  ],
+  "total_entries": 4
+}

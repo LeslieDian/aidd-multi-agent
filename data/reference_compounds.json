@@ -1,0 +1,63 @@
+{
+  "PropertyTable": {
+    "Properties": [
+      {
+        "CID": 10184653,
+        "MolecularFormula": "C24H25ClFN5O3",
+        "SMILES": "CN(C)C/C=C/C(=O)NC1=C(C=C2C(=C1)C(=NC=N2)NC3=CC(=C(C=C3)F)Cl)O[C@H]4CCOC4",
+        "InChIKey": "ULXXDDBFHOBEHA-CWDCEQMOSA-N"
+      },
+      {
+        "CID": 176870,
+        "MolecularFormula": "C22H23N3O4",
+        "SMILES": "COCCOC1=C(C=C2C(=C1)C(=NC=N2)NC3=CC=CC(=C3)C#C)OCCOC",
+        "InChIKey": "AAKJLRGGTJKAMG-UHFFFAOYSA-N"
+      },
+      {
+        "CID": 123631,
+        "MolecularFormula": "C22H24ClFN4O3",
+        "SMILES": "COC1=C(C=C2C(=C1)N=CN=C2NC3=CC(=C(C=C3)F)Cl)OCCCN4CCOCC4",
+        "InChIKey": "XGALLCVXEZPNRQ-UHFFFAOYSA-N"
+      }
+    ]
+  },
+  "sar": {
+    "_doc": "Curated SAR facts (binding-mode-aware) to ground generator/judge reasoning. Not measurements; verified from literature + PDB 1M17 / 2ITY / 4HJO.",
+    "shared_pharmacophore": {
+      "hinge_binder": "4-aminoquinazoline N1/C8 forms a BIDENTATE H-bond with Met793 backbone NH/C=O in EGFR ATP pocket. This pair of H-bonds is the dominant potency driver; nearly every active EGFR inhibitor (gefitinib, erlotinib, afatinib, vandetanib, lapatinib) preserves it.",
+      "core": "quinazoline",
+      "hinge_residue": "Met793",
+      "pocket_layout": "Pocket = hinge region (Met793, Cys797) + hydrophobic pocket I (Leu694, Val702, Ala719, Leu820) + solvent-front (C6/C7 of quinazoline)."
+    },
+    "erlotinib": {
+      "smiles": "C#Cc1ccc(Nc2ncnc3cc(OC)c(OCCOC)cc23)cc1",
+      "key_groups": ["4-aminoquinazoline (hinge)", "3-ethynylphenyl (western aryl; NO halogen)", "6,7-bis(2-methoxyethoxy) (flexible solubilizing tail)"],
+      "binding_notes": "Western aryl is meta-ethynyl substituted (small, hydrophobic, no halogen); this is unusual among EGFR inhibitors and leaves room for hydrophobic-pocket-I optimization.",
+      "suggestions": ["swap western aryl for 3-Cl-4-F-aniline (gefitinib pattern) to gain hinge + hydrophobic synergy", "replace bis-ether tail with morpholinopropoxy for a stronger solubility/Vina balance", "try 7-position substitution only (mono-ether) to lower logP by ~1.0"],
+      "avoid": ["do NOT add acrylamide/Michael acceptor unless you intend a covalent design (afatinib territory)", "do NOT extend the bis-ether beyond OCH2CH2OCH2CH2 — rotatable-bond penalty in ADMET"]
+    },
+    "gefitinib": {
+      "smiles": "COC1=C(C=C2C(=C1)N=CN=C2NC3=CC(=C(C=C3)F)Cl)OCCCN4CCOCC4",
+      "key_groups": ["4-aminoquinazoline (hinge)", "3-Cl-4-F-aniline (western aryl; fills hydrophobic pocket I)", "6-methoxy + 7-(3-morpholinopropoxy) (rigid methoxy at 6 + basic amine tail at 7)"],
+      "binding_notes": "3-Cl-4-F-aniline is the GOLD-STANDARD western aryl across first/second-gen EGFR TKIs. Morpholinopropoxy tail protonates at physiological pH (pKa ~7.4) and improves aqueous solubility ~100x vs unsubstituted quinazoline.",
+      "suggestions": ["keep western aryl as 3-Cl-4-F-aniline (don't reinvent)", "vary the C7 tail: try piperidinylethoxy, pyrrolidinylpropoxy, dimethylaminoethoxy to explore basic-amine SAR", "try core-hopping: replace quinazoline with pyrido[3,4-d]pyrimidine (one extra ring N) to gain a 3rd hinge H-bond", "try 6-methoxy -> 6-cyclopropoxy for metabolic stability (avoid O-demethylation)"],
+      "avoid": ["do NOT remove the western aryl 4-amino (loses hinge bidentate H-bond)", "do NOT put basic amines at C6 — only at C7 (orientation matters for solvent exposure)"]
+    },
+    "afatinib": {
+      "smiles": "CN(C)C/C=C/C(=O)NC1=C(C=C2C(=C1)C(=NC=N2)NC3=CC(=C(C=C3)F)Cl)O[C@H]4CCOC4",
+      "key_groups": ["4-aminoquinazoline (hinge, same as gefitinib/erlotinib)", "3-Cl-4-F-aniline (western aryl, same as gefitinib)", "(S)-2-(tetrahydrofuran-3-yl)oxy at C7 (vs morpholinopropoxy in gefitinib)", "alpha,beta-unsaturated amide (acrylamide) Michael acceptor at C6 — covalent warhead to Cys797"],
+      "binding_notes": "Covalent inhibitor — forms irreversible Cys797 adduct via Michael addition. Vina (noncovalent) docking UNDER-ESTIMATES potency because it cannot score the covalent bond.",
+      "suggestions": ["use ONLY as a structural reference for the western aryl + C7 tail", "do NOT propose new acrylamide warheads unless the project explicitly targets covalent EGFR", "for noncovalent designs, replace the acrylamide with -OH, -NH2, or -OMe to recover a Vina-comparable baseline"],
+      "avoid": ["MUST NOT benchmark afatinib analogues against noncovalent Vina scores — protocol mismatch (see provenance.note)", "MUST NOT include reactive electrophiles (Michael acceptors, alkyl halides, sulfonyl esters) unless covalent design is the explicit goal"]
+    }
+  },
+  "provenance": {
+    "source": "PubChem PUG REST",
+    "retrieved_at": "2026-09-13",
+    "identity_checks": [
+      "RDKit molecular formula",
+      "RDKit stereochemical InChIKey"
+    ],
+    "note": "Afatinib is a covalent inhibitor; noncovalent docking is not a potency comparison."
+  }
+}

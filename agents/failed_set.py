@@ -302,13 +302,9 @@ class FailedLigandSet:
             return
         self.failed = set(data.get("failed", []))
         self.reasons = dict(data.get("reasons", {}))
-        # Phase 4.3 (P1-2): read embedding settings back; embeddings themselves
-        # are NOT persisted (too big) — they are rebuilt lazily on first use.
-        emb = data.get("embeddings", {}) or {}
-        if emb.get("enabled"):
-            self.enable_embeddings = True
-            self.embedding_threshold = float(emb.get("threshold", self.embedding_threshold))
-            self.embedding_model = emb.get("model", self.embedding_model)
+        # Embedding metadata in the file documents how it was produced. Runtime
+        # behavior comes from the current constructor/config so an old memory
+        # file cannot silently override a new experiment's settings.
 
     def _save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)

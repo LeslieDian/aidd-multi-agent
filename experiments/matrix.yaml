@@ -1,0 +1,37 @@
+schema_version: 1
+name: feedback-memory-ablation
+base_config: ../config.yaml
+description: >
+  Budget-matched ablation of generation alone, Judge reflection, and
+  Judge reflection with working/failed memory.
+
+execution:
+  repeats: 3
+  rounds: 3
+  candidates_per_round_per_generator: 5
+  primary_metric: best_composite_global
+
+groups:
+  baseline:
+    description: Dual generators without Judge feedback or Agent memory.
+    overrides:
+      loop:
+        judge_enabled: false
+        memory_enabled: false
+        failed_set_enabled: false
+
+  reflection:
+    description: Dual generators with Judge feedback but no Agent memory.
+    overrides:
+      loop:
+        judge_enabled: true
+        memory_enabled: false
+        failed_set_enabled: false
+
+  reflection_memory:
+    description: Dual generators with Judge feedback and Agent memory.
+    overrides:
+      loop:
+        judge_enabled: true
+        memory_enabled: true
+        failed_set_enabled: true

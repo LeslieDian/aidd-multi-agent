@@ -103,12 +103,11 @@ round; on restart the live `strategy_chain` seeds itself from the last
 **Symptom**: `WorkingMemory.best_so_far` is session-scoped (RAM only).
 A good molecule found today is forgotten tomorrow.
 
-**Fix**: Persist to `memory/best_molecules.json` after each round.
-On startup, `WorkingMemory.__init__` loads the previous session's best.
+**Fix**: Persist the best molecule after each round and reload it at startup.
 
 **Status**: ✅ RESOLVED 2026-09-14. `WorkingMemory(best_persist_path=...)`
-writes a per-target record to `memory/best_molecules.json` whenever
-`best_so_far` improves; on next session it loads the prior best so the
+stores the record under `memory/v2/<target>/<protocol>/<namespace>/` whenever
+`best_so_far` improves; on the next compatible session it loads the prior best so the
 generator can be told "current best Vina is -3.77" even if this session
 hasn't found anything better yet. Per-target keying allows multi-target use.
 
@@ -126,25 +125,29 @@ longer) — passes through despite being effectively a repeat.
 
 **Fix**: Add embedding-based similarity check (Phase 4.3 candidate).
 
-**Status**: ✅ RESOLVED 2026-09-14. `FailedLigandSet` gains optional
-embedding-based similarity check:
+**Status**: ✅ RESOLVED 2026-09-15. The main loop now performs canonical
+exact deduplication before evaluation and records the counts in each round.
+`FailedLigandSet` also provides an optional embedding-based similarity signal:
 - `enable_embeddings=True` enables a sentence-transformers
   (default `all-MiniLM-L6-v2`, 384-dim) index over the failed set
 - `is_similar_to_failed(smi, threshold=0.85)` returns
   `(too_close, matched_smiles, similarity)` using L2-normalized cosine
-- `filter_smiles_strict(list)` drops both exact-match AND
-  embedding-similar survivors
+- `filter_smiles_strict(list)` remains available for validated experiments
 - Lazy model load; if `all-MiniLM-L6-v2` is not pre-cached, embeddings
   silently disable rather than blocking on a download. Set
   `AIDD_EMBED_AUTO_DOWNLOAD=1` to opt into first-time download
 - Settings (`enabled`, `threshold`, `model`) persist to JSON;
   embeddings themselves do not (rebuilt lazily next session)
 
-Empirical validation (with cached model):
+The production config uses `mode: report`: a match is attached to the candidate
+for analysis but does not reject it. `all-MiniLM-L6-v2` was trained for text,
+so two example molecules are not enough to validate it as a chemical filter.
+
+Smoke observations (with cached model):
 - Near-duplicate `+CH2 morpholine` derivative: **sim=0.999** → flagged
 - Aspirin (truly unrelated drug-like mol): sim=0.76 → not flagged at 0.85 threshold
 
-**Backward compat**: when `enable_embeddings=False` (default),
+**Fallback**: when `enable_embeddings=False`,
 `is_similar_to_failed` is a no-op; `filter_smiles_strict` falls back
 to `filter_smiles` (exact-match path).
 
@@ -270,7 +273,7 @@ but no integrated "agent improvement rate" metric.
 - `best_vina_delta` (R0 best vs final best)
 - `scaffold_diversity_curve`
 
-**Status**: ✅ RESOLVED 2026-09-14. New `agents/agent_metrics.py` ships:
+**Status**: ✅ RESOLVED 2026-09-15. `agents/agent_metrics.py` ships:
 
 `metrics.json` per run with:
 - `curves.valid_rate / best_vina / scaffold_diversity / avg_admet`
@@ -278,9 +281,9 @@ but no integrated "agent improvement rate" metric.
 - `aggregates.{best_vina_first, best_vina_last, best_vina_delta,
   valid_rate_improvement, adoption_rate_avg_llm,
   adoption_rate_avg_det, adoption_llm_vs_det_drift_avg}`
-- `verdict.{agent_is_learning, rationale}` — True if best_vina
-  dropped by >= 0.1 kcal/mol OR last 3 rounds non-increasing OR
-  scaffolds doubled; False otherwise; None if insufficient data.
+- `verdict.run_shows_improvement` describes the score trend inside one run.
+- `verdict.agent_is_learning` remains null until repeated, budget-matched
+  control experiments can support a causal conclusion.
 
 `summary.json` gets a flat `agent_metrics` block for at-a-glance review
 plus a `see_also` pointer to `metrics.json`.

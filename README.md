@@ -131,76 +131,50 @@ aidd-multi-agent/
 
 ---
 
-## 🎯 真实 LLM 验证结果
+## 第一阶段可信度修复（2026-09-13）
 
-### Phase 2（2-Agent，DeepSeek only，5 轮）
+已修复受体准备、对照身份、缺失评分、上一轮反思、Mock 隔离与测试污染。
+详细变更与验证见 [PHASE_1_CREDIBILITY.md](docs/PHASE_1_CREDIBILITY.md)。
 
-> `runs/samples/round_real_*.json` — 25 个真实分子
+旧版样例与图表使用过未经核验的受体和错误标注的参考结构，保留为历史资料，
+不能用于证明亲和力、筛选优越性或自主学习收益。旧版与新版分数不可直接比较。
+搜索框大小没有通用的 kcal/mol 加减换算关系。
 
-| 指标 | 值 |
-|---|---|
-| 总分子数 | 25 |
-| 合法率 | **100%** |
-| ADMET 平均 | 0.74–0.79 |
-| Best Vina | **-3.19 kcal/mol** |
-| 唯一骨架数 | 3–5 / 轮 |
+重新准备受体（输出必须不存在；如需重建，选择新版本名并更新配置）：
 
-### Phase 3（4-Agent 完整版：并行 A1+A2 + 强化 Judge C）
-
-> `runs/samples/round_phase3_*.json` — 25 个分子（5 轮 × 5 candidates），MiniMax 因 key 401 仅跑通 judge 探测，实际生成本位 DeepSeek
-
-| 指标 | 值 |
-|---|---|
-| 总分子数 | 25 |
-| 合法率 | **100%** |
-| **Best Vina** | **-3.83 kcal/mol**（Round 1） |
-| 唯一骨架数 | 3–5 / 轮 |
-| Judge 输出 | 每一轮都是**具体可执行**的修改建议（非泛泛） |
-
-### 🏆 最佳分子（Phase 3, Round 1）
-
-```
-SMILES: CN(C)C(=O)c1ccccc1NC(=O)c1ccc2c(c1)nc(Nc3ccc(Cl)c(F)c3)nc2
-MW=464  logP=5.1  SA=2.29  QED=0.43  Vina=-3.83 kcal/mol
+```bash
+python scripts/prepare_receptor.py data/1M17.pdb data/prepared/1M17_v1.pdbqt
+python scripts/validate_protocol.py --output runs/new_protocol_validation
 ```
 
-类似 gefitinib 的 4-fluoro-3-chloro-aniline 喹唑啉结构。
+离线验证和运行：
 
-### 🧠 Judge C 真实输出示例（Phase 3 升级后）
+```bash
+python -m pytest -q
+python loop.py --mock --no-dock --rounds 3
+```
 
-**Round 0** 反馈：
-> "All candidates lack a strong hydrogen-bond donor to the hinge region Met793
->  and show high hERG risk due to basic amine."
+不传 `--rounds` 和 `--n` 时，主循环读取 `config.yaml` 的
+`loop.max_rounds` 与 `loop.candidates_per_round_per_generator`；命令行参数只用于显式覆盖。
+实际采用的参数会写入每次运行的 `manifest.json`。
 
-**Round 1** 反馈：
-> "All candidates have an N-methylated anilino nitrogen, eliminating the key
->  N-H donor required for a hydrogen bond to the Met793 backbone carbonyl in
->  the EGFR hinge region."
+完整评估按 `protocol_id + canonical SMILES` 缓存在 `memory/evaluation_cache/`。
+同一受体、口袋、评分代码和 Vina 参数下再次出现相同分子时，会复用原评分与 docking
+工件，并在候选的 `evaluation_cache.source` 中记录首次评估来源。
 
-**Round 2** 反馈：
-> "All candidates lack a solubilizing group on the quinazoline core, leading
->  to poor aqueous solubility and potential hERG liability."
+工程收口阶段的配置、记忆隔离、去重和指标语义说明见
+[PHASE_1_ENGINEERING_CLOSURE.md](docs/PHASE_1_ENGINEERING_CLOSURE.md)。
 
-每轮的 focus 都指向**特定原子/基团**的修改（anilino NH、morpholine、喹唑啉 6/7 位等），不是泛泛的"继续探索"。
+真实模式缺少密钥会报错，不再自动使用 Mock。真实运行与 Mock 均有独立运行 ID、
+manifest、输入/模型记录和评估协议；Mock 不读取或写入正式失败记忆。
+当 docking 或其他必要评分缺失时，`composite_score` 为 null，候选不进入完整评分排名。
+`--no-dock` 仅产生初筛性质分，不宣称完成结合能力评估。
 
----
+ADMET 当前仍为 RDKit 描述符启发式，Vina 仍为未校准的 docking 分数。
+即使重对接通过，也不等价于实验活性验证。
 
-### Phase C: Vina Deep-Dive（精度收敛验证）
-
-**问题**：我们的 -3.83 真实收敛吗？还是有可能是 docking 误差？
-
-**答案**：✅ 真实收敛，且**超过已知最强对照**。
-
-`scripts/deep_dive_vina.py` 跑了 **54 次对接**（11 分子 × 6 配置：exh ∈ {8, 32, 64} × n_poses ∈ {5, 20}），共 17 分钟。
-
-**核心结论**：
-- 所有分子**在 exh=8 已收敛**（spread < 0.6 kcal/mol）
-- Phase 3 top3 = **-3.77**，**超过 afatinib**（-3.62，已知最强非共价 EGFR 抑制剂）
-- 强抑制剂 vs decoy 区分度清晰：erlotinib (-2.92) > ibuprofen (-3.02 是个反例，因 box 较大让它能塞进去) > aspirin (-2.17) > ethanol (-1.15)
-
-完整数据 + 报告见 [docs/PHASE_C_FINDINGS.md](docs/PHASE_C_FINDINGS.md)。
-
-**重要提示**：我们用的 box 比文献典型大 2-3 Å，所以所有分数"虚高"约 2-3 kcal/mol。我们的 -3.77 对应文献标准 box 大约 **-6 ~ -7 kcal/mol**——这是真实强 EGFR 抑制剂的范围。
+长期存储建议使用 [PostgreSQL + pgvector](docs/DATABASE_SETUP.md)。当前第一阶段
+输出仍为本地 JSON/SDF/PDBQT；尚未自动写入 PostgreSQL。
 
 ---
 

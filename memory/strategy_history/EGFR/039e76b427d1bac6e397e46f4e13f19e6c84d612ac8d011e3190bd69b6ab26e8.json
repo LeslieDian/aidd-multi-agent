@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "target": "EGFR",
+  "strategy_chain": [
+    "next-0",
+    "next-1",
+    "Add a morpholine to improve aqueous solubility and Vina binding.",
+    "Add a morpholine to improve aqueous solubility and Vina binding.",
+    "Add a morpholine to improve aqueous solubility and Vina binding.",
+    "Add a morpholine to improve aqueous solubility and Vina binding.",
+    "Add a morpholine to improve aqueous solubility and Vina binding.",
+    "next-0",
+    "next-1",
+    "Add a morpholine to improve aqueous solubility and Vina binding.",
+    "Add a morpholine to improve aqueous solubility and Vina binding.",
+    "Add a morpholine to improve aqueous solubility and Vina binding.",
+    "Add a morpholine to improve aqueous solubility and Vina binding.",
+    "Add a morpholine to improve aqueous solubility and Vina binding.",
+    "Add a morpholine to improve aqueous solubility and Vina binding.",
+    "Add a morpholine to improve aqueous solubility and Vina binding."
+  ],
+  "total_entries": 16
+}

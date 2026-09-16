@@ -23,16 +23,19 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from tools import dock_smiles
 
-RECEPTOR = "data/1M17.pdbqt"
+RECEPTOR = "data/prepared/1M17_v1.pdbqt"
 CENTER = (22.014, 0.253, 52.794)
 SIZE = (27.7, 16.7, 19.1)
 
 # (label, SMILES, category)
+from tools.references import load_references
+REFERENCES = load_references()
+
 PANEL = [
     # EGFR positive controls
-    ("erlotinib",  "C#Cc1ccc(Nc2ncnc3cc(OCCOC)c(OCCOC)cc23)cc1", "EGFR inhibitor"),
-    ("gefitinib",  "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCCN1CCOCC1", "EGFR inhibitor"),
-    ("afatinib",   "CN(C)C(=O)C1=CC=CC=C1C(=O)Nc1ncnc2cc(NCc3ccc(C)cc3)c(OC)cc12", "EGFR inhibitor"),
+    ("erlotinib", REFERENCES["erlotinib"]["smiles"], "EGFR inhibitor"),
+    ("gefitinib", REFERENCES["gefitinib"]["smiles"], "EGFR inhibitor"),
+    ("afatinib", REFERENCES["afatinib"]["smiles"], "EGFR inhibitor"),
     # Decoys (should NOT bind)
     ("aspirin",    "CC(=O)Oc1ccccc1C(=O)O", "decoy"),
     ("ibuprofen",  "CC(C)Cc1ccc(C(C)C(=O)O)cc1", "decoy"),

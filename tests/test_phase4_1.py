@@ -278,7 +278,7 @@ def test_strategy_chain_persist_failure_does_not_crash():
 # ---------------- Phase 4.3 (P1-1): best_molecules cross-session ----------------
 
 def test_best_molecules_persists_across_sessions():
-    """P1-1: best_so_far is persisted per target and reloaded on next session."""
+    """Best-so-far persists within one caller-selected protocol file."""
     print("\n=== test_best_molecules_persists_across_sessions ===")
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "best.json"

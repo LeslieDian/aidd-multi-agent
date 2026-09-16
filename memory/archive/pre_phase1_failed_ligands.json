@@ -1,0 +1,44 @@
+{
+  "failed": [
+    "Brc1ccccc1",
+    "C#Cc1ccc(N)cc1",
+    "CC(=O)NCC(N)=O",
+    "CC(=O)Oc1ccccc1C(=O)O",
+    "CC(C)Cc1ccc(C(C)C(=O)O)cc1",
+    "CCO",
+    "CN1CCC[C@H]1c1cccnc1",
+    "COc1cc(N2CCN(C)CC2)ccc1Nc1ncnc2cc(OC)c(OCCCN3CCOCC3)cc12",
+    "COc1cc2c(N)ncnc2cc1OCCCN1CCOCC1",
+    "COc1cc2c(Nc3ccc(N4CCN(C)CC4)c(F)c3)ncnc2cc1OCCCN1CCOCC1",
+    "COc1cc2ncnc(Nc3ccc(F)c(C(=O)NC4CCOCC4)c3)c2cc1OCCCN1CCOCC1",
+    "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCN1CCCC1",
+    "Clc1ccccc1",
+    "Cn1c(=O)c2c(ncn2C)n(C)c1=O",
+    "Fc1ccccc1",
+    "O=C(O)C1CCCCC1",
+    "c1ccc2ccccc2c1"
+  ],
+  "reasons": {
+    "CCO": "test",
+    "CC(=O)Oc1ccccc1C(=O)O": "test",
+    "CC(C)Cc1ccc(C(C)C(=O)O)cc1": "test",
+    "CN1CCC[C@H]1c1cccnc1": "test",
+    "Cn1c(=O)c2c(ncn2C)n(C)c1=O": "test",
+    "O=C(O)C1CCCCC1": "test",
+    "CC(=O)NCC(N)=O": "test",
+    "C#Cc1ccc(N)cc1": "test",
+    "c1ccc2ccccc2c1": "test",
+    "Brc1ccccc1": "test",
+    "Fc1ccccc1": "test",
+    "Clc1ccccc1": "test",
+    "COc1cc2c(N)ncnc2cc1OCCCN1CCOCC1": "composite=0.67, vina=-2.132",
+    "COc1cc(N2CCN(C)CC2)ccc1Nc1ncnc2cc(OC)c(OCCCN3CCOCC3)cc12": "composite=0.59, vina=-2.276",
+    "COc1cc2c(Nc3ccc(N4CCN(C)CC4)c(F)c3)ncnc2cc1OCCCN1CCOCC1": "composite=0.60, vina=-2.264",
+    "COc1cc2ncnc(Nc3ccc(F)c(C(=O)NC4CCOCC4)c3)c2cc1OCCCN1CCOCC1": "composite=0.50, vina=-2.449",
+    "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCN1CCCC1": "composite=0.58, vina=-2.483"
+  },
+  "thresholds": {
+    "composite": 0.5,
+    "vina": -2.5
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "targets": {
+    "EGFR": {
+      "smiles": "O=C(/C=C/CN1CCOCC1)Nc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCCN1CCOCC1",
+      "vina": -9.083,
+      "composite": 0.586,
+      "scaffold": "O=C(/C=C/CN1CCOCC1)Nc1cc2ncnc(Nc3ccccc3)c2cc1OCCCN1CCOCC1",
+      "provider": "MiniMax",
+      "model": "MiniMax-M3",
+      "round": 4,
+      "validate": {
+        "valid": true,
+        "smiles": "O=C(/C=C/CN1CCOCC1)Nc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCCN1CCOCC1",
+        "mw": 585.08,
+        "logp": 4.09,
+        "hbd": 2,
+        "hba": 9,
+        "rotatable_bonds": 11,
+        "tpsa": 101.08,
+        "rings": 5,
+        "lipinski_pass": false,
+        "sa_score": 2.8508758025102683
+      },
+      "admet": {
+        "valid": true,
+        "smiles": "O=C(/C=C/CN1CCOCC1)Nc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCCN1CCOCC1",
+        "method": "rdkit_descriptor_heuristic_v1",
+        "is_trained_admet_model": false,
+        "interpretation": "Screening heuristics, not measured ADMET or calibrated toxicity probabilities",
+        "absorption": 1.0,
+        "bioavailability": 0.5,
+        "herg_risk": 1.0,
+        "qed": 0.255,
+        "tpsa": 101.08,
+        "rotatable_bonds": 11,
+        "summary_score": 0.501,
+        "warnings": [
+          "rotatable_bonds 杈冨",
+          "hERG 椋庨櫓鍋忛珮"
+        ]
+      },
+      "updated_at": "2026-09-14T23:21:21"
+    }
+  }
+}

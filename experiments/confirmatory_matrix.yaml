@@ -1,0 +1,39 @@
+schema_version: 1
+name: memory-confirmatory-pareto-v3.1
+base_config: ../config.yaml
+description: >
+  Pre-registered confirmation of Judge-only versus Judge plus isolated memory
+  under the multi-objective v3.1 scoring and safety-aware Pareto policy.
+baseline_group: reflection
+
+execution:
+  repeats: 10
+  rounds: 3
+  candidates_per_round_per_generator: 5
+  primary_metric: best_safe_composite_global
+  order: interleaved
+
+confirmatory:
+  reference_group: reflection
+  treatment_group: reflection_memory
+  safety_metric: mean_herg_risk_score
+  safety_noninferiority_margin: 0.05
+  min_improved_run_rate: 0.70
+  alpha: 0.05
+
+groups:
+  reflection:
+    description: Dual generators with Judge feedback and no persistent memory.
+    overrides:
+      loop:
+        judge_enabled: true
+        memory_enabled: false
+        failed_set_enabled: false
+
+  reflection_memory:
+    description: Dual generators with Judge feedback and isolated safety-aware memory.
+    overrides:
+      loop:
+        judge_enabled: true
+        memory_enabled: true
+        failed_set_enabled: true

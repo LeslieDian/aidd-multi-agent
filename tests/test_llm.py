@@ -27,13 +27,20 @@ def test_mock_client():
 
 
 def test_real_client_construction():
-    """If keys are in env, real client is returned. Otherwise mock."""
+    """Explicit mock only; missing credentials must fail."""
+    import os
+    from unittest.mock import patch
     cfg = load_config()
     for name in ["deepseek", "MiniMax"]:
-        client = get_client(name, cfg)
-        kind = type(client).__name__
-        print(f"  OK  {name} -> {kind}")
-        assert isinstance(client, (LLMClient, MockLLMClient))
+        with patch.dict(os.environ, {}, clear=True):
+            try:
+                get_client(name, cfg)
+            except EnvironmentError:
+                pass
+            else:
+                raise AssertionError("Missing key silently accepted")
+        with patch.dict(os.environ, {cfg['llm']['providers'][name]['api_key_env']: 'test-placeholder'}):
+            assert isinstance(get_client(name, cfg), LLMClient)
 
 
 def test_get_client_unknown_provider():

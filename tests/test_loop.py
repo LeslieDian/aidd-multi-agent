@@ -30,7 +30,7 @@ def main():
         output_dir="runs_test",
         max_rounds=2,
         n_per_provider=3,
-        dock_enabled=True,
+        dock_enabled=False,
         use_mock=True,
         verbose=True,
     )

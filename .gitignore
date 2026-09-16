@@ -304,6 +304,9 @@ runs_mm_test/
 runs/*/
 !runs/samples/
 memory/v2/
+memory/evaluation_cache/
+memory/docking_cache/
+benchmarks/
 data/prepared/*.meeko.json
 
 /data/prepared/

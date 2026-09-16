@@ -20,10 +20,14 @@ tqdm>=4.66
 
 # Vina 前处理：SMILES → pdbqt
 # meeko 需要 RDKit 版本配套，建议同 conda 环境安装
-meeko>=0.3.0
+meeko>=0.8.0
+gemmi>=0.6.0
 
 # 单元测试
 pytest>=7.4
 
 # 可选：更精确的 SA score（也可以手动从 rdkit Contrib 仓库下载 sascorer.py）
 # rdkit-installer>=1.0
+
+# PostgreSQL: synchronous psycopg 3 driver (no connection pool)
+psycopg[binary]>=3.2,<4

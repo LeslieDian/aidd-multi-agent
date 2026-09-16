@@ -144,6 +144,14 @@ def test_confidence_coerced_to_range():
     print(f"  [OK] raw extraction preserves values; coercion happens in judge_round")
 
 
+def test_extract_json_ignores_trailing_object_and_commentary():
+    parsed = _extract_json(
+        'thinking first\n{"focus": "x", "confidence": 0.5}\n'
+        '{"extra": "provider metadata"}\nfinished'
+    )
+    assert parsed == {"focus": "x", "confidence": 0.5}
+
+
 # ---------------- adoption tracking via memory ----------------
 
 def test_working_memory_adoption_helpers():

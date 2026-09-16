@@ -13,9 +13,9 @@ isn't lost when max_recent evicts it from the live list. The on-disk file
 keeps the full history; the live `strategy_chain` is still capped at
 `max_recent` for prompt-budget reasons.
 
-Phase 4.3 (P1-1 fix): best_so_far is persisted to
-`memory/best_molecules.json` (keyed by target) so a good molecule
-discovered in a prior session is not forgotten on restart.
+Phase 4.3 (P1-1 fix): best_so_far can be persisted to a caller-selected
+file. The main loop places this file inside a target/protocol/experiment
+namespace so a good molecule is reused only inside the intended boundary.
 """
 from __future__ import annotations
 
@@ -85,13 +85,11 @@ class WorkingMemory:
     ) -> None:
         """Called after evaluate_candidates() with the enriched list."""
         valid = [c for c in candidates if c.get("validate", {}).get("valid")]
-        best = None
-        for c in valid:
-            score = c.get("dock", {}).get("score")
-            if score is None:
-                continue
-            if best is None or score < best["dock"]["score"]:
-                best = c
+        complete = [
+            c for c in valid
+            if c.get("composite_score") is not None and c.get("dock", {}).get("score") is not None
+        ]
+        best = max(complete, key=self._candidate_priority, default=None)
 
         summary = RoundSummary(
             round=self.total_rounds,
@@ -115,7 +113,7 @@ class WorkingMemory:
 
         if best and (
             self.best_so_far is None
-            or best["dock"]["score"] < self.best_so_far["dock"]["score"]
+            or self._candidate_priority(best) > self._candidate_priority(self.best_so_far)
         ):
             self.best_so_far = best
 
@@ -150,7 +148,9 @@ class WorkingMemory:
             bv = self.best_so_far.get("dock", {}).get("score")
             if bv is not None:
                 parts.append(
-                    f"Best so far: Vina={bv:.2f}, "
+                    f"Best safe Pareto candidate: Vina={bv:.2f}, "
+                    f"composite={self.best_so_far.get('composite_score')}, "
+                    f"hERG-risk={self.best_so_far.get('admet', {}).get('herg_risk_score')}, "
                     f"smiles={self.best_so_far['smiles']}"
                 )
         if self.strategy_chain:
@@ -263,6 +263,8 @@ class WorkingMemory:
                 "provider": entry.get("provider"),
                 "model": entry.get("model"),
                 "round": entry.get("round"),
+                "pareto_rank": entry.get("pareto_rank"),
+                "safety_gate_pass": entry.get("safety_gate_pass"),
                 "is_persisted_from_prior_session": True,
             }
         except Exception:
@@ -280,12 +282,18 @@ class WorkingMemory:
             data.setdefault("schema_version", 1)
             data.setdefault("targets", {})
             existing = data["targets"].get(target)
-            existing_score = existing.get("vina") if existing else None
             new_score = self.best_so_far.get("dock", {}).get("score")
             if new_score is None:
                 return
-            if existing_score is not None and new_score >= existing_score:
-                return  # disk already has equal or better
+            if existing:
+                existing_candidate = {
+                    "composite_score": existing.get("composite"),
+                    "pareto_rank": existing.get("pareto_rank"),
+                    "safety_gate_pass": existing.get("safety_gate_pass"),
+                    "dock": {"score": existing.get("vina")},
+                }
+                if self._candidate_priority(existing_candidate) >= self._candidate_priority(self.best_so_far):
+                    return
             data["targets"][target] = {
                 "smiles": self.best_so_far.get("smiles"),
                 "vina": new_score,
@@ -294,6 +302,8 @@ class WorkingMemory:
                 "provider": self.best_so_far.get("provider"),
                 "model": self.best_so_far.get("model"),
                 "round": self.best_so_far.get("round"),
+                "pareto_rank": self.best_so_far.get("pareto_rank"),
+                "safety_gate_pass": self.best_so_far.get("safety_gate_pass"),
                 "validate": self.best_so_far.get("validate", {"valid": True}),
                 "admet": self.best_so_far.get("admet", {}),
                 "updated_at": self._now_iso(),
@@ -305,6 +315,18 @@ class WorkingMemory:
             )
         except Exception as e:
             print(f"[WARN] failed to persist best molecule: {e}")
+
+    @staticmethod
+    def _candidate_priority(candidate: dict) -> tuple:
+        rank = candidate.get("pareto_rank")
+        composite = candidate.get("composite_score")
+        vina = candidate.get("dock", {}).get("score")
+        return (
+            bool(candidate.get("safety_gate_pass")),
+            -(rank if isinstance(rank, int) else 10**6),
+            float(composite) if isinstance(composite, (int, float)) else -1.0,
+            -float(vina) if isinstance(vina, (int, float)) else -999.0,
+        )
 
     @staticmethod
     def _now_iso() -> str:

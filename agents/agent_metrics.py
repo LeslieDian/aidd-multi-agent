@@ -1,10 +1,9 @@
 """agents/agent_metrics.py - Loop-level metrics for Phase 4.3 (P2-3).
 
 Aggregates per-round `summary` + `judgment` records into a single
-metrics block that answers the question "is the agent actually learning
-across rounds?". This is the metric layer the original Phase 4.1/4.2
-design lacked — without it the user can only eyeball `summary.json`
-history.
+metrics block that describes one run's trend.  A single run cannot establish
+that feedback or memory caused an improvement; that claim requires repeated,
+budget-matched control experiments.
 
 Curves (per round):
 - valid_rate_curve:      list[float], fraction of valid candidates
@@ -22,18 +21,15 @@ Aggregates (scalar):
 - scaffold_diversity_first, scaffold_diversity_last
 - rounds_total
 - rounds_without_improvement
-- agent_is_learning: best_vina_delta < -0.1 OR monotonically non-increasing
-                     across the last 3 rounds
+- run_shows_improvement: final best Vina improved by at least 0.1 kcal/mol
+- agent_is_learning: always null here; reserved for controlled experiments
 """
 from __future__ import annotations
 
 from typing import Any
 
 
-# Tunable: "agent is learning" = last 3 best_vinas are non-increasing
-# (each round at least as good as the prior) OR a single > 0.1 kcal/mol
-# improvement from R0 to last round. 0.1 is conservative; the prior Phase
-# C noise floor was about +/-0.2.
+# Descriptive threshold for one run.  It is not a causal learning threshold.
 LEARNING_DELTA_THRESHOLD = -0.1
 
 
@@ -82,6 +78,11 @@ def compute_agent_metrics(
         avg_admet_curve.append(s.get("avg_admet"))
         if i < len(judgments):
             j = judgments[i]
+            if j.get("status") == "disabled":
+                adoption_curve_llm.append(None)
+                adoption_curve_det.append(None)
+                drift_curve.append(None)
+                continue
             denom = max(1, j.get("adoption_denominator", 0) or 0)
             adoption_curve_llm.append(
                 round(j.get("adopted_count", 0) / denom, 3) if denom else None
@@ -129,17 +130,10 @@ def compute_agent_metrics(
     scaffold_diversity_first = scaffold_curve[0] if scaffold_curve else None
     scaffold_diversity_last = scaffold_curve[-1] if scaffold_curve else None
 
-    # Verdict
-    agent_is_learning = _verdict(
-        best_vina_curve,
-        best_vina_delta,
-        valid_rate_improvement,
-        scaffold_diversity_first,
-        scaffold_diversity_last,
-    )
+    run_shows_improvement = _run_trend(best_vina_curve, best_vina_delta)
 
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "rounds_total": n,
         "rounds_without_improvement": loop_state.get(
             "rounds_without_vina_improvement"
@@ -167,49 +161,29 @@ def compute_agent_metrics(
             "adoption_llm_vs_det_drift_avg": drift_avg,
         },
         "verdict": {
-            "agent_is_learning": agent_is_learning,
-            "rationale": _verdict_rationale(
-                best_vina_curve, best_vina_delta, valid_rate_improvement,
-                scaffold_diversity_first, scaffold_diversity_last,
+            "run_shows_improvement": run_shows_improvement,
+            "run_rationale": _run_trend_rationale(best_vina_curve, best_vina_delta),
+            "agent_is_learning": None,
+            "rationale": (
+                "not assessed from a single run; requires repeated, "
+                "budget-matched control experiments"
             ),
         },
     }
 
 
-def _verdict(
-    vina_curve: list, vina_delta, valid_improvement,
-    scaf_first, scaf_last,
-) -> bool | None:
-    """`None` when not enough data; otherwise True/False."""
+def _run_trend(vina_curve: list, vina_delta) -> bool | None:
+    """Describe score change within a run; do not infer causal learning."""
     real = [v for v in vina_curve if v is not None]
     if len(real) < 2 or vina_delta is None:
         return None
-    # Strong signal: across-the-board drop in best_vina >= 0.1
-    if vina_delta <= LEARNING_DELTA_THRESHOLD:
-        return True
-    # Or: last 3 rounds non-increasing (no upward regression)
-    if len(real) >= 3:
-        tail = real[-3:]
-        if tail[0] >= tail[1] >= tail[2]:
-            return True
-    # Or: scaffolds doubled (we are exploring)
-    if (scaf_first is not None and scaf_last is not None
-            and scaf_first > 0 and scaf_last >= 2 * scaf_first):
-        return True
-    return False
+    return vina_delta <= LEARNING_DELTA_THRESHOLD
 
 
-def _verdict_rationale(
-    vina_curve, vina_delta, valid_improvement, scaf_first, scaf_last
-) -> str:
+def _run_trend_rationale(vina_curve, vina_delta) -> str:
     real = [v for v in vina_curve if v is not None]
     if vina_delta is None or len(real) < 2:
         return "insufficient data (need >= 2 rounds with Vina)"
     if vina_delta <= LEARNING_DELTA_THRESHOLD:
-        return f"best_vina dropped by {-vina_delta:.3f} kcal/mol (>= {abs(LEARNING_DELTA_THRESHOLD)})"
-    if len(real) >= 3 and real[-3] >= real[-2] >= real[-1]:
-        return f"last 3 rounds non-increasing: {[round(v,3) for v in real[-3:]]}"
-    if (scaf_first is not None and scaf_last is not None
-            and scaf_first > 0 and scaf_last >= 2 * scaf_first):
-        return f"scaffold diversity doubled: {scaf_first} -> {scaf_last}"
-    return f"no monotonic improvement (best_vina delta = {vina_delta}); loop may be stalled"
+        return f"best_vina dropped by {-vina_delta:.3f} kcal/mol"
+    return f"no final score improvement at the {abs(LEARNING_DELTA_THRESHOLD)} kcal/mol threshold"

@@ -19,9 +19,12 @@ from __future__ import annotations
 
 import argparse
 import copy
+import re
 import uuid
-from tools.provenance import digest, file_hash, evaluation_protocol
+from tools.provenance import digest, file_hash, evaluation_protocol, docking_protocol
 from tools.dock_score import validate_receptor
+from tools.evaluation_cache import EvaluationCache
+from tools.docking_cache import DockingCache
 import json
 import sys
 from datetime import datetime
@@ -30,7 +33,7 @@ from pathlib import Path
 import yaml
 
 from agents.generator import generate_candidates
-from agents.evaluator import evaluate_candidates, summarize_round
+from agents.evaluator import evaluate_candidates, summarize_round, assign_pareto_metadata
 from agents.judge import judge_round
 # Phase 4.1
 from agents.loop_controller import LoopController, LoopState, LoopConfig
@@ -66,11 +69,175 @@ def flatten_generator_results(gen_results: list[dict]) -> list[dict]:
     return flat
 
 
+def filter_candidates_for_evaluation(
+    candidates: list[dict],
+    failed_set: FailedLigandSet,
+    similarity_mode: str = "report",
+) -> tuple[list[dict], dict]:
+    """Remove exact repeats before expensive tools and report fuzzy matches.
+
+    Invalid SMILES are deliberately retained so the evaluator can record an
+    ``invalid_structure`` result.  Embedding similarity is observational by
+    default because the configured sentence model is not a validated chemical
+    similarity model.
+    """
+    if similarity_mode not in {"off", "report", "exclude"}:
+        raise ValueError("failed_set.embeddings.mode must be off, report, or exclude")
+
+    kept: list[dict] = []
+    seen: dict[str, int] = {}
+    stats = {
+        "raw": len(candidates),
+        "kept": 0,
+        "batch_duplicates_removed": 0,
+        "known_failed_removed": 0,
+        "similar_to_failed_flagged": 0,
+        "similar_to_failed_removed": 0,
+        "invalid_retained": 0,
+        "similarity_mode": similarity_mode,
+    }
+    for original in candidates:
+        candidate = dict(original)
+        smiles = candidate.get("smiles", "")
+        canonical = failed_set.canonicalize(smiles)
+        if canonical is None:
+            stats["invalid_retained"] += 1
+            kept.append(candidate)
+            continue
+        if canonical in seen:
+            stats["batch_duplicates_removed"] += 1
+            kept[seen[canonical]].setdefault("duplicate_proposals", []).append({
+                "smiles": smiles,
+                "provider": candidate.get("provider"),
+                "model": candidate.get("model"),
+            })
+            continue
+        if failed_set.is_failed(canonical):
+            stats["known_failed_removed"] += 1
+            continue
+
+        if similarity_mode != "off" and failed_set.enable_embeddings:
+            too_close, matched, similarity = failed_set.is_similar_to_failed(canonical)
+            if too_close:
+                stats["similar_to_failed_flagged"] += 1
+                candidate["failed_similarity"] = {
+                    "matched_smiles": matched,
+                    "similarity": round(similarity, 6),
+                    "action": similarity_mode,
+                }
+                if similarity_mode == "exclude":
+                    stats["similar_to_failed_removed"] += 1
+                    continue
+        seen[canonical] = len(kept)
+        kept.append(candidate)
+
+    stats["kept"] = len(kept)
+    return kept, stats
+
+
+def evaluate_candidates_with_cache(
+    candidates: list[dict],
+    scoring_config: dict,
+    target_config: dict,
+    dock_enabled: bool,
+    artifact_dir: str,
+    cache: EvaluationCache,
+    docking_cache: DockingCache | None = None,
+) -> tuple[list[dict], dict]:
+    """Evaluate cache misses and restore results in proposal order."""
+    results: list[dict | None] = [None] * len(candidates)
+    misses: list[dict] = []
+    miss_indices: list[int] = []
+    stats = {
+        "hits": 0, "misses": 0, "stored": 0, "enabled": cache.enabled,
+        "docking_hits": 0, "docking_misses": 0, "docking_stored": 0,
+    }
+
+    for index, candidate in enumerate(candidates):
+        payload = cache.get(candidate.get("smiles", ""))
+        if payload is None:
+            misses.append(candidate)
+            miss_indices.append(index)
+            stats["misses"] += 1
+        else:
+            results[index] = cache.materialize(candidate, payload)
+            stats["hits"] += 1
+
+    if misses:
+        dock_overrides = {}
+        docking_payloads = {}
+        if dock_enabled and docking_cache is not None:
+            for candidate in misses:
+                smiles = candidate.get("smiles", "")
+                payload = docking_cache.get(smiles)
+                if payload is None:
+                    stats["docking_misses"] += 1
+                else:
+                    dock_overrides[smiles] = docking_cache.materialize(payload)
+                    docking_payloads[smiles] = payload
+                    stats["docking_hits"] += 1
+        evaluated_misses = evaluate_candidates(
+            candidates=misses,
+            scoring_config=scoring_config,
+            target_config=target_config,
+            dock_enabled=dock_enabled,
+            artifact_dir=artifact_dir,
+            dock_overrides=dock_overrides,
+        )
+        for index, evaluated in zip(miss_indices, evaluated_misses):
+            smiles = evaluated.get("smiles", "")
+            docking_payload = docking_payloads.get(smiles)
+            if docking_payload is not None:
+                evaluated["docking_cache"] = {
+                    "hit": True,
+                    "docking_protocol_id": docking_cache.protocol_id,
+                    "cache_entry": docking_payload.get("cache_entry"),
+                    "source": docking_payload.get("source") or {},
+                }
+            elif dock_enabled and docking_cache is not None:
+                docking_stored = docking_cache.put(
+                    smiles,
+                    evaluated.get("dock") or {},
+                    source={
+                        "run_id": evaluated.get("run_id"),
+                        "candidate_id": evaluated.get("candidate_id"),
+                        "round": evaluated.get("round"),
+                    },
+                )
+                evaluated["docking_cache"] = {
+                    "hit": False,
+                    "stored": bool(docking_stored.get("stored")),
+                    "docking_protocol_id": docking_cache.protocol_id,
+                    "cache_entry": docking_stored.get("cache_entry"),
+                    "source": docking_stored.get("source") or {},
+                }
+                if docking_stored.get("stored"):
+                    stats["docking_stored"] += 1
+            stored = cache.put(evaluated)
+            evaluated["evaluation_cache"] = {
+                "hit": False,
+                "stored": bool(stored.get("stored")),
+                "reason": stored.get("reason"),
+                "protocol_id": evaluated.get("protocol_id"),
+                "canonical_smiles": stored.get("canonical_smiles"),
+                "cache_key": stored.get("cache_key"),
+                "cache_entry": stored.get("cache_entry"),
+                "source": stored.get("source"),
+            }
+            if stored.get("stored"):
+                stats["stored"] += 1
+            results[index] = evaluated
+
+    ordered = [result for result in results if result is not None]
+    assign_pareto_metadata(ordered, scoring_config)
+    return ordered, stats
+
+
 def run_loop(
     config: dict,
     output_dir: str = "runs",
-    max_rounds: int = 5,
-    n_per_provider: int = 5,
+    max_rounds: int | None = None,
+    n_per_provider: int | None = None,
     dock_enabled: bool = True,
     use_mock: bool = False,
     verbose: bool = True,
@@ -81,6 +248,14 @@ def run_loop(
     Phase 4.1: integrates WorkingMemory + FailedLigandSet + LoopController + HITLCheckpoint.
     """
     config = copy.deepcopy(config)
+    loop_cfg_dict = config.get("loop", {}) or {}
+    if max_rounds is None:
+        max_rounds = int(loop_cfg_dict.get("max_rounds", 5))
+    if n_per_provider is None:
+        n_per_provider = int(loop_cfg_dict.get("candidates_per_round_per_generator", 5))
+    if max_rounds < 1 or n_per_provider < 1:
+        raise ValueError("max_rounds and n_per_provider must be positive")
+
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:8]
     out_path = Path(output_dir)
     if any(out_path.glob("round_*.json")) or (out_path / "manifest.json").exists():
@@ -101,8 +276,63 @@ def run_loop(
         validate_receptor(target["receptor_pdbqt"])
     protocol = evaluation_protocol(target, scoring, dock_enabled)
     protocol_id = digest(protocol)
+    memory_namespace = str(loop_cfg_dict.get("memory_namespace", "default"))
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", memory_namespace):
+        raise ValueError("loop.memory_namespace may contain only letters, digits, ., _, and -")
+    if use_mock:
+        memory_base = out_path / "_memory"
+        evaluation_cache_root = out_path / "_evaluation_cache"
+        docking_cache_root = out_path / "_docking_cache"
+    else:
+        memory_base = (
+            Path(loop_cfg_dict.get("memory_dir", "memory/v2"))
+            / target["name"] / protocol_id / memory_namespace
+        )
+        evaluation_cache_root = Path(
+            loop_cfg_dict.get("evaluation_cache_dir", "memory/evaluation_cache")
+        )
+        docking_cache_root = Path(
+            loop_cfg_dict.get("docking_cache_dir", "memory/docking_cache")
+        )
+    evaluation_cache = EvaluationCache(
+        evaluation_cache_root,
+        protocol_id,
+        enabled=bool(loop_cfg_dict.get("evaluation_cache_enabled", True)),
+    )
+    docking_protocol_id = digest(docking_protocol(target, scoring))
+    docking_cache = DockingCache(
+        docking_cache_root,
+        docking_protocol_id,
+        enabled=bool(loop_cfg_dict.get("docking_cache_enabled", True)),
+    )
+    judge_enabled = bool(loop_cfg_dict.get("judge_enabled", True))
+    memory_enabled = bool(loop_cfg_dict.get("memory_enabled", True))
+    failed_set_enabled = bool(loop_cfg_dict.get("failed_set_enabled", memory_enabled))
+    require_all_generators = bool(loop_cfg_dict.get("require_all_generators", False))
+    generation_max_attempts = int(loop_cfg_dict.get("generation_max_attempts", 1))
+    judge_max_attempts = int(loop_cfg_dict.get("judge_max_attempts", 1))
+    if generation_max_attempts < 1 or judge_max_attempts < 1:
+        raise ValueError("loop generation/judge max attempts must be positive")
     manifest = {"schema_version": 2, "run_id": run_id, "is_mock": use_mock,
                 "protocol_id": protocol_id, "protocol": protocol,
+                "execution": {
+                    "max_rounds": max_rounds,
+                    "candidates_per_round_per_generator": n_per_provider,
+                    "providers": provider_names,
+                    "dock_enabled": dock_enabled,
+                    "memory_namespace": memory_namespace,
+                    "judge_enabled": judge_enabled,
+                    "memory_enabled": memory_enabled,
+                    "failed_set_enabled": failed_set_enabled,
+                    "require_all_generators": require_all_generators,
+                    "generation_max_attempts": generation_max_attempts,
+                    "judge_max_attempts": judge_max_attempts,
+                    "evaluation_cache_enabled": evaluation_cache.enabled,
+                    "evaluation_cache_dir": str(evaluation_cache.directory.resolve()),
+                    "docking_cache_enabled": docking_cache.enabled,
+                    "docking_protocol_id": docking_protocol_id,
+                    "docking_cache_dir": str(docking_cache.directory.resolve()),
+                },
                 "llm": {name: {k: v for k, v in settings.items() if k != "api_key_env" and "key" not in k.lower()}
                         for name, settings in llm_cfg.get("providers", {}).items()},
                 "reference_registry_sha256": file_hash("data/reference_compounds.json"),
@@ -112,30 +342,30 @@ def run_loop(
     (out_path / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
     # ----- Phase 4.1 modules -----
-    loop_cfg_dict = config.get("loop", {})
     loop_controller = LoopController(LoopConfig(
         max_rounds=max_rounds,
         token_budget=loop_cfg_dict.get("token_budget", 50000),
-        judge_convergence_patience=loop_cfg_dict.get("judge_convergence_patience", 2),
+        judge_convergence_patience=loop_cfg_dict.get(
+            "early_stop_patience",
+            loop_cfg_dict.get("judge_convergence_patience", 2),
+        ),
     ))
     state = LoopState()
     # Phase 4.3 (P0-3 / P1-1): persistence paths for strategy history + best molecules
-    memory_strategy_path = (
-        Path("memory/strategy_history") / target["name"] / (protocol_id + ".json")
-    )
-    memory_best_path = Path("memory/best_molecules.json")
+    memory_strategy_path = memory_base / "strategy_history.json"
+    memory_best_path = memory_base / "best_molecules.json"
     memory = WorkingMemory(
         max_recent=loop_cfg_dict.get("memory_max_recent", 3),
-        strategy_persist_path=memory_strategy_path,
-        best_persist_path=memory_best_path,
+        strategy_persist_path=memory_strategy_path if memory_enabled else None,
+        best_persist_path=memory_best_path if memory_enabled else None,
         target_name=target["name"],
     )
     # Phase 4.3 (P2-1 fix): read thresholds from scoring.failed_set with
     # backward-compat fallback to loop.failed_* (legacy keys).
     failed_cfg = (scoring or {}).get("failed_set", {}) or {}
     failed_set = FailedLigandSet(
-        path=(out_path / "mock_memory.json" if use_mock else
-              Path("memory/v2") / target["name"] / (protocol_id + ".json")),
+        path=(memory_base / "failed_ligands.json" if failed_set_enabled else
+              out_path / "_disabled_failed_ligands.json"),
         threshold_composite=loop_cfg_dict.get(
             "failed_threshold_composite",
             failed_cfg.get("composite_floor", 0.5),
@@ -148,9 +378,9 @@ def run_loop(
             "failed_max_size",
             failed_cfg.get("max_size", 0),
         ),
-        # Phase 4.3 (P1-2): optional embedding-based similarity filter.
-        # Off by default; opt in via config.yaml scoring.failed_set.embeddings.enabled.
-        enable_embeddings=bool(
+        # Optional similarity signal. The loop decides whether it is report-only
+        # or exclusionary via scoring.failed_set.embeddings.mode.
+        enable_embeddings=failed_set_enabled and bool(
             (failed_cfg.get("embeddings") or {}).get("enabled", False)
         ),
         embedding_threshold=float(
@@ -187,7 +417,10 @@ def run_loop(
             break
 
         if verbose:
-            mem_ctx = memory.compress_for_generator()
+            mem_ctx = (
+                memory.compress_for_generator()
+                if memory_enabled else "Memory disabled for this experiment."
+            )
             print(f"\n=== Round {round_num} ===")
             print(f"  [memory] {mem_ctx.splitlines()[0]}")
             print(f"  [focus] {focus[:80] if focus else '(initial)'}")
@@ -206,19 +439,51 @@ def run_loop(
             focus=focus,
             weakness=weakness,
             # Phase 4.1: pass memory context + failed-smiles prompt
-            memory_context=memory.compress_for_generator(),
-            failed_prompt=failed_set.format_for_prompt(),
+            memory_context=(memory.compress_for_generator() if memory_enabled else ""),
+            failed_prompt=(failed_set.format_for_prompt() if failed_set_enabled else ""),
             use_mock=use_mock,
+            max_attempts_per_provider=generation_max_attempts,
         )
-        candidates = flatten_generator_results(gen_results)
-        for i, candidate in enumerate(candidates):
-            candidate.update(candidate_id=f"{run_id}:r{round_num}:c{i}", run_id=run_id,
-                             round=round_num, focus_used=focus_used, is_mock=use_mock)
         (out_path / f"proposals_{round_num}.json").write_text(
             json.dumps(gen_results, indent=2, ensure_ascii=False), encoding="utf-8")
         state.tokens_used += sum(r.get("usage", {}).get("total_tokens", 0) or 0 for r in gen_results)
+
+        if require_all_generators:
+            outputs_by_provider = {result.get("provider"): result for result in gen_results}
+            generation_errors = []
+            for provider in provider_names:
+                output = outputs_by_provider.get(provider)
+                if output is None:
+                    generation_errors.append(f"{provider}:missing")
+                    continue
+                if output.get("error"):
+                    generation_errors.append(f"{provider}:error={output['error']}")
+                actual = len(output.get("smiles_list") or [])
+                if actual != n_per_provider:
+                    generation_errors.append(
+                        f"{provider}:candidates={actual} expected={n_per_provider}"
+                    )
+            if generation_errors:
+                stop_reason = "generation_incomplete"
+                if verbose:
+                    print(f"  [!] incomplete generator batch: {'; '.join(generation_errors)}")
+                break
+
+        candidates = flatten_generator_results(gen_results)
+        embedding_cfg = (failed_cfg.get("embeddings") or {})
+        candidates, candidate_filter = filter_candidates_for_evaluation(
+            candidates,
+            failed_set,
+            similarity_mode=str(embedding_cfg.get("mode", "report")),
+        )
+        for i, candidate in enumerate(candidates):
+            candidate.update(candidate_id=f"{run_id}:r{round_num}:c{i}", run_id=run_id,
+                             round=round_num, focus_used=focus_used, is_mock=use_mock)
         if verbose:
-            print(f"  [A] got {len(candidates)} raw candidates from {len(gen_results)} providers")
+            print(
+                f"  [A] kept {len(candidates)}/{candidate_filter['raw']} candidates "
+                f"after exact deduplication"
+            )
 
         if not candidates:
             stop_reason = "no_candidates"
@@ -229,17 +494,21 @@ def run_loop(
         # ----- Agent B: evaluate -----
         if verbose:
             print(f"  [B] evaluating with 4 tools (dock={dock_enabled})...")
-        enriched = evaluate_candidates(
+        enriched, evaluation_cache_stats = evaluate_candidates_with_cache(
             candidates=candidates,
             scoring_config=scoring,
             target_config=target,
             dock_enabled=dock_enabled,
             artifact_dir=str(out_path / "artifacts"),
+            cache=evaluation_cache,
+            docking_cache=docking_cache,
         )
 
         # ----- Round summary -----
         summary = summarize_round(enriched)
         summary["round"] = round_num
+        summary["candidate_filter"] = candidate_filter
+        summary["evaluation_cache"] = evaluation_cache_stats
         summary_history.append(summary)
         enriched_history.append(enriched)  # Phase 4.3 (P1-4): keep for next-round Judge
         if verbose:
@@ -247,25 +516,62 @@ def run_loop(
                   f"avg_ADMET={summary['avg_admet']} "
                   f"unique_scaffolds={summary['n_unique_scaffolds']} "
                   f"best_Vina={summary['best_vina']}")
+            print(
+                f"  [cache] hits={evaluation_cache_stats['hits']} "
+                f"misses={evaluation_cache_stats['misses']} "
+                f"stored={evaluation_cache_stats['stored']}"
+            )
+            if dock_enabled:
+                print(
+                    f"  [dock-cache] hits={evaluation_cache_stats['docking_hits']} "
+                    f"misses={evaluation_cache_stats['docking_misses']} "
+                    f"stored={evaluation_cache_stats['docking_stored']}"
+                )
 
         # ----- Agent C: judge -----
         if verbose:
-            print(f"  [C] judging round...")
+            print("  [C] judging round..." if judge_enabled else "  [C] judge disabled")
         # Phase 4.2: pass previous focus + summary for self-reflection
-        judgment = judge_round(
-            enriched, config, round_num,
-            previous_focus=focus,             # focus from prior round (empty on round 0)
-            previous_summary=previous_summary,
-            previous_enriched=previous_enriched,  # Phase 4.3 (P1-4): full prior candidate list
-            use_mock=use_mock,
-        )
-        state.tokens_used += judgment.get("usage", {}).get("total_tokens", 0) or 0
+        if judge_enabled:
+            judgment_errors = []
+            judgment_tokens = 0
+            for judge_attempt in range(1, judge_max_attempts + 1):
+                judgment = judge_round(
+                    enriched, config, round_num,
+                    previous_focus=focus,             # focus from prior round (empty on round 0)
+                    previous_summary=previous_summary,
+                    previous_enriched=previous_enriched,  # full prior candidate list
+                    use_mock=use_mock,
+                )
+                judgment_tokens += judgment.get("usage", {}).get("total_tokens", 0) or 0
+                if judgment.get("status") == "ok":
+                    break
+                judgment_errors.append(
+                    str((judgment.get("summary") or {}).get("error") or "judge_error")
+                )
+            judgment["attempt_count"] = judge_attempt
+            if judgment_errors:
+                key = "prior_attempt_errors" if judgment.get("status") == "ok" else "attempt_errors"
+                judgment[key] = judgment_errors
+        else:
+            judgment = {
+                "status": "disabled",
+                "focus": "",
+                "weakness": "",
+                "reflection": "",
+                "confidence": 0.0,
+                "adopted_count": 0,
+                "adoption_denominator": 0,
+                "usage": {},
+            }
+            judgment_tokens = 0
+        state.tokens_used += judgment_tokens
         focus = judgment["focus"]
         weakness = judgment.get("weakness", "")
         reflection = judgment.get("reflection", "")
         confidence = judgment.get("confidence", 0.0)
         adopted_count = judgment.get("adopted_count", 0)
-        if verbose:
+        if verbose and judge_enabled:
             print(f"  [C] weakness: {weakness[:80]}")
             print(f"  [C] next focus: {focus[:120]}")
             if reflection:
@@ -290,19 +596,24 @@ def run_loop(
                       f"({ov['intersection']}/{ov['union']})")
 
         # ----- Phase 4.1: WorkingMemory.update -----
-        memory.add_round(enriched, focus_used)
+        if memory_enabled:
+            memory.add_round(enriched, focus_used)
 
         # ----- Phase 4.1: FailedLigandSet update -----
         for c in enriched:
-            if c.get("evaluation_status") == "complete" and not use_mock and failed_set.should_mark_failed(
-                c["composite_score"], c["dock"].get("score")
+            safety_failed = c.get("safety_gate_pass") is False
+            if failed_set_enabled and c.get("evaluation_status") == "complete" and not use_mock and (
+                safety_failed or failed_set.should_mark_failed(
+                    c["composite_score"], c["dock"].get("score")
+                )
             ):
                 reason = (
                     f"composite={c['composite_score']:.2f}, "
-                    f"vina={c['dock'].get('score')}"
+                    f"vina={c['dock'].get('score')}, "
+                    f"safety_gate_pass={c.get('safety_gate_pass')}"
                 )
                 failed_set.add_failed(c["smiles"], reason)
-        if verbose and failed_set.failed:
+        if verbose and failed_set_enabled and failed_set.failed:
             print(f"  [memory] failed_set now holds {len(failed_set.failed)} SMILES")
 
         # ----- LoopController: track best Vina -----
@@ -393,7 +704,9 @@ def run_loop(
     overall = {
         "run_id": run_id, "protocol_id": protocol_id, "is_mock": use_mock,
         "output_dir": str(out_path.resolve()), "tokens_used": state.tokens_used,
-        "status": "error" if stop_reason in ("judge_error", "no_candidates") else "finished",
+        "status": "error" if stop_reason in (
+            "judge_error", "no_candidates", "generation_incomplete"
+        ) else "finished",
         "stop_reason": stop_reason,
         "target": target["name"],
         "rounds_completed": len(rounds_log),
@@ -422,6 +735,7 @@ def run_loop(
         "adoption_rate_avg_llm": metrics["aggregates"]["adoption_rate_avg_llm"],
         "adoption_rate_avg_det": metrics["aggregates"]["adoption_rate_avg_det"],
         "adoption_llm_vs_det_drift_avg": metrics["aggregates"]["adoption_llm_vs_det_drift_avg"],
+        "run_shows_improvement": metrics["verdict"]["run_shows_improvement"],
         "agent_is_learning": metrics["verdict"]["agent_is_learning"],
         "verdict_rationale": metrics["verdict"]["rationale"],
         "see_also": "metrics.json",
@@ -439,7 +753,8 @@ def run_loop(
         v = metrics["aggregates"]
         print(
             f"\n[metrics] best_vina {v['best_vina_first']} -> {v['best_vina_last']} "
-            f"(delta={v['best_vina_delta']}); learning={metrics['verdict']['agent_is_learning']}"
+            f"(delta={v['best_vina_delta']}); "
+            f"run_improved={metrics['verdict']['run_shows_improvement']}"
         )
         print(
             f"[metrics] adoption LLM={v['adoption_rate_avg_llm']} "
@@ -487,9 +802,12 @@ def _per_provider_stats(enriched: list[dict]) -> dict:
 def main():
     p = argparse.ArgumentParser(description="AIDD Multi-Agent Loop")
     p.add_argument("--config", default="config.yaml")
-    p.add_argument("--output", default="runs")
-    p.add_argument("--rounds", type=int, default=5)
-    p.add_argument("--n", type=int, default=5, help="candidates per provider per round")
+    p.add_argument("--output", default=None,
+                   help="base output directory (default: loop.output_dir in config)")
+    p.add_argument("--rounds", type=int, default=None,
+                   help="override loop.max_rounds from config")
+    p.add_argument("--n", type=int, default=None,
+                   help="override candidates_per_round_per_generator from config")
     p.add_argument("--no-dock", action="store_true", help="skip Vina (faster)")
     p.add_argument("--mock", action="store_true", help="use mock LLM (no API key needed)")
     p.add_argument("--hitl", action="store_true")
@@ -497,9 +815,11 @@ def main():
     args = p.parse_args()
 
     config = load_config(args.config)
+    loop_cfg = config.get("loop", {}) or {}
+    base_output = args.output or loop_cfg.get("output_dir", "runs")
     overall = run_loop(
         config=config,
-        output_dir=str(Path(args.output) / (("mock_" if args.mock else "run_") + datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:6])),
+        output_dir=str(Path(base_output) / (("mock_" if args.mock else "run_") + datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:6])),
         max_rounds=args.rounds,
         n_per_provider=args.n,
         dock_enabled=not args.no_dock,
@@ -507,7 +827,7 @@ def main():
         verbose=not args.quiet,
         hitl=args.hitl,
     )
-    print(f"\n[OK] loop finished: {overall['rounds_completed']} rounds -> {overall.get('output_dir', args.output)}")
+    print(f"\n[OK] loop finished: {overall['rounds_completed']} rounds -> {overall.get('output_dir', base_output)}")
     print(f"     run_id: {overall.get('run_id')}")
 
 

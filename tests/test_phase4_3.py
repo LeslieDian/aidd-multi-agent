@@ -198,8 +198,8 @@ def _fake_judgment(round_n, adopted_llm=0, det_n_adopted=0):
     }
 
 
-def test_metrics_learning_monotonic_down():
-    """best_vina monotonically decreasing -> verdict True."""
+def test_metrics_run_trend_improves_without_causal_claim():
+    """A better final score is a run trend, not proof of agent learning."""
     print("\n=== test_metrics_learning_monotonic_down ===")
     s = [_fake_summary(i, 5, 5, -3.0 - 0.2 * i) for i in range(5)]
     j = [_fake_judgment(i, 1, 1) for i in range(5)]
@@ -208,8 +208,9 @@ def test_metrics_learning_monotonic_down():
     assert agg["best_vina_first"] == -3.0
     assert agg["best_vina_last"] == -3.8
     assert agg["best_vina_delta"] == -0.8
-    assert m["verdict"]["agent_is_learning"] is True
-    print(f"  [OK] delta={agg['best_vina_delta']}, verdict={m['verdict']['rationale']}")
+    assert m["verdict"]["run_shows_improvement"] is True
+    assert m["verdict"]["agent_is_learning"] is None
+    print(f"  [OK] delta={agg['best_vina_delta']}, trend={m['verdict']['run_rationale']}")
 
 
 def test_metrics_learning_flat_is_false():
@@ -223,14 +224,15 @@ def test_metrics_learning_flat_is_false():
         _fake_summary(4, 5, 5, -2.95),
     ]
     m = compute_agent_metrics(s, [_fake_judgment(i) for i in range(5)])
-    assert m["verdict"]["agent_is_learning"] is False
+    assert m["verdict"]["run_shows_improvement"] is False
+    assert m["verdict"]["agent_is_learning"] is None
     assert m["aggregates"]["best_vina_delta"] == 0.05
     print(f"  [OK] flat-ish Vina -> agent_is_learning=False; "
           f"rationale={m['verdict']['rationale']}")
 
 
-def test_metrics_learning_via_scaffold_doubling():
-    """If Vina is noisy but scaffolds doubled, agent_is_learning=True."""
+def test_scaffold_doubling_does_not_imply_learning():
+    """Exploration breadth alone is not evidence of score improvement."""
     print("\n=== test_metrics_learning_via_scaffold_doubling ===")
     s = [
         _fake_summary(0, 5, 5, -3.0, scaffolds=2),
@@ -238,15 +240,16 @@ def test_metrics_learning_via_scaffold_doubling():
         _fake_summary(2, 5, 5, -2.95, scaffolds=5),
     ]
     m = compute_agent_metrics(s, [_fake_judgment(i) for i in range(3)])
-    assert m["verdict"]["agent_is_learning"] is True
-    print(f"  [OK] scaffolds 2 -> 5 doubled; verdict=True; "
-          f"rationale={m['verdict']['rationale']}")
+    assert m["verdict"]["run_shows_improvement"] is False
+    assert m["verdict"]["agent_is_learning"] is None
+    print("  [OK] scaffolds 2 -> 5 is retained as diversity data only")
 
 
 def test_metrics_insufficient_data():
     """Single round -> None."""
     print("\n=== test_metrics_insufficient_data ===")
     m = compute_agent_metrics([_fake_summary(0, 5, 5, -3.0)])
+    assert m["verdict"]["run_shows_improvement"] is None
     assert m["verdict"]["agent_is_learning"] is None
     print(f"  [OK] 1 round -> verdict=None")
 
@@ -285,14 +288,14 @@ def test_end_to_end_loop_emits_metrics_json(tmp_path=None):
         for key in ("best_vina_first", "best_vina_last", "best_vina_delta",
                     "valid_rate_improvement", "adoption_rate_avg_llm",
                     "adoption_rate_avg_det", "adoption_llm_vs_det_drift_avg",
-                    "agent_is_learning"):
+                    "run_shows_improvement", "agent_is_learning"):
             assert key in am, f"missing agent_metrics.{key}"
 
         # metrics.json exists with full curves
         m_path = Path(tmp) / "metrics.json"
         assert m_path.exists()
         m = json.loads(m_path.read_text(encoding="utf-8"))
-        assert m["schema_version"] == 1
+        assert m["schema_version"] == 2
         assert m["rounds_total"] == 3
         assert "curves" in m
         assert len(m["curves"]["best_vina"]) == 3
@@ -302,7 +305,7 @@ def test_end_to_end_loop_emits_metrics_json(tmp_path=None):
         s = json.dumps(m)
         json.loads(s)
         print(f"  [OK] summary.json has agent_metrics block; metrics.json has "
-              f"curves; verdict={m['verdict']['agent_is_learning']}; "
+              f"curves; trend={m['verdict']['run_shows_improvement']}; "
               f"rationale={m['verdict']['rationale']}")
 
 
@@ -316,9 +319,9 @@ def main():
     test_adoption_stats_threshold()
     test_judge_round_emits_deterministic_adoption()
     test_judge_round_deterministic_handles_no_reference()
-    test_metrics_learning_monotonic_down()
+    test_metrics_run_trend_improves_without_causal_claim()
     test_metrics_learning_flat_is_false()
-    test_metrics_learning_via_scaffold_doubling()
+    test_scaffold_doubling_does_not_imply_learning()
     test_metrics_insufficient_data()
     test_metrics_drift_aggregation()
     test_end_to_end_loop_emits_metrics_json()

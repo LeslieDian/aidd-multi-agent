@@ -1,3 +1,7 @@
+> **历史报告已撤回科学结论（2026-09-13）**：本报告使用的受体发生残基丢失，
+> 参考结构存在身份错误。下文的“超过已知药物”“箱体分数换算”“证明强结合”等结论无效。
+> 原始内容保留作审计记录；请以 [第一阶段修复](PHASE_1_CREDIBILITY.md) 及新版验证为准。
+
 # Phase C: Vina Deep-Dive Findings
 
 > **Question:** Is our Phase 3 best Vina score (-3.83) real drug-grade binding,

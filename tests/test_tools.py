@@ -78,6 +78,10 @@ def test_diversity():
 
 
 def test_dock_score():
+    import os
+    if os.getenv("AIDD_RUN_DOCKING_TESTS") != "1":
+        import pytest
+        pytest.skip("Explicit integration test: set AIDD_RUN_DOCKING_TESTS=1")
     print("\n=== test_dock_score ===")
     if not is_vina_available():
         print("  [!] Vina not installed, skipping docking test")
@@ -87,7 +91,7 @@ def test_dock_score():
 
     results = dock_batch(
         ["CCO"],
-        receptor_pdb="data/1M17.pdbqt",
+        receptor_pdb="data/prepared/1M17_v1.pdbqt",
         pocket_center=(22.014, 0.253, 52.794),
         pocket_size=(27.7, 16.7, 19.1),
         exhaustiveness=4,

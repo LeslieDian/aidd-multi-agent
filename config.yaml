@@ -85,6 +85,30 @@ llm:
 # Scoring thresholds
 # ----------------------------------------------------------
 scoring:
+  # Confirmatory objective v3. Scores retain six decimal places internally.
+  # Property quality, docking, and the continuous hERG proxy remain separate
+  # so a strong docking score cannot silently erase a safety penalty.
+  objective:
+    version: multi_objective_v3.1
+    precision: 6
+    vina_scale: 12.0
+    weak_vina_multiplier: 0.3
+    weights:
+      property: 0.55
+      vina: 0.30
+      herg_safety: 0.15
+
+  pareto:
+    enabled: true
+    objectives:
+      - vina
+      - property_score
+      - herg_risk_score
+      - sa_score
+    safety:
+      max_herg_risk_score: 0.55
+      max_logp: 4.50
+
   lipinski:
     max_mw: 500
     max_logp: 5
@@ -111,15 +135,13 @@ scoring:
     composite_floor: 0.5        # composite_score < this -> mark failed
     vina_floor: -2.5            # vina_score > this  -> mark failed (more negative = better)
     max_size: 500               # Phase 4.3 (P0-2 fix): LRF eviction cap; 0 = unlimited
-    # Phase 4.3 (P1-2 fix): embedding-based similarity check. When enabled,
-    # FailedLigandSet encodes each SMILES with sentence-transformers and
-    # treats any new candidate whose top-1 cosine similarity to the failed
-    # set exceeds `threshold` as also-failed. Catches near-duplicates the
-    # exact-match path misses (e.g. an extra CH2 on a known-bad scaffold).
+    # Optional diagnostic similarity signal. all-MiniLM-L6-v2 is a text model,
+    # so matches are reported for analysis and do not reject molecules.
     # Lazy model load; falls back silently to exact-match if
     # sentence-transformers / torch are unavailable.
     embeddings:
-      enabled: false            # opt-in (sentence-transformers dep)
+      enabled: true             # OPTED IN 2026-09-14: torch 2.11+cu128 + all-MiniLM-L6-v2 cached
+      mode: report              # off | report | exclude; use exclude only after validation
       threshold: 0.85           # cosine sim >= this -> structurally too close
       model: all-MiniLM-L6-v2   # 384-dim, ~80 MB, fast on CPU
 
@@ -127,7 +149,29 @@ scoring:
 # Loop configuration
 # ----------------------------------------------------------
 loop:
-  max_rounds: 5
-  candidates_per_round_per_generator: 5
-  early_stop_patience: 2
+  # Phase 4.4 (2026-09-14): 5 -> 12 rounds. With 5 rounds x 2 providers x 5 mols
+  # the search space was too small (best_Vina stalled around -3.0 kcal/mol).
+  # 12 rounds lets FailedSet + Judge reflection + SAR-guided generation
+  # actually close the loop instead of stopping after 2-3 weak improvements.
+  max_rounds: 12
+  # Phase 4.4 (2026-09-14): 5 -> 15 per provider. Total 30 candidates/round
+  # gives FailedSet enough hard negatives to filter against by round 3-4,
+  # and gives Judge enough signal to find a real structural weakness.
+  candidates_per_round_per_generator: 15
+  early_stop_patience: 3
   output_dir: runs/
+  memory_dir: memory/v2
+  memory_namespace: default     # set a different name for each experiment arm
+  judge_enabled: true
+  memory_enabled: true
+  failed_set_enabled: true
+  # Controlled benchmarks override these to true/3. Interactive runs remain
+  # resilient and can continue if one provider is temporarily unavailable.
+  require_all_generators: false
+  generation_max_attempts: 1
+  judge_max_attempts: 1
+  evaluation_cache_enabled: true
+  # Shared across experiment arms; protocol_id prevents incompatible reuse.
+  evaluation_cache_dir: memory/evaluation_cache
+  docking_cache_enabled: true
+  docking_cache_dir: memory/docking_cache

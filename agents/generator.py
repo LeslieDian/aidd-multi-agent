@@ -19,10 +19,8 @@ SYSTEM_PROMPT = """You are a senior medicinal chemist designing drug-like \
 molecules that bind the ATP-binding pocket of EGFR (PDB: 1M17), \
 a tyrosine kinase implicated in non-small-cell lung cancer.
 
-Known reference inhibitors (use these as inspiration, NOT as direct copies):
-- Erlotinib: C#Cc1ccc(Nc2ncnc3cc(OCCOC)c(OCCOC)cc23)cc1
-- Gefitinib: COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCCN1CCOCC1
-- Afatinib: CN(C)C(=O)C1=CC=CC=C1C(=O)Nc1ncnc2cc(NCc3ccc(C)cc3)c(OC)cc12
+Known verified reference inhibitors:
+__REFERENCES__
 
 Design constraints (drug-likeness):
 - Molecular weight 280-500 Da
@@ -31,6 +29,10 @@ Design constraints (drug-likeness):
 - TPSA <= 110 A^2
 - At least one aromatic ring (essential for hinge binding)
 - At least one H-bond acceptor (N or O) that can reach the hinge backbone
+- Avoid combining high lipophilicity with strongly basic amine tails; target logP <= 4.5
+- Treat docking, drug-like properties, synthetic accessibility, and hERG-risk
+  as separate objectives; propose trade-off candidates rather than optimizing
+  docking alone
 
 Output STRICT JSON only (no markdown, no commentary):
 {{
@@ -61,19 +63,20 @@ Return ONLY the JSON object.
 # ---------- Validation ----------
 
 def _extract_json(text: str) -> dict:
-    """Robustly extract JSON from LLM output (handle code fences etc.)."""
+    """Return the first complete JSON object, ignoring surrounding text."""
     text = text.strip()
-    # strip ```json ... ```
-    if text.startswith("```"):
-        m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
-        if m:
-            text = m.group(1)
-    # find first { ... last }
-    start = text.find("{")
-    end = text.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        text = text[start : end + 1]
-    return json.loads(text)
+    decoder = json.JSONDecoder()
+    last_error: Exception | None = None
+    for match in re.finditer(r"\{", text):
+        try:
+            parsed, _ = decoder.raw_decode(text[match.start():])
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError as exc:
+            last_error = exc
+    if last_error:
+        raise last_error
+    raise ValueError("No JSON object in response")
 
 
 # ---------- Single-provider call ----------
@@ -110,22 +113,31 @@ def generate_with_provider(
         .replace("__MEMORY__", memory_section)
         .replace("__FAILED__", failed_prompt)
     )
-    system = SYSTEM_PROMPT.replace("__N__", str(n))
+    from tools.references import load_references, format_sar_for_prompt
+    references = "\n".join(f"- {name}: {row['smiles']} (PubChem CID {row['CID']})"
+                           for name, row in load_references().items())
+    sar_block = format_sar_for_prompt()
+    references_block = references + ("\n\n" + sar_block if sar_block else "")
+    system = SYSTEM_PROMPT.replace("__N__", str(n)).replace("__REFERENCES__", references_block)
 
     raw = client.chat(system=system, user=user, json_mode=True)
-    parsed = _extract_json(raw)
-
-    smiles_list = parsed.get("smiles_list", [])
-    if not isinstance(smiles_list, list) or not smiles_list:
-        raise ValueError(f"{provider_name}: no smiles_list in response")
-
-    return {
-        "model": getattr(client, "model", "unknown"),
-        "provider": provider_name,
-        "smiles_list": [str(s).strip() for s in smiles_list][:n],
-        "rationale": str(parsed.get("rationale", "")).strip(),
-        "raw_length": len(raw),
+    result = {
+        "model": getattr(client, "model", "unknown"), "provider": provider_name,
+        "raw_length": len(raw), "is_mock": use_mock,
+        "usage": getattr(client, "last_usage", {}),
+        "prompt": {"system": system, "user": user}, "raw_response": raw,
+        "smiles_list": [], "rationale": "",
     }
+    try:
+        parsed = _extract_json(raw)
+        smiles_list = parsed.get("smiles_list", [])
+        if not isinstance(smiles_list, list) or not smiles_list:
+            raise ValueError("No smiles_list in response")
+        result.update(smiles_list=[str(s).strip() for s in smiles_list][:n],
+                      rationale=str(parsed.get("rationale", "")).strip())
+    except Exception as exc:
+        result['error'] = f'{type(exc).__name__}: {exc}'
+    return result
 
 
 # ---------- Parallel multi-provider call ----------
@@ -140,6 +152,7 @@ def generate_candidates(
     failed_prompt: str = "",
     use_mock: bool = False,
     max_workers: int = 4,
+    max_attempts_per_provider: int = 1,
 ) -> list[dict]:
     """Generate candidates from multiple providers in parallel.
 
@@ -152,14 +165,45 @@ def generate_candidates(
     if not providers:
         raise ValueError("no providers configured")
 
+    if max_attempts_per_provider < 1:
+        raise ValueError("max_attempts_per_provider must be positive")
+
+    def generate_with_retries(provider: str) -> dict:
+        errors: list[str] = []
+        result: dict = {}
+        for attempt in range(1, max_attempts_per_provider + 1):
+            try:
+                result = generate_with_provider(
+                    provider, config, n_per_provider, focus, weakness,
+                    memory_context, failed_prompt, use_mock,
+                )
+            except Exception as exc:
+                result = {
+                    "provider": provider,
+                    "smiles_list": [],
+                    "rationale": "",
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            actual = len(result.get("smiles_list") or [])
+            if not result.get("error") and actual == n_per_provider:
+                result["attempt_count"] = attempt
+                if errors:
+                    result["prior_attempt_errors"] = errors
+                return result
+            errors.append(
+                str(result.get("error") or
+                    f"candidate_count={actual} expected={n_per_provider}")
+            )
+        result["attempt_count"] = max_attempts_per_provider
+        result["attempt_errors"] = errors
+        if not result.get("error"):
+            result["error"] = errors[-1]
+        return result
+
     results: list[dict] = []
     with ThreadPoolExecutor(max_workers=min(max_workers, len(providers))) as ex:
         futures = {
-            ex.submit(
-                generate_with_provider,
-                p, config, n_per_provider, focus, weakness,
-                memory_context, failed_prompt, use_mock,
-            ): p
+            ex.submit(generate_with_retries, p): p
             for p in providers
         }
         for fut in as_completed(futures):

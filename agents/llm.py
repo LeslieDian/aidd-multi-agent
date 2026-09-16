@@ -72,6 +72,7 @@ class LLMClient:
             kwargs.update(extra)
 
         response = self.client.chat.completions.create(**kwargs)
+        self.last_usage = response.usage.model_dump() if response.usage else {}
         return response.choices[0].message.content or ""
 
     def chat_json(self, system: str, user: str, **kwargs) -> Any:
@@ -139,13 +140,13 @@ class MockLLMClient:
 def get_client(provider_name: str, config: dict, mock: bool = False) -> LLMClient | MockLLMClient:
     """Factory: return LLMClient or MockLLMClient.
 
-    If `mock=True` or the API key env var is missing, return MockLLMClient.
+    Only explicit `mock=True` enables MockLLMClient; missing keys fail closed.
     """
     providers = config.get("llm", {}).get("providers", {})
     if provider_name not in providers:
         raise KeyError(f"Unknown provider: {provider_name}. Available: {list(providers)}")
     provider_cfg = providers[provider_name]
 
-    if mock or not os.getenv(provider_cfg["api_key_env"]):
+    if mock:
         return MockLLMClient(provider_cfg)
     return LLMClient(provider_cfg)

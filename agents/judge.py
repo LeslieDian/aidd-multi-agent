@@ -15,6 +15,7 @@ import json
 import re
 
 from .llm import get_client
+from .evaluator import candidate_priority_key
 from tools.diversity import adoption_stats
 
 
@@ -47,6 +48,12 @@ you MUST also reflect on whether your prior suggestion worked:
 - Did Vina / ADMET improve, worsen, or stay flat?
 - If the suggestion failed, do you pivot (different angle) or double down (refine wording)?
 - DO NOT just repeat your previous focus uncritically.
+
+MULTI-OBJECTIVE RULES:
+- Prefer candidates on the Pareto front that also pass the safety gate.
+- Never recommend a Vina improvement that knowingly raises the hERG-risk proxy.
+- If binding and safety conflict, propose a structural change expected to improve
+  the weaker objective while preserving the stronger one.
 
 Output STRICT JSON only:
 {{
@@ -88,10 +95,7 @@ def judge_round(
 
     # Build compact input: top 5 candidates
     valid = [c for c in enriched if c["validate"]["valid"]]
-    ranked = sorted(valid, key=lambda c: (
-        c.get("composite_score") is not None,
-        c.get("composite_score") if c.get("composite_score") is not None else c.get("property_score") or 0.
-    ), reverse=True)[:5]
+    ranked = sorted(valid, key=candidate_priority_key, reverse=True)[:5]
 
     summary_lines = [
         f"Round {round_num}: {len(enriched)} candidates, {len(valid)} valid."
@@ -107,8 +111,10 @@ def judge_round(
             f"smiles={c['smiles']}\n"
             f"    MW={v.get('mw', '?')} logP={v.get('logp', '?')} "
             f"SA={v.get('sa_score', '?')} Lipinski={v.get('lipinski_pass', '?')} | "
-            f"ADMET={a.get('summary_score', '?')} (QED={a.get('qed', '?')}) | "
-            f"Vina={d.get('score', '?')} | composite={c.get('composite_score', '?')}\n"
+            f"ADMET={a.get('summary_score', '?')} (QED={a.get('qed', '?')}, "
+            f"hERG-risk={a.get('herg_risk_score', a.get('herg_risk', '?'))}) | "
+            f"Vina={d.get('score', '?')} | composite={c.get('composite_score', '?')} | "
+            f"Pareto={c.get('pareto_rank', '?')} safety={c.get('safety_gate_pass', '?')}\n"
             f"    warnings: {warn_str}"
         )
 
@@ -117,6 +123,7 @@ def judge_round(
         "weakness shared by the candidates, then write the next-round focus.\n\n"
         + "\n".join(summary_lines)
         + "\nMissing scores are unknown, not success. ADMET values are descriptor heuristics. "
+          "Prioritize safety-passing Pareto candidates. Do not trade a lower Vina score for higher hERG risk. "
           "Do not assert binding contacts without pose analysis. Structural suggestions are hypotheses. "
           "adopted_count covers only the displayed candidates and is an LLM estimate."
     )
@@ -195,7 +202,14 @@ def judge_round(
     client, raw = None, None
     try:
         client = get_client(provider_name, config, mock=use_mock)
-        raw = client.chat(SYSTEM_PROMPT, user_prompt, json_mode=True)
+        # Inject curated SAR facts (binding-mode + western aryl + tail SAR)
+        # into the Judge system prompt so it can ground "weakness" in
+        # EGFR-specific structural axes (hinge bidentate, pocket-I aryl,
+        # C7 basic-amine tail) instead of generic "be more diverse".
+        from tools.references import format_sar_for_prompt
+        sar_block = format_sar_for_prompt()
+        judge_system = SYSTEM_PROMPT + ("\n\n" + sar_block if sar_block else "")
+        raw = client.chat(judge_system, user_prompt, json_mode=True)
         parsed = _extract_json(raw)
 
         # Round 0 (or any round without previous_focus): reflection must be
@@ -282,13 +296,17 @@ def judge_round(
 
 
 def _extract_json(text: str) -> dict:
+    """Return the first complete JSON object, ignoring surrounding text."""
     text = text.strip()
-    if text.startswith("```"):
-        m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
-        if m:
-            text = m.group(1)
-    start = text.find("{")
-    end = text.rfind("}")
-    if start != -1 and end != -1:
-        text = text[start : end + 1]
-    return json.loads(text)
+    decoder = json.JSONDecoder()
+    last_error: Exception | None = None
+    for match in re.finditer(r"\{", text):
+        try:
+            parsed, _ = decoder.raw_decode(text[match.start():])
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError as exc:
+            last_error = exc
+    if last_error:
+        raise last_error
+    raise ValueError("No JSON object in response")
