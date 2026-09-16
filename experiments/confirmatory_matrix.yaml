@@ -20,6 +20,10 @@ confirmatory:
   safety_noninferiority_margin: 0.05
   min_improved_run_rate: 0.70
   alpha: 0.05
+  futility:
+    enabled: true
+    min_completed: 3
+    rule: stop_when_minimum_improvement_rate_is_mathematically_unreachable
 
 groups:
   reflection:

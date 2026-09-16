@@ -124,7 +124,24 @@ scoring:
     n_poses: 5
     seed: 2026
     cpu: 2
+    workers: 4                  # concurrent CPU-only Vina processes; each uses `cpu` threads
     timeout: 180
+
+  # Two-stage docking is enabled by the screening profile, not by final confirmation.
+  # All valid candidates receive a cheap Vina pass; only the safety/property/fast-Vina
+  # leaders are promoted to the full protocol above.
+  funnel:
+    enabled: false
+    full_dock_fraction: 0.35
+    min_full_dock: 3
+    max_full_dock: 0            # 0 = no absolute cap
+    fast_vina:
+      exhaustiveness: 4
+      n_poses: 1
+      seed: 2026
+      cpu: 1
+      workers: 4
+      timeout: 60
 
   diversity:
     min_new_scaffolds: 2
@@ -144,6 +161,7 @@ scoring:
       mode: report              # off | report | exclude; use exclude only after validation
       threshold: 0.85           # cosine sim >= this -> structurally too close
       model: all-MiniLM-L6-v2   # 384-dim, ~80 MB, fast on CPU
+      device: auto              # uses CUDA when available, otherwise CPU
 
 # ----------------------------------------------------------
 # Loop configuration

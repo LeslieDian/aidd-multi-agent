@@ -1,0 +1,58 @@
+schema_version: 1
+
+profiles:
+  smoke:
+    description: Offline wiring and schema check; never calls external LLMs or Vina.
+    mock: true
+    dock_enabled: false
+    repeats: 1
+    rounds: 1
+    candidates_per_round_per_generator: 2
+    config_overrides:
+      scoring:
+        funnel:
+          enabled: false
+
+  screening:
+    description: Fast real-LLM triage with parallel two-stage docking.
+    mock: false
+    dock_enabled: true
+    repeats: 3
+    rounds: 3
+    candidates_per_round_per_generator: 5
+    config_overrides:
+      scoring:
+        vina:
+          exhaustiveness: 8
+          n_poses: 3
+          cpu: 2
+          workers: 4
+          timeout: 120
+        funnel:
+          enabled: true
+          full_dock_fraction: 0.35
+          min_full_dock: 3
+          fast_vina:
+            exhaustiveness: 4
+            n_poses: 1
+            cpu: 1
+            workers: 4
+            timeout: 60
+
+  confirmatory:
+    description: Full-fidelity docking for pre-registered finalists only.
+    mock: false
+    dock_enabled: true
+    repeats: 10
+    rounds: 3
+    candidates_per_round_per_generator: 5
+    config_overrides:
+      scoring:
+        vina:
+          exhaustiveness: 16
+          n_poses: 5
+          cpu: 2
+          workers: 4
+          timeout: 180
+        funnel:
+          enabled: false

@@ -389,6 +389,9 @@ def run_loop(
         embedding_model=str(
             (failed_cfg.get("embeddings") or {}).get("model", "all-MiniLM-L6-v2")
         ),
+        embedding_device=str(
+            (failed_cfg.get("embeddings") or {}).get("device", "auto")
+        ),
     )
     hitl_cp = HITLCheckpoint(require_approval=hitl)
 
@@ -600,6 +603,7 @@ def run_loop(
             memory.add_round(enriched, focus_used)
 
         # ----- Phase 4.1: FailedLigandSet update -----
+        new_failures = []
         for c in enriched:
             safety_failed = c.get("safety_gate_pass") is False
             if failed_set_enabled and c.get("evaluation_status") == "complete" and not use_mock and (
@@ -612,7 +616,9 @@ def run_loop(
                     f"vina={c['dock'].get('score')}, "
                     f"safety_gate_pass={c.get('safety_gate_pass')}"
                 )
-                failed_set.add_failed(c["smiles"], reason)
+                new_failures.append((c["smiles"], reason))
+        if new_failures:
+            failed_set.add_failed_many(new_failures)
         if verbose and failed_set_enabled and failed_set.failed:
             print(f"  [memory] failed_set now holds {len(failed_set.failed)} SMILES")
 

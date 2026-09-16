@@ -30,6 +30,7 @@ RDLogger.DisableLog("rdApp.*")
 # tests + non-P1-2 code paths should not pay the import cost).
 _EMBED_MODEL = None
 _EMBED_BACKEND_ERROR: Optional[str] = None
+_EMBED_DEVICE: Optional[str] = None
 
 
 def _is_model_cached(model_name: str) -> bool:
@@ -49,14 +50,34 @@ def _is_model_cached(model_name: str) -> bool:
     return (cache_root / folder_name).exists()
 
 
-def _try_load_embedder(model_name: str, allow_download: bool | None = None):
+def _resolve_embedding_device(requested: str | None = "auto") -> str:
+    """Prefer CUDA when available while keeping CPU-only deployments portable."""
+    requested = str(requested or "auto").lower()
+    if requested not in {"auto", "cpu", "cuda"}:
+        raise ValueError("embedding device must be auto, cpu, or cuda")
+    if requested == "cpu":
+        return "cpu"
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return "cuda"
+    except Exception:
+        pass
+    return "cpu"
+
+
+def _try_load_embedder(
+    model_name: str,
+    allow_download: bool | None = None,
+    device: str | None = "auto",
+):
     """Lazy-load sentence-transformers. Returns the model or None.
 
     By default this does NOT auto-download. Set
     AIDD_EMBED_AUTO_DOWNLOAD=1 in env to opt in (slow on first run;
     ~80 MB).
     """
-    global _EMBED_MODEL, _EMBED_BACKEND_ERROR
+    global _EMBED_MODEL, _EMBED_BACKEND_ERROR, _EMBED_DEVICE
     if _EMBED_MODEL is not None:
         return _EMBED_MODEL
     if _EMBED_BACKEND_ERROR is not None:
@@ -75,7 +96,14 @@ def _try_load_embedder(model_name: str, allow_download: bool | None = None):
         _EMBED_BACKEND_ERROR = f"sentence-transformers import failed: {e}"
         return None
     try:
-        _EMBED_MODEL = SentenceTransformer(model_name)
+        _EMBED_DEVICE = _resolve_embedding_device(device)
+        try:
+            _EMBED_MODEL = SentenceTransformer(model_name, device=_EMBED_DEVICE)
+        except Exception:
+            if str(device or "auto").lower() != "auto" or _EMBED_DEVICE == "cpu":
+                raise
+            _EMBED_DEVICE = "cpu"
+            _EMBED_MODEL = SentenceTransformer(model_name, device="cpu")
     except Exception as e:
         _EMBED_BACKEND_ERROR = f"SentenceTransformer({model_name!r}) failed: {e}"
         return None
@@ -87,6 +115,7 @@ def embedder_status() -> dict:
     return {
         "model": getattr(_EMBED_MODEL, "model_card_text", None) or "unknown",
         "loaded": _EMBED_MODEL is not None,
+        "device": _EMBED_DEVICE,
         "backend_error": _EMBED_BACKEND_ERROR,
     }
 
@@ -115,6 +144,7 @@ class FailedLigandSet:
         enable_embeddings: bool = False,
         embedding_threshold: float = 0.85,
         embedding_model: str = "all-MiniLM-L6-v2",
+        embedding_device: str = "auto",
     ):
         self.path = Path(path) if path else self.DEFAULT_PATH
         self.threshold_composite = threshold_composite
@@ -128,7 +158,9 @@ class FailedLigandSet:
         self.enable_embeddings = bool(enable_embeddings)
         self.embedding_threshold = float(embedding_threshold)
         self.embedding_model = embedding_model
+        self.embedding_device = str(embedding_device or "auto")
         self._embeddings: dict[str, list[float]] = {}  # canon_smi -> vec
+        self._batching = False
         self._load()
         if self.enable_embeddings:
             self._refresh_embeddings()
@@ -161,10 +193,27 @@ class FailedLigandSet:
         # Phase 4.3 (P1-2): keep embedding index in sync. Refresh on every
         # add — at typical sizes (LRF cap=500) this is still cheap (~1s with
         # all-MiniLM-L6-v2 on CPU), and avoids drift.
-        if self.enable_embeddings:
+        if self.enable_embeddings and not self._batching:
             self._refresh_embeddings()
-        self._save()
+        if not self._batching:
+            self._save()
         return True
+
+    def add_failed_many(self, entries: Iterable[tuple[str, str]]) -> int:
+        """Add one round of failures with one embedding batch and one save."""
+        added = 0
+        # Avoid a full-index refresh and disk write for every molecule.
+        self._batching = True
+        try:
+            for smiles, reason in entries:
+                added += int(self.add_failed(smiles, reason))
+        finally:
+            self._batching = False
+        if added:
+            if self.enable_embeddings:
+                self._refresh_embeddings()
+            self._save()
+        return added
 
     def is_failed(self, smiles: str) -> bool:
         canon = self.canonicalize(smiles)
@@ -191,7 +240,7 @@ class FailedLigandSet:
             self.enable_embeddings = False
             self._embeddings = {}
             return
-        model = _try_load_embedder(self.embedding_model)
+        model = _try_load_embedder(self.embedding_model, device=self.embedding_device)
         if model is None:
             self.enable_embeddings = False
             self._embeddings = {}
@@ -217,7 +266,7 @@ class FailedLigandSet:
         """
         if not self.enable_embeddings or not self._embeddings:
             return None
-        model = _try_load_embedder(self.embedding_model)
+        model = _try_load_embedder(self.embedding_model, device=self.embedding_device)
         if model is None:
             return None
         import numpy as np
@@ -320,6 +369,7 @@ class FailedLigandSet:
                      "enabled": self.enable_embeddings,
                      "threshold": self.embedding_threshold,
                      "model": self.embedding_model,
+                     "device": self.embedding_device,
                      "n_indexed": len(self._embeddings),
                  }},
                 indent=2,

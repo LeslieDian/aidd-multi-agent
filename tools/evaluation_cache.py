@@ -22,11 +22,12 @@ _EVALUATION_FIELDS = (
     "property_score",
     "score_components",
     "safety_gate_pass",
+    "funnel",
     "docking_cache",
     "protocol_id",
     "provenance",
 )
-_CACHEABLE_STATUSES = {"complete", "screening_only"}
+_CACHEABLE_STATUSES = {"complete", "screening_only", "screened_out"}
 
 
 class EvaluationCache:
@@ -85,8 +86,11 @@ class EvaluationCache:
         # A complete docking result is reusable only while its original
         # artifacts remain available. If they were deleted, recompute it.
         dock = evaluation.get("dock") or {}
-        if evaluation.get("evaluation_status") == "complete" and dock.get("valid"):
-            artifact_dir = ((dock.get("artifacts") or {}).get("directory"))
+        reusable_dock = dock
+        if evaluation.get("evaluation_status") == "screened_out":
+            reusable_dock = ((evaluation.get("funnel") or {}).get("screening_dock") or {})
+        if reusable_dock.get("valid"):
+            artifact_dir = ((reusable_dock.get("artifacts") or {}).get("directory"))
             if not artifact_dir or not (Path(artifact_dir) / "result.json").is_file():
                 return None
         payload["cache_entry"] = str(path.resolve())

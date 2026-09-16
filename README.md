@@ -156,6 +156,17 @@ python loop.py --mock --no-dock --rounds 3
 
 不传 `--rounds` 和 `--n` 时，主循环读取 `config.yaml` 的
 `loop.max_rounds` 与 `loop.candidates_per_round_per_generator`；命令行参数只用于显式覆盖。
+
+受控实验请使用三档配置，避免开发阶段直接执行昂贵的完整 docking：
+
+```powershell
+python scripts/run_benchmark.py --profile smoke
+python scripts/run_benchmark.py --profile screening
+python scripts/run_benchmark.py --matrix experiments/confirmatory_matrix.yaml --profile confirmatory
+```
+
+并行 Vina、GPU embedding、两阶段漏斗和无望提前停止说明见
+[`docs/EXPERIMENT_SPEEDUP.md`](docs/EXPERIMENT_SPEEDUP.md)。
 实际采用的参数会写入每次运行的 `manifest.json`。
 
 完整评估按 `protocol_id + canonical SMILES` 缓存在 `memory/evaluation_cache/`。

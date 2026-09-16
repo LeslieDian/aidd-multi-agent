@@ -22,7 +22,13 @@
 配置来源为 [`experiments/matrix.yaml`](../experiments/matrix.yaml)。正式执行命令：
 
 ```bash
-python scripts/run_benchmark.py --repeats 3 --rounds 3 --n 5 --max-attempts 3
+python scripts/run_benchmark.py --profile screening --max-attempts 3
+```
+
+运行档位与加速原理见 [`EXPERIMENT_SPEEDUP.md`](EXPERIMENT_SPEEDUP.md)。正式确认使用：
+
+```powershell
+python scripts/run_benchmark.py --matrix experiments/confirmatory_matrix.yaml --profile confirmatory
 ```
 
 ## 实验有效性控制

@@ -309,6 +309,7 @@ def build_report(benchmark_dir: str | Path) -> dict[str, Any]:
         "comparisons": comparisons,
         "incremental_comparisons": incremental_comparisons,
         "confirmatory_decision": confirmatory_decision,
+        "early_stop": manifest.get("early_stop"),
         "interpretation": _interpret(groups, comparisons, baseline_name, primary),
     }
 
@@ -365,6 +366,7 @@ def _confirmatory_decision(
         "safety_metric": safety_metric,
         "safety_delta_ci95": safety_result.get("delta_ci95"),
         "safety_noninferiority_margin": safety_margin,
+        "early_stop": manifest.get("early_stop"),
         "rule": (
             "Approve only when the primary endpoint significantly improves, "
             "the improvement is stable across runs, and the upper 95% CI for "

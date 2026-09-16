@@ -95,10 +95,12 @@ def judge_round(
 
     # Build compact input: top 5 candidates
     valid = [c for c in enriched if c["validate"]["valid"]]
-    ranked = sorted(valid, key=candidate_priority_key, reverse=True)[:5]
+    complete = [c for c in valid if c.get("evaluation_status") == "complete"]
+    ranked = sorted(complete or valid, key=candidate_priority_key, reverse=True)[:5]
 
     summary_lines = [
-        f"Round {round_num}: {len(enriched)} candidates, {len(valid)} valid."
+        f"Round {round_num}: {len(enriched)} candidates, {len(valid)} valid, "
+        f"{len(complete)} fully docked."
     ]
     for i, c in enumerate(ranked):
         v = c["validate"]

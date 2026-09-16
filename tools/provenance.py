@@ -24,6 +24,23 @@ def versions():
     return result
 
 
+def vina_protocol_config(scoring):
+    """Return parameters that can change a Vina result, excluding scheduling."""
+    vina = dict((scoring or {}).get("vina", {}) or {})
+    return {
+        key: value for key, value in vina.items()
+        if key not in {"workers", "accept_below"}
+    }
+
+
+def scoring_protocol_config(scoring):
+    """Remove execution-only concurrency from evaluation identity."""
+    result = json.loads(json.dumps(scoring or {}))
+    (result.get("vina") or {}).pop("workers", None)
+    (((result.get("funnel") or {}).get("fast_vina")) or {}).pop("workers", None)
+    return result
+
+
 def docking_protocol(target, scoring):
     """Identity for reusable docking physics, independent of later scoring."""
     from tools.dock_score import resolve_vina_binary
@@ -35,7 +52,7 @@ def docking_protocol(target, scoring):
     version_info = versions()
     return {
         "target": target,
-        "vina": (scoring or {}).get("vina", {}),
+        "vina": vina_protocol_config(scoring),
         "receptor_sha256": file_hash(target["receptor_pdbqt"]),
         "receptor_audit_sha256": file_hash(
             Path(target["receptor_pdbqt"]).with_suffix('.audit.json')
@@ -54,7 +71,7 @@ def docking_protocol_from_evaluation(protocol):
     version_info = protocol.get("versions") or {}
     return {
         "target": protocol.get("target"),
-        "vina": (protocol.get("scoring") or {}).get("vina", {}),
+        "vina": vina_protocol_config(protocol.get("scoring") or {}),
         "receptor_sha256": protocol.get("receptor_sha256"),
         "receptor_audit_sha256": protocol.get("receptor_audit_sha256"),
         "vina_binary_sha256": protocol.get("vina_binary_sha256"),
@@ -76,7 +93,7 @@ def evaluation_protocol(target, scoring, dock_enabled):
             pass
     root = Path(__file__).resolve().parents[1]
     result = {
-        "target": target, "scoring": scoring, "dock_enabled": dock_enabled,
+        "target": target, "scoring": scoring_protocol_config(scoring), "dock_enabled": dock_enabled,
         "receptor_sha256": file_hash(target["receptor_pdbqt"]),
         "receptor_audit_sha256": file_hash(Path(target["receptor_pdbqt"]).with_suffix('.audit.json')),
         "vina_binary_sha256": file_hash(binary) if binary else None,
