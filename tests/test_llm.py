@@ -17,13 +17,19 @@ def load_config() -> dict:
 
 
 def test_mock_client():
-    """Mock client always works, no key needed."""
+    """Mock client always works, no key needed.
+
+    Uses whatever provider is first in config.yaml. As of 2026-09-17 the
+    project runs in single-provider mode (MiniMax); deepseek remains
+    available in the harness but its provider block is commented out.
+    """
     cfg = load_config()
-    client = get_client("deepseek", cfg, mock=True)
+    provider_name = next(iter(cfg["llm"]["providers"]))
+    client = get_client(provider_name, cfg, mock=True)
     assert isinstance(client, MockLLMClient)
     out = client.chat("sys", "user", json_mode=True)
     assert "smiles_list" in out, f"unexpected: {out[:200]}"
-    print(f"  OK  mock chat returned {len(out)} chars")
+    print(f"  OK  mock chat returned {len(out)} chars (provider={provider_name})")
 
 
 def test_real_client_construction():
@@ -31,7 +37,7 @@ def test_real_client_construction():
     import os
     from unittest.mock import patch
     cfg = load_config()
-    for name in ["deepseek", "MiniMax"]:
+    for name in cfg["llm"]["providers"].keys():
         with patch.dict(os.environ, {}, clear=True):
             try:
                 get_client(name, cfg)

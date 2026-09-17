@@ -91,7 +91,7 @@ def judge_round(
     reasoning, reflection, confidence, adopted_count, summary.
     On failure, returns an explicit error and no new strategy.
     """
-    provider_name = config.get("llm", {}).get("judge", "deepseek")
+    provider_name = config.get("llm", {}).get("judge", "MiniMax")
 
     # Build compact input: top 5 candidates
     valid = [c for c in enriched if c["validate"]["valid"]]

@@ -47,14 +47,17 @@ python -c "from meeko import MoleculePreparation; print('meeko OK')"
 
 ## 5. API 密钥
 
+默认只用 MiniMax。DeepSeek provider 块在 `config.yaml` 里以注释形式保留，按需启用。
+
 ```bash
 cp .env.example .env
-# 编辑 .env，填入 DEEPSEEK_API_KEY 和 QWEN_API_KEY
+# 编辑 .env，填入 MiniMax_API_KEY
+# 可选：填入 DEEPSEEK_API_KEY 并在 config.yaml 里启用对应 provider 块
 ```
 
 去这里申请：
-- DeepSeek: https://platform.deepseek.com/
-- 通义千问: https://dashscope.aliyun.com/
+- MiniMax: https://api.minimaxi.chat/user-center/basic-information/interface-key
+- DeepSeek（可选）: https://platform.deepseek.com/
 
 ## 6. EGFR 靶点
 

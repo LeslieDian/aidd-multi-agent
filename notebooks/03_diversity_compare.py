@@ -80,8 +80,8 @@ def main():
     if not runs:
         print(f"[!] No data in {args.runs_dir}/. Demo plot with synthetic data:")
         by_model = {
-            "A1 (DeepSeek)": ["CCO", "CC(=O)O", "c1ccccc1"],
-            "A2 (Qwen)":     ["CCN(CC)CC", "C1CCCCC1", "c1ccc2ccccc2c1"],
+            "A1 (MiniMax)": ["CCO", "CC(=O)O", "c1ccccc1"],
+            "A2 (Qwen)":    ["CCN(CC)CC", "C1CCCCC1", "c1ccc2ccccc2c1"],
         }
     else:
         by_model = collect_by_model(runs)

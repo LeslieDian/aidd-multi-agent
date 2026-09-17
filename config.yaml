@@ -40,15 +40,21 @@ target:
 llm:
   judge: judge_MiniMax
   providers:
-    # ----- generator A1: DeepSeek (strong reasoning, low cost) -----
-    deepseek:
-      base_url: https://api.deepseek.com/v1
-      api_key_env: DEEPSEEK_API_KEY
-      model: deepseek-chat
-      temperature: 0.7
-      max_tokens: 2048
+    # NOTE: this project intentionally does NOT call the DeepSeek API.
+    # The OpenAI-compatible harness (LLMClient in agents/llm.py) supports
+    # any base_url; to re-enable DeepSeek, uncomment the block below and
+    # add it back to `generators`. Without DEEPSEEK_API_KEY in .env the
+    # preflight in loop.py will fail closed before any HTTP call.
+    #
+    # ----- generator (optional): DeepSeek (strong reasoning, low cost) -----
+    # deepseek:
+    #   base_url: https://api.deepseek.com/v1
+    #   api_key_env: DEEPSEEK_API_KEY
+    #   model: deepseek-chat
+    #   temperature: 0.7
+    #   max_tokens: 2048
 
-    # ----- generator A2: MiniMax M3 (MiniMax latest, 1M context) -----
+    # ----- generator A1: MiniMax M3 (MiniMax latest, 1M context) -----
     # NOTE: base_url is case-sensitive. Verified working endpoint (2026-09-13):
     #   https://api.minimaxi.com/v1     (international, this user's account)
     #   https://api.MiniMax.chat/v1    (may also work for other accounts)
@@ -75,10 +81,11 @@ llm:
         thinking:
           type: adaptive
 
-  # Which providers to use as generators (round-robin or parallel)
-  # Both providers working now (MiniMax base_url fixed).
+  # Which providers to use as generators (round-robin or parallel).
+  # 2026-09-17: single-provider mode — DeepSeek provider block is
+  # commented out above; only MiniMax is active. To bring DeepSeek back,
+  # uncomment its provider block and add `deepseek` to this list.
   generators:
-    - deepseek
     - MiniMax
 
 # ----------------------------------------------------------
@@ -193,3 +200,8 @@ loop:
   evaluation_cache_dir: memory/evaluation_cache
   docking_cache_enabled: true
   docking_cache_dir: memory/docking_cache
+
+# Persistent task agent (agent_task.py); independent of the benchmark loop.
+harness:
+  max_attempts: 3       # bounded transient retries for planner/generator
+  request_timeout: 60  # SDK request timeout in seconds; hidden SDK retries disabled

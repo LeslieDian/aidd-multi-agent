@@ -270,7 +270,7 @@ def run_loop(
         raise ValueError("Current prompts are EGFR-specific; other targets are not supported yet")
     if not use_mock:
         from agents.llm import get_client
-        for provider in set(provider_names + [llm_cfg.get("judge", "deepseek")]):
+        for provider in set(provider_names + [llm_cfg.get("judge", "MiniMax")]):
             get_client(provider, config, mock=False)  # credential/config preflight, no API call
     if dock_enabled:
         validate_receptor(target["receptor_pdbqt"])

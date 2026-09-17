@@ -1,7 +1,9 @@
-"""agents/llm.py - OpenAI-compatible LLM client for DeepSeek + MiniMax.
+"""agents/llm.py - OpenAI-compatible LLM client (provider-agnostic).
 
-Both providers expose an OpenAI-compatible chat completions endpoint, so
-we share a single client class and just swap base_url / model / extra_body.
+Works against any OpenAI-compatible chat completions endpoint by swapping
+base_url / model / extra_body in config.yaml. Active providers are
+configured under `llm.providers` and selected via `llm.generators` and
+`llm.judge`.
 
 API keys are loaded from environment (.env). They are NEVER read from
 config.yaml or any tracked file.
@@ -36,6 +38,7 @@ class LLMClient:
         self.client = OpenAI(
             base_url=provider_config["base_url"],
             api_key=self.api_key,
+            **{key: provider_config[key] for key in ("timeout", "max_retries") if key in provider_config},
         )
 
     @property

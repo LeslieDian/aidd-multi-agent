@@ -13,7 +13,7 @@
 - [ ] Python 3.10 + conda 环境
 - [ ] `pip install rdkit-pypi meeko biopython` （基础化学库）
 - [ ] AutoDock Vina 安装（conda-forge 或 GitHub release 二进制）
-- [ ] LLM API Key：DeepSeek + Qwen（通义千问）
+- [ ] LLM API Key：MiniMax（默认；DeepSeek 通过 OpenAI 兼容 harness 可选启用，见 config.yaml）
 - [ ] EGFR 靶点文件下载（PDB: 1M17）
 - [ ] 跑通：单分子 logP 计算 → 跑通一条 Vina docking
 

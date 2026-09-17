@@ -1,5 +1,9 @@
 # aidd-multi-agent
 
+新增持久任务智能体入口：支持工具选择、检查点、暂停恢复和追加要求。
+离线演示及真实运行方法见 [Agent Harness 使用说明](docs/AGENT_HARNESS.md)。
+运行 `python agent_dashboard.py`，打开 `http://127.0.0.1:8765`，即可在浏览器中查看并干预执行。
+
 > **Multi-Agent Iterative Loop for AI-Driven Drug Design (AIDD)**
 > LLM-generated molecules with RDKit / ADMET / Vina reflection.
 
@@ -41,7 +45,7 @@
 
 | Agent | 职责 | 实现 |
 |---|---|---|
-| **A 生成器** | 提候选分子 | DeepSeek + Qwen 双模型并行 |
+| **A 生成器** | 提候选分子 | MiniMax 单 provider（通过 OpenAI 兼容 harness，DeepSeek provider 块以注释形式保留可一键启用） |
 | **B1 化学评估** | 合法性 / Lipinski / SA | RDKit + sascorer |
 | **B2/B3 ADMET / Docking** | 多目标打分 | RDKit 描述符 + AutoDock Vina |
 | **C 裁判** | 汇总分歧 + 输出策略 | LLM (强模型) |
@@ -68,7 +72,7 @@ conda install -c conda-forge vina  # 或从 GitHub release 下载二进制
 
 ```bash
 cp .env.example .env
-# 编辑 .env 填入 DEEPSEEK_API_KEY / QWEN_API_KEY
+# 编辑 .env 填入 MiniMax_API_KEY（DeepSeek provider 块默认注释，不填也行）
 ```
 
 ### 3. 跑通最小工具测试
