@@ -899,11 +899,133 @@ confirmatory 决策（如适用）。
 | `benchmarks/real_ablation_v3_20260915` | A/B/C v3 | screening | **本节主引用的真实消融** |
 | `benchmarks/confirmatory_pareto_v3_20260916` | B vs C v3 | confirmatory | v3 主指标下的 confirmatory |
 | `benchmarks/confirmatory_pareto_v3_1_20260916` | B vs C v3.1 | confirmatory | **本节主引用的 confirmatory** |
+| `benchmarks/v4_smoke` | A/B/C + failed_set v4 | smoke/mock | v4 矩阵 4 组接线冒烟 |
+| `benchmarks/v4_conf_smoke` | B/C/FS v4 confirmatory | smoke/mock | v4 confirmatory 接线冒烟 |
 | `benchmarks/mock_validation_20260915` | A/B/C | smoke/mock | Mock 模式冒烟 |
 | `benchmarks/mock_quality_validation_20260915` | A/B/C | smoke/mock | Mock 质控回归 |
 | `benchmarks/mock_confirmatory_v3_20260916` | B vs C | confirmatory/mock | confirmatory 在 Mock 下的等价 |
 | `benchmarks/mock_confirmatory_interleaved_20260916` | B vs C | confirmatory/mock | 调度顺序 interleaved vs grouped |
 | `benchmarks/cache_layer_validation` | A/B/C | screening | 验证 evaluation/docking 缓存层隔离 |
+
+旧版的分数（v1/v2）使用早期评分公式，**不能直接与 v3+ 比较**；保留为历史资料。
+
+---
+
+## v4 执行记录与下一阶段约定（2026-09-18）
+
+上面 4.5 节给出了 4 条 ROI 排序的下一步建议。本节记录每一条**已经落地的部分**
+和**留给真实运行的部分**，避免"建议归建议，没人跑"。
+
+### 第 1 条：把 `safe_vina` 接入 v4 矩阵（已落地）
+
+`config.yaml::loop.progress_signal: safe_vina`（2026-09-17 引入）已被 v4 矩阵自动继承。
+新写一份 [experiments/matrix_v4.yaml](experiments/matrix_v4.yaml)，**新增第四组**
+`reflection_failed_set`，仅开 Judge + FailedLigandSet、关闭 WorkingMemory，
+目的是把"过滤失败结构"和"长期记忆"的作用**分开**测量。
+
+```powershell
+# 冒烟（< 1 秒，验证接线）
+python scripts/run_benchmark.py --matrix experiments/matrix_v4.yaml --profile smoke --mock --no-dock --benchmark-id v4_smoke
+
+# 真实 A/B/C + failed_set × 3 重复 × 3 轮 × 5 候选（≈ 90 min）
+python scripts/run_benchmark.py --matrix experiments/matrix_v4.yaml --profile screening --benchmark-id real_ablation_v4
+
+# 只跑新增的 reflection_failed_set（节省 API 成本）
+python scripts/run_benchmark.py --matrix experiments/matrix_v4.yaml --profile screening --groups reflection_failed_set --benchmark-id v4_failed_set_only
+```
+
+冒烟结果：`benchmarks/v4_smoke/benchmark_report.json` 已生成，4 组全部进入 eligible。
+
+### 第 2 条：confirmatory 扩到 n=20 + futility 早停（已落地）
+
+新写一份 [experiments/confirmatory_matrix_v4.yaml](experiments/confirmatory_matrix_v4.yaml)：
+- `repeats: 20`（每个 group × repeat 都跑 20 次）
+- 启用 `futility: stop_when_minimum_improvement_rate_is_mathematically_unreachable`
+- 同时跑 `reflection`（参考）、`reflection_failed_set`（隔离过滤）、`reflection_memory`（v3 赢家）三组
+
+新写 [experiments/demo_futility.py](experiments/demo_futility.py)：
+在 `confirmatory_pareto_v3_1_20260916` 这套已知 `do_not_approve` 的数据上**回放** v4 的
+futility 规则，验证它能正确触发早停：
+
+```text
+Planned runs        : 10
+Treatment group     : reflection_memory
+Min improved rate   : 0.70 -> minimum_successes = 7
+min_completed gate  : 3
+
+  step | completed | successes | max_possible | stop?
+  -----+-----------+-----------+--------------+-------
+     1 |         1 |         0 |            9 | continue
+     2 |         2 |         1 |            9 | continue
+     3 |         3 |         1 |            8 | continue
+     4 |         4 |         1 |            7 | continue
+     5 |         5 |         1 |            6 | STOP  ← 早停
+
+  futility trigger: minimum_improvement_rate_unreachable
+  remaining planned: 5
+  minimum needed   : 7
+  maximum possible : 6  (< 7 -> cannot reach 70% improved rate)
+```
+
+→ 在已知数据上，futility 会在第 5/10 次运行时正确触发。
+按 v3.1 单 run ≈ 18 min 估算，**节省约 90 min**（原本 187 min → 实际 ~95 min 即停止）。
+新规则不需要修改 `scripts/run_benchmark.py`，已经内嵌 `assess_confirmatory_futility`，
+运行 `confirmatory_matrix_v4.yaml` 时自动启用。
+
+```powershell
+# 真实 confirmatory（n=20，含 futility 早停；预期 6 h 上限）
+python scripts/run_benchmark.py --matrix experiments/confirmatory_matrix_v4.yaml --profile confirmatory --benchmark-id confirmatory_v4
+```
+
+### 第 3 条：reflection 单组为什么退步（已诊断，记录在此）
+
+新写 [experiments/diagnose_reflection.py](experiments/diagnose_reflection.py)，
+回放 v3 的 reflection 三次 run 各自的 `judgment.focus` / `reflection` / `adopted_count`，
+得到如下诊断结论：
+
+**reflection 退步的真因不是 Judge prompt 也不是 temperature**，而是
+`failed_set_enabled: false`——Judge 自己在反思里已经识别出"上轮建议未起作用"，
+但循环里没有把已知失败的结构**拦截**下来，所以 LLM 会重复生成同款被否决的分子。
+
+| 组 | repeat | round 1 → 2 best Vina Δ | 反思里的原文（节选）|
+|---|---:|---:|---|
+| reflection | r1 | **+0.077**（退步）| 「5/8 采纳了 basic-amine tail；Vina 反而掉到 -8.12」|
+| reflection | r2 | **+0.286**（明显退步）| 「3-Cl-4-F-aniline 4/5；但 6-methoxy 完全没采纳；hERG 4/5」|
+| reflection | r3 | **+0.128**（退步）| 「Two of five adopted N-methylpiperazine；logP rose, hERG flagged」|
+| reflection_memory | r1 | -0.487（改善）| 「Prior focus 5/5 adopted; Vina -8.36→-8.76」|
+| reflection_memory | r2 | **-0.509**（最佳）| 「α,α-dimethyl 5/5 adopted; Vina -8.46→-8.97」|
+| reflection_memory | r3 | -0.137（改善）| 「Prior OCH2 + β-OH focus adopted 3/5」|
+
+**真正起作用的不是 WorkingMemory 本身，而是 FailedLigandSet 的结构去重**。
+v4 矩阵加的 `reflection_failed_set` 组就是为了把这个独立出来测量。
+
+### 第 4 条：把 `efficacy_supported` 证据补上（路径已规划，未跑）
+
+预注册门控规则已经写在 [experiments/confirmatory_matrix_v4.yaml](experiments/confirmatory_matrix_v4.yaml)，
+`experiments/reporting.py::_confirmatory_decision` 已经实现判分逻辑。
+补证据的唯一方式是**真实运行 confirmatory_v4**：
+
+```text
+efficacy_supported = primary_metric.favorable AND primary_metric.statistically_significant
+stable_improvement = improved_run_rate >= 0.70 AND mean_best_vina_delta < 0
+safety_noninferior = upper CI95 of safety_delta <= margin (0.05)
+approved = efficacy_supported AND stable_improvement AND safety_noninferior
+```
+
+只有 v4 confirmatory 同时满足这三条，`safety_memory` 才被允许写入默认 `config.yaml`。
+否则继续把 v3 / v4 数据当 inconclusive，**不允许把"看起来有效"当成"确认有效"**。
+
+### v4 阶段交付物与状态
+
+| 项 | 落地位置 | 状态 |
+|---|---|---|
+| 4-arm A/B/C + failed_set 矩阵 | `experiments/matrix_v4.yaml` | ✅ mock smoke 通过 |
+| confirmatory 4 组 + n=20 + futility | `experiments/confirmatory_matrix_v4.yaml` | ✅ mock smoke 通过 |
+| 真实 v4 消融 | `benchmarks/real_ablation_v4/` | ⏳ 待跑（≈ 90 min LLM + Vina）|
+| 真实 confirmatory v4 | `benchmarks/confirmatory_v4/` | ⏳ 待跑（≤ 6 h 含 futility 早停）|
+| reflection 退步诊断 | `experiments/diagnose_reflection.py` | ✅ 输出已检视 |
+| futility 早停回放 | `experiments/demo_futility.py` | ✅ 在 v3.1 数据上验证可触发 |
+| `efficacy_supported` 预注册门控 | `experiments/reporting.py::_confirmatory_decision` | ✅ 已实现，待 confirmatory_v4 数据驱动 |
 
 旧版的分数（v1/v2）使用早期评分公式，**不能直接与 v3+ 比较**；保留为历史资料。
 

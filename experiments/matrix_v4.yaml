@@ -1,0 +1,58 @@
+schema_version: 1
+name: feedback-memory-ablation-v4
+base_config: ../config.yaml
+description: >
+  v4 ablation built on the v3 diagnosis (2026-09-18):
+  the reflection group's regression was caused by
+  `failed_set_enabled: false` (Judge could see its own failure but
+  the loop did not block re-emission of structurally similar molecules),
+  not by the Judge prompt or temperature.
+  v4 adds a 4th arm that isolates FailedLigandSet from WorkingMemory so
+  we can tell whether the v3 winner is the persistent strategy history,
+  the deterministic failed-ligand filter, or both.
+
+  The matrix also switches the per-round progress signal to
+  `safe_vina` so a round where nothing passes the safety gate is not
+  counted as progress. This is now the default in config.yaml
+  (2026-09-17) and is inherited automatically.
+
+execution:
+  repeats: 3
+  rounds: 3
+  candidates_per_round_per_generator: 5
+  primary_metric: best_composite_global
+
+groups:
+  baseline:
+    description: Dual generators without Judge, memory, or failed-set.
+    overrides:
+      loop:
+        judge_enabled: false
+        memory_enabled: false
+        failed_set_enabled: false
+
+  reflection:
+    description: Judge feedback only. Reproduction of v3 to confirm regression.
+    overrides:
+      loop:
+        judge_enabled: true
+        memory_enabled: false
+        failed_set_enabled: false
+
+  reflection_failed_set:
+    description: >
+      Judge + FailedLigandSet filter, no persistent memory.
+      Isolates the deterministic re-emission guard from the memory layer.
+    overrides:
+      loop:
+        judge_enabled: true
+        memory_enabled: false
+        failed_set_enabled: true
+
+  reflection_memory:
+    description: Judge + FailedLigandSet + WorkingMemory. v3 winner.
+    overrides:
+      loop:
+        judge_enabled: true
+        memory_enabled: true
+        failed_set_enabled: true

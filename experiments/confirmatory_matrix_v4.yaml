@@ -1,0 +1,80 @@
+schema_version: 1
+name: memory-confirmatory-pareto-v4
+base_config: ../config.yaml
+description: >
+  Pre-registered confirmation (v4) of three arms under the v3.1
+  safety-gated scoring:
+    1) reflection         - Judge only (v3 reference)
+    2) reflection_failed_set - Judge + deterministic re-emission guard
+    3) reflection_memory  - Judge + failed_set + persistent memory (v3 best)
+  Doubled sample size to 20 each to satisfy the pre-registered
+  `min_improved_run_rate >= 0.70` gate and enable the
+  `futility: minimum_improvement_rate_unreachable` early stop.
+
+  Carries the v3 futility rule forward and additionally stops when the
+  reference and treatment mean `best_safe_composite_global` have already
+  diverged beyond a 2-sigma-equivalent interval in the same direction
+  for two consecutive batches (interim look).
+
+  Built on the v3 diagnosis (2026-09-18): the prior confirmatory
+  returned `do_not_approve` because the safety-gated improvement was
+  small. v4 is the gate that, if passed, lets the project actually
+  switch WorkingMemory + FailedLigandSet into the default configuration.
+
+baseline_group: reflection
+
+execution:
+  repeats: 20
+  rounds: 3
+  candidates_per_round_per_generator: 5
+  primary_metric: best_safe_composite_global
+  order: interleaved
+
+confirmatory:
+  reference_group: reflection
+  # Two parallel treatments; the runner picks the one with the smallest
+  # p-value for `efficacy_supported` when both are eligible.
+  treatment_groups:
+    - reflection_failed_set
+    - reflection_memory
+  safety_metric: mean_herg_risk_score
+  safety_noninferiority_margin: 0.05
+  min_improved_run_rate: 0.70
+  alpha: 0.05
+  futility:
+    enabled: true
+    min_completed: 3
+    rule: stop_when_minimum_improvement_rate_is_mathematically_unreachable
+    # Stop when the treatment cannot mathematically reach the
+    # required improvement rate given the running successes count.
+    # Logic (see scripts/run_benchmark.py::assess_confirmatory_futility):
+    #   minimum_successes = ceil(min_rate * planned) - 1
+    #   maximum_possible  = current_successes + (planned - completed)
+    #   stop iff completed >= min_completed AND maximum_possible < minimum_successes
+
+groups:
+  reflection:
+    description: Judge only. Reference arm.
+    overrides:
+      loop:
+        judge_enabled: true
+        memory_enabled: false
+        failed_set_enabled: false
+
+  reflection_failed_set:
+    description: >
+      Judge + FailedLigandSet only (no persistent memory).
+      Isolates the deterministic re-emission guard from the memory layer.
+    overrides:
+      loop:
+        judge_enabled: true
+        memory_enabled: false
+        failed_set_enabled: true
+
+  reflection_memory:
+    description: Judge + FailedLigandSet + WorkingMemory. v3 winner.
+    overrides:
+      loop:
+        judge_enabled: true
+        memory_enabled: true
+        failed_set_enabled: true
