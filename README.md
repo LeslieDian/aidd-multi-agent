@@ -1,5 +1,224 @@
 # aidd-multi-agent
 
+## 模型传输修复与 v4 二维验收（2026-09-19，本轮最新）
+
+本轮先修复模型客户端生命周期与网络可靠性，再做**唯一一次** v4 小型二维验收。不新增分子工具、不扩展 3D、不跑 docking、不跑 n=20、不改 `property_score` 公式与 `+0.01` 阈值、不放宽 hERG 等既有约束。
+
+### 1. 为什么先修传输，而不是继续扩大实验
+
+v3 的唯一一次真实运行只能证明传输失败：Agent 成功评估了母体，随后 MiniMax 请求持续失败，记录为 10 次 planner attempt、1 次成功响应、6 次网络重试、3 次最终网络失败，`proposed options=0`、`actual edits=0`、`parent-child comparisons=0`，结果 `execution_failure`。在这种状态下继续扩大实验只会消耗额度，无法评价智能体的分子决策能力。因此门槛顺序是：**先证明传输可用（3/3），才允许启动 v4**。
+
+### 2. 原来的客户端生命周期问题（审计发现）
+
+| # | 问题 | 后果 |
+|---|---|---|
+| 1 | `LLMPolicy.decide()` 每次调用都执行 `get_client(...)`，每次都新建 `httpx.Client` + `OpenAI` 客户端 | 45 步任务最多创建 45 个连接池；连接与 TLS 握手反复重建，是不稳定的直接来源 |
+| 2 | 审计确认**没有任何代码调用 `close()`**（全仓库搜索 `\.close\(\)\|aclose` 只命中 SQLite、文件句柄等无关位置） | 客户端与套接字泄漏；进程退出前不释放 |
+| 3 | `_attempt()` 的重试退避硬编码为 `min(2**(attempt-1), 4)`，无 jitter，忽略 `Retry-After` | 固定间隔重试，遇到限流时同步撞墙 |
+| 4 | `transient()` 把 `APIStatusError` 的 `>=500` 与 429 判为可重试，但没有独立的错误分类函数 | 网络、schema、状态机、工具错误混在一个 `if/elif` 链里，无法独立统计 |
+| 5 | 模型请求没有任何结构化证据（只有失败后的 `error` 事件） | 无法区分“模型决策失败 / 网络失败 / 执行失败” |
+| 6 | `config.yaml` 允许 provider 块写 `max_retries`，SDK 可能在 Harness 之外自行重试 | 重试不计入 Harness 预算，且掩盖传输失败 |
+| 7 | 异常消息直接写进事件（`f"{type(exc).__name__}: {exc}"`） | 供应商错误文本可能回显 URL 或 header |
+
+### 3. 修改后的 client 复用与关闭流程
+
+新增 `agents/harness/reliability.py::ClientScope`，一个作用域内**每个 provider 只创建一个客户端**：
+
+- `LLMPolicy` 持有唯一的 `ClientScope`；`decide()` 把作用域注入到配置的**副本**（`config["_client_scope"]`），从不写入 `TaskState`。
+- 工具层（`generate` 等）只能拿到状态，因此改用**不透明 token**（`config["_client_scope_token"]`，`uuid4().hex`）经进程内 `_SCOPES` 注册表解析回作用域。Harness 在 `_execute()` 的 `finally` 中**移除**该键，token 绝不进入检查点、receipt 或 Repository。
+- 关闭：`LLMPolicy.close()` → `ClientScope.close()` → 每个客户端的 `close()`（存在 `aclose()` 时优先）。**幂等**：`ClientScope.close()` 首次执行后清空并置 `_closed`，重复调用直接返回；单个客户端 `close()` 抛异常会被吞掉，不掩盖原始错误。
+- 生命周期归属：Harness **自建**的 policy 在 `run()` 返回时由 `finally` 关闭；调用方**注入**的 policy 由调用方关闭，因此一个客户端可以跨多次 `run()` 复用。请求失败后仍保证资源最终关闭。
+- `TaskState` 只保存可 JSON 序列化数据：客户端不参与 `deepcopy`、不参与状态哈希、不写入 checkpoint。
+
+### 4. 为什么由 Harness 统一管理重试
+
+业务工具与模型 SDK 各自重试会产生三个问题：重试不计入 `model_calls_used` 预算、失败被 SDK 吞掉而不可审计、同一请求被多层放大。现在：
+
+- SDK 侧强制 `max_retries=0`（`agents.llm.SDK_MAX_RETRIES`，`get_client()` 覆盖 provider 配置）。
+- `config.yaml` 的 `harness.retry_*` 是唯一退避来源；`RetryPolicy.from_config()` 读取。
+- 只有 `Tool.retry_safe=True` 的工具才允许重试；`retry_safe=False` 的工具即使遇到网络错误也只执行一次。
+
+### 5. 哪些错误允许重试，哪些不允许
+
+允许进入网络重试（`classify_error()` 返回 `"network"`）：
+
+- 连接建立失败、连接超时、读取超时、远端断开（`APIConnectionError`、`httpx.TransportError`、`TimeoutError`、`ConnectionError`）
+- HTTP 429、500、502、503、504
+
+**不允许**重试：
+
+- 模型返回 JSON 不符合 schema（`json.JSONDecodeError` → `schema`）
+- 非法动作、当前状态不允许的动作（→ `state_machine`）
+- 工具参数错误、RDKit 编辑失败、约束违反、未知代码缺陷（→ `tool`）
+- HTTP 400、401、403、404（→ `provider`，直接失败，不消耗额度）
+
+四类分类互相独立，网络失败不会被计为 state-machine rejection 或 actual edit；schema 错误不会触发网络重试。
+
+### 6. 指数退避、jitter 与 Retry-After
+
+```text
+delay(n) = min(retry_base_delay * 2**(n-1), retry_max_delay) + U(0, jitter) * 该值
+若响应含合法 Retry-After：改用该值，但仍 clamp 到 retry_max_delay
+```
+
+配置：`harness.max_attempts: 3`（1..5，为**总尝试次数**）、`retry_base_delay: 1.0`、`retry_max_delay: 30.0`、`retry_jitter: 0.25`。`Retry-After` 同时接受秒数与 HTTP-date，负值/不可解析值被忽略而不是信任。测试注入 `sleep`，不真正等待。
+
+### 7. 模型请求证据字段与脱敏规则
+
+每次 HTTP 尝试写入一条 `model_request` 事件（进入 JSON checkpoint、receipt 与 Repository 的 `agent_events` 表，复用现有机制）：
+
+```text
+task_id, step/round, attempt, request_id, provider, model, base_url_host,
+started_at, finished_at, latency_ms, response_received, http_status,
+exception_category, exception（已脱敏）, retry_scheduled, retry_delay_s,
+token_usage（供应商未返回则 null）, token_usage_status（reported/unavailable）,
+thinking, schema_valid, outcome
+```
+
+脱敏（`agents/redaction.py`）：已知密钥字面量替换；`Authorization`/`api_key`/`x-api-key`/`token` 赋值替换；`Bearer <opaque>`、`sk-*`、JWT 形状 token 替换；URL 只保留 host，去掉 path、query 与 userinfo。客户端在异常上附带 `sanitized_message`，Harness 优先使用它。**不重复保存完整 prompt 与完整响应**：prompt 只在原有 generator/judge 记录中保存一次，事件中不含它们。token usage 缺失时明确写 `null` + `unavailable`，不编造。
+
+这些证据用于区分三类结果：**模型决策失败**（有响应、有合法动作、但证据不支持）、**网络失败**（无响应或可重试状态码，进入 `retry`/`network`）、**执行失败**（schema/state_machine/tool 错误或预算/检查点问题）。
+
+### 8. 使用的模型
+
+- 模型：`MiniMax-M3`，provider `MiniMax`，base host `api.minimaxi.com`（不记录完整 URL）
+- thinking：`disabled`（`config.yaml` 中 planner 使用非 thinking 路由，以稳定返回严格单动作 JSON）
+- 温度 `1.0`，`max_tokens 2048`，timeout 60 s，`max_sdk_retries=0`，`trust_env_proxy=false`，TLS `verify=true`
+- **职责边界**：模型只负责在目标、约束、历史证据与父子结构比较之间选择下一步动作；RDKit 执行全部确定性分子编辑与性质计算；Harness 负责状态机、工具调度、可靠性、检查点、恢复与审计；Repository 保存运行、候选、评估、事件、审批与工件。
+
+### 9. 离线测试结果
+
+```powershell
+python -m pytest -q tests/test_llm.py tests/test_harness.py tests/test_repository.py tests/test_api.py tests/test_2d_comparison.py tests/test_reliability.py tests/test_connectivity_check.py
+# 108 passed
+python -m pytest -q
+# 267 passed, 1 skipped
+```
+
+基线为 `222 passed, 1 skipped`；净增 **45** 个测试（`tests/test_reliability.py` 33 个、`tests/test_connectivity_check.py` 6 个、`tests/test_llm.py` +5 个、`tests/test_2d_comparison.py` +1 个）。没有删除或弱化任何既有测试。唯一被修改的既有断言是 `test_proxy_policy_is_explicit_and_tls_remains_verified` 中的 `max_retries`：它原本断言 config 值 `4` 会透传给 SDK，这与“SDK 内部重试必须为 0”的要求直接冲突，已改为断言更强的新契约 `max_retries == 0`。
+
+### 10. 三次连接验收结果
+
+```powershell
+$env:NO_PROXY = 'api.minimaxi.com,localhost,127.0.0.1'
+python scripts/check_minimax_connectivity.py
+```
+
+只做 3 次很小的**顺序**请求，固定 schema `{"status":"ok","sequence":N}`，不做并发、不做分子实验、不运行完整 Harness，不要求任何化学推理。
+
+| sequence | attempts | retried | latency_ms | schema_valid |
+|---:|---:|---|---:|---|
+| 1 | 1 | false | 1815.161 | true |
+| 2 | 1 | false | 823.421 | true |
+| 3 | 1 | false | 843.175 | true |
+
+**3/3 成功**，`clients_created=1`，`client_closed_explicitly=true`，`retried_requests=0`，密钥未出现在任何证据中。摘要见 [`runs/samples/minimax_connectivity_20260919_summary.json`](runs/samples/minimax_connectivity_20260919_summary.json)。
+
+### 11. v4 是否启动及启动门槛
+
+门槛已满足（3/3），v4 **已启动**，且只运行一次。`run_arm("agent")` 现在会先调用 `require_connectivity_gate()`：若摘要缺失或 `successful != 3`，直接抛错阻止 Agent 组启动，避免把传输失败误读为决策失败。
+
+### 12. v4 唯一实验结果
+
+目录 `runs/diagnostic_2d_positive_v4_20260919/`（v1/v2/v3 目录完整保留，未覆盖）。冻结设置：母体 `Oc1ccccc1`、24 个目录动作、16 个唯一有效产物、2 个可达合格产物（该信息未提供给任何策略）、阈值 `property_score +0.01`、关闭 docking、每 arm 新结构评分上限 10。
+
+| 指标 | rule | agent |
+|---|---:|---:|
+| 新结构评估 | 10 | 0 |
+| 母体评估 | 1 | 1 |
+| planner attempts | 0 | 4 |
+| 成功模型响应 | 0 | **4** |
+| 网络重试 | 0 | **0** |
+| 最终网络失败 | 0 | **0** |
+| schema 错误 | 0 | **3** |
+| state-machine rejection | 0 | 0 |
+| tool 错误 | 0 | 0 |
+| 非法早停尝试 | 0 | 0 |
+| proposed options | 10 | 0 |
+| actual deterministic edits | 0 | 0 |
+| 父子比较 | 0 | 0 |
+| 策略变更 / 回退 | 0 / 0 | 0 / 0 |
+| 停止依据有效 | true | **false** |
+| termination outcome | `budget_exhausted` | `execution_failure` |
+
+规则组合法停止：`finite_space_products=16`、`explored_unique_products=10`、`remaining_evaluation_budget=0`，`deterministic_stop_reasons=["budget_exhausted"]`。
+
+**Agent 组：传输已修复，但暴露了新的失败模式——不是网络，而是 schema。** 4/4 模型响应成功、0 次网络重试（v3 为 6 次重试、3 次最终失败），说明客户端复用与重试层生效。但模型在 `propose_edits` 的每个 option 里多加了 `evidence_ids` 键，schema 正确拒绝，错误文本为：
+
+```text
+ValueError: options[0]: Expected arguments: ['edit', 'rationale', 'expected_benefit', 'allowed_cost', 'expected_metric', 'expected_direction', 'predictions']
+```
+
+该消息只列出允许的键、**没有指出哪个键违规**，于是 planner 连续 3 次重复同一非法调用，触发 `consecutive_errors` 暂停。行为链因此只完成第 1 步（评估母体）。
+
+**该运行暴露的两个真实代码缺陷（已修复，但未重跑 v4）**：
+
+1. schema 错误不指出违规键 → `agents/harness/schema.py` 现在报告 `missing=[...]` / `unexpected=[...]` 与 `allowed=[...]`。
+2. 由脚本外部构造的 `LLMPolicy` 未安装 Harness 证据 sink，导致 `model_requests_recorded=0` → `Harness.run()` 现在会为注入的 policy 安装 `_record_request`。
+
+同时提示词补充了 option 的精确键集合，并说明 `evidence_ids` 只属于 `select_edit`。修复仅经离线测试验证（267 passed），**没有进行第二次真实运行**。
+
+### 13. 与 v2、v3 的区别
+
+| | v2 | v3 | v4 |
+|---|---|---|---|
+| 目录 | `..._v2_20260919` | `..._v3_20260919` | `..._v4_20260919` |
+| Agent 模型响应 | 有 | 1 次成功 | **4/4 成功** |
+| 网络重试 / 最终网络失败 | 5 / — | 6 / 3 | **0 / 0** |
+| 主要失败类别 | 网络 + 错误状态动作 | 网络 | **schema** |
+| 客户端复用 | 否（每次重建） | 否 | **是（1 个）** |
+| 显式关闭 | 无 | 无 | **有（幂等）** |
+| 结构化请求证据 | 无 | 无 | **有（含脱敏）** |
+| 启动门槛 | 无 | 无 | **3/3 连接门槛** |
+
+### 14. 当前能支持的论文结论
+
+- 客户端生命周期与重试层是可工程化的：复用单一 client、幂等显式关闭、Harness 统一退避（含 jitter 与 `Retry-After`），在真实端点上把网络失败从 v3 的 3 次降到 v4 的 0 次。
+- 错误分类是可行的且可审计：网络、schema、state_machine、tool 四类可分别统计，本轮的失败被正确归为 schema 而非网络。
+- 在冻结的有限二维空间内，规则组按预算合法停止（`budget_exhausted`），停止依据可核验。
+- 结构化请求证据足以区分模型决策失败、网络失败与执行失败。
+- 智能体在 v4 中确实完成了“评估母体”这一步，且模型响应本身是稳定、快速的（823–1815 ms）。
+
+### 15. 当前不能支持的结论
+
+- **不能说 Agent 决策能力已被验证**：v4 只完成第 1 步，0 次实际编辑、0 次父子比较、0 次策略变更，停止依据无效。
+- 不能从单次实验声称 Agent 优于规则方法；本任务未做任何重复。
+- 不能声称模型学会了药物设计，也不能从总分变化推导单项性质改善。
+- 不能把 proposed option 计为 actual edit（本轮两者都为 0，但口径必须保持）。
+- 不能把网络失败计为 rejected action（本轮 rejected=3 全部是 schema，network=0）。
+- 不能声称 v4 的 schema 修复已改善真实结果——修复仅离线验证。
+- 传输稳定性只由 3 次小请求与 4 次 planner 调用支持，样本量极小。
+- 未做 docking、未做 3D、未做生物学验证，阈值与约束未被调整。
+
+### 16. 下一阶段建议
+
+- 若未来 v4 完成完整动作链（提出候选 → 预检查 → 选择 → 确定性编辑 → 子结构评估 → 父子比较 → 假设核对 → 继续/回退/换策略/停止），再考虑 **2–3 个母体、每个最多 3 次**的小型稳定性研究。
+- 若 v4 再次因网络失败终止，则先替换或隔离传输层（例如独立进程/代理隔离），**不继续消耗真实实验额度**。
+- 暂不扩展完整 3D / docking / n=20。
+
+### 完整流程
+
+```mermaid
+flowchart LR
+    A[目标 / 约束 / 用户指令] --> B[模型决策<br/>MiniMax-M3 只选下一步动作]
+    B --> C{Harness 状态机校验<br/>available_actions}
+    C -- 非法动作 --> C1[schema / state_machine rejection<br/>不重试、单独统计]
+    C -- 合法 --> D[RDKit 确定性编辑<br/>apply_edit + verify_refinement]
+    D --> E[评估<br/>evaluate / evaluate_options<br/>计入预算、可复用同协议结果]
+    E --> F[父子比较<br/>compare_parent_child]
+    F --> G[假设核对<br/>judge_effect + 归因 + 预测核对]
+    G --> H{继续 / 回退 / 换策略 / 停止}
+    H -- continue --> B
+    H -- rollback / switch_strategy --> B
+    H -- finish --> I[结构化报告<br/>停止依据 + 事实性结论]
+    C1 --> B
+    B -. 网络错误 .-> R[有上限指数退避 + jitter<br/>Retry-After 优先、上限 clamp]
+    R --> B
+    R -- 超过上限 --> J[execution_failure<br/>与决策失败分开报告]
+```
+
+关键点：**网络失败**走重试分支并最终可能变成 `execution_failure`；**schema / state_machine / tool 错误**直接回到模型决策且从不重试；`actual edit` 只统计 RDKit 真正执行的确定性编辑。
+
 ## Local API（研究原型）
 
 The persistent Harness is available through a local FastAPI service. It uses SQLite by default and does not start model calls unless a run is created with `mock: false`.

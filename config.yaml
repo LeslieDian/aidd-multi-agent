@@ -222,5 +222,11 @@ harness:
   # Persistent agent planner. The non-thinking MiniMax-M3 route reliably
   # returns the strict single-action JSON contract used by the harness.
   planner: MiniMax
-  max_attempts: 3       # bounded transient retries for planner/generator
+  max_attempts: 3       # bounded transient retries for planner/generator (1..5)
   request_timeout: 60  # SDK request timeout in seconds; hidden SDK retries disabled
+  # Bounded exponential backoff, owned by the Harness (never by the SDK).
+  # delay(n) = min(retry_base_delay * 2**(n-1), retry_max_delay) + jitter;
+  # a legal Retry-After header wins but is still clamped to retry_max_delay.
+  retry_base_delay: 1.0
+  retry_max_delay: 30.0
+  retry_jitter: 0.25

@@ -9,8 +9,19 @@ def validate_value(value, spec, path):
         if not isinstance(value, dict):
             raise ValueError(f"{path} must be an object")
         props = spec.get("properties", {})
-        if set(spec.get("required", props)) - set(value) or (spec.get("additionalProperties", False) is False and set(value) - set(props)):
-            raise ValueError(f"{path}: Expected arguments: {list(props)}")
+        required = set(spec.get("required", props))
+        missing = sorted(required - set(value))
+        unexpected = sorted(set(value) - set(props)) if spec.get("additionalProperties", False) is False else []
+        if missing or unexpected:
+            # Name the exact keys. A bare "Expected arguments: [...]" list made a
+            # real planner repeat the same malformed call three times because it
+            # could not tell which key was wrong (observed in v4, 2026-09-19).
+            detail = []
+            if missing:
+                detail.append(f"missing={missing}")
+            if unexpected:
+                detail.append(f"unexpected={unexpected}")
+            raise ValueError(f"{path}: invalid keys ({'; '.join(detail)}); allowed={sorted(props)}")
         for key, item in value.items():
             if key in props:
                 validate_value(item, props[key], f"{path}.{key}")

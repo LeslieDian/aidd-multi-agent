@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 import pytest
-from scripts.compare_2d_policies import prepare, audit, run_arm, new_state, load_frozen, catalogue, CatalogRegistry, action
+from scripts.compare_2d_policies import prepare, audit, run_arm, new_state, load_frozen, catalogue, CatalogRegistry, action, require_connectivity_gate
 
 
 def test_frozen_catalogue_and_equal_budgets(tmp_path):
@@ -12,7 +12,8 @@ def test_frozen_catalogue_and_equal_budgets(tmp_path):
     assert manifest["llm_transport"] == {
         "provider": "MiniMax", "base_url_host": "api.minimaxi.com", "model": "MiniMax-M3",
         "timeout_seconds": 60, "max_sdk_retries": 0, "trust_env_proxy": False,
-        "tls_verify": True, "thinking": "disabled"}
+        "tls_verify": True, "thinking": "disabled",
+        "max_attempts": 3, "retry_base_delay": 1.0, "retry_max_delay": 30.0, "retry_jitter": 0.25}
     for name in ("rule", "agent"):
         state = new_state(manifest, name)
         assert state.max_evaluations == 11
@@ -23,6 +24,28 @@ def test_frozen_catalogue_and_equal_budgets(tmp_path):
     path.write_text(path.read_text(encoding="utf-8") + " ", encoding="utf-8")
     with pytest.raises(ValueError, match="manifest changed"):
         load_frozen(output)
+
+
+def test_agent_arm_is_blocked_without_a_passed_connectivity_gate(tmp_path, monkeypatch):
+    """A failed/missing 3/3 connectivity gate must stop v4 before any model call."""
+    import scripts.compare_2d_policies as module
+    output = tmp_path / "gate"
+    prepare(output, scenario="phenol")
+    audit(output)
+    fake_gate = tmp_path / "gate_summary.json"
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+    (tmp_path / "runs/samples").mkdir(parents=True)
+    real_gate = tmp_path / "runs/samples/minimax_connectivity_20260919_summary.json"
+
+    with pytest.raises(ValueError, match="connectivity gate summary is missing"):
+        require_connectivity_gate(output)
+
+    real_gate.write_text(json.dumps({"attempted": 3, "successful": 1}), encoding="utf-8")
+    with pytest.raises(ValueError, match="not passed"):
+        require_connectivity_gate(output)
+
+    real_gate.write_text(json.dumps({"attempted": 3, "successful": 3}), encoding="utf-8")
+    assert require_connectivity_gate(output)["successful"] == 3
 
 
 def test_audit_is_separate_and_rule_cannot_overspend(tmp_path):

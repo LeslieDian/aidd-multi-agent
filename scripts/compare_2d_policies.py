@@ -92,7 +92,11 @@ def prepare(output, scenario="phenetole"):
         "llm_transport": {"provider": planner_name, "base_url_host": urlparse(planner["base_url"]).hostname,
             "model": planner["model"], "timeout_seconds": config.get("harness", {}).get("request_timeout", 60),
             "max_sdk_retries": 0, "trust_env_proxy": config.get("llm", {}).get("trust_env_proxy", False),
-            "tls_verify": True, "thinking": planner.get("extra_body", {}).get("thinking", {}).get("type")},
+            "tls_verify": True, "thinking": planner.get("extra_body", {}).get("thinking", {}).get("type"),
+            "max_attempts": config.get("harness", {}).get("max_attempts", 3),
+            "retry_base_delay": config.get("harness", {}).get("retry_base_delay", 1.0),
+            "retry_max_delay": config.get("harness", {}).get("retry_max_delay", 30.0),
+            "retry_jitter": config.get("harness", {}).get("retry_jitter", 0.25)},
         "constraints": normalize_constraints({"allow_generation": False, "allow_freeform_refine": False,
             "require_planned_edits": True, "require_option_screening": True, "require_verified_refinement": True,
             "require_meaningful_improvement": True, "max_edits": 3}),
@@ -255,6 +259,7 @@ def metrics(state, arm):
     feasible = [r for r in successes if r["decision"]["outcome"] not in {"tradeoff_exceeded", "insufficient_evidence"}]
     errors = [e for e in state.events if e.get("type") == "error"]
     retries = [e for e in state.events if e.get("type") == "retry"]
+    requests = [e for e in state.events if e.get("type") == "model_request"]
     def category(event):
         if event.get("error_category"):
             return event["error_category"]
@@ -279,8 +284,19 @@ def metrics(state, arm):
         termination_outcome = "user_stopped"
     else:
         termination_outcome = final_outcome or state.reason
+    comparisons = [e for e in state.events if e.get("type") == "tool_result"
+                   and e.get("action", {}).get("tool") == "compare_parent_child"]
+    strategy_changes = [s for s in state.strategies if s.get("choice") == "switch_strategy"]
+    rollbacks = [s for s in state.strategies if s.get("choice") == "rollback"]
+    usage_reported = [r["token_usage"] for r in requests if r.get("token_usage_status") == "reported"]
+    token_totals = {}
+    for usage in usage_reported:
+        for key, value in (usage or {}).items():
+            if isinstance(value, (int, float)):
+                token_totals[key] = token_totals.get(key, 0) + value
     return {"arm": arm, "status": state.status, "reason": state.reason, "final_outcome": final_outcome,
         "termination_outcome": termination_outcome, "stop_evidence": stop_evidence,
+        "stop_evidence_valid": bool(stop_evidence) or final_outcome is not None,
         "new_structure_evaluations": len(state.option_screenings), "total_charged_evaluations": state.evaluations_used,
         "successful_screened_products": sum(r["decision"]["outcome"] == "supported" for r in successes),
         "first_hit_new_evaluations_batch_end": first_hit,
@@ -297,8 +313,19 @@ def metrics(state, arm):
         "planner_attempts": state.model_calls_used if arm == "agent" else 0,
         "successful_planner_responses": max(0, state.model_calls_used - failed_decisions) if arm == "agent" else 0,
         "executed_tool_actions": sum(e.get("type") == "tool_result" for e in state.events),
+        "parent_child_comparisons": len(comparisons),
+        "strategy_changes": len(strategy_changes),
+        "rollbacks": len(rollbacks),
+        "evaluation_reuse_count": sum(1 for e in state.events if e.get("type") == "tool_result"
+                                      and e.get("action", {}).get("tool") == "evaluate"
+                                      and (e.get("result") or {}).get("reused")),
+        "model_requests_recorded": len(requests),
+        "model_request_outcomes": sorted({r.get("outcome") for r in requests if r.get("outcome")}),
+        "token_usage": token_totals or "unavailable",
+        "monetary_cost": "unavailable",
         "steps": state.steps_used,
-        "actual_edits": sum(c.get("candidate_role") == "deterministic_edit" for c in state.candidates.values()), "screened_products": successes,
+        "actual_edits": sum(c.get("candidate_role") == "deterministic_edit" for c in state.candidates.values()),
+        "screened_products": successes,
         "intent_check": "Exact catalogue parameters enforced; free-text chemical claims require separate manual audit"}
 
 
@@ -308,21 +335,55 @@ def run_arm(output, arm):
     reachability = output / "reachability.json"
     if manifest.get("scenario") == "phenol" and (not reachability.exists() or json.loads(reachability.read_text(encoding="utf-8"))["qualifying_products"] == 0):
         raise ValueError("New comparison requires completed reachability audit with a qualifying product")
+    if arm == "agent":
+        require_connectivity_gate(output)
     store = CheckpointStore(output / arm)
     if store.path.exists():
         raise ValueError("Arm already exists; no reruns or automatic restarts in this diagnostic")
     store.save(new_state(manifest, arm))
     registry = CatalogRegistry(manifest)
-    policy = LLMPolicy() if arm == "agent" else RulePolicy(manifest, json.loads((output / "rule_order.json").read_text()))
+    if arm == "agent":
+        # One policy (and therefore one HTTP client) for the whole arm; it is
+        # closed explicitly below, even if the arm fails.
+        policy = LLMPolicy()
+        try:
+            state = drive_arm(store, policy, registry, arm)
+        finally:
+            policy.close()
+    else:
+        state = drive_arm(store, RulePolicy(manifest, json.loads((output / "rule_order.json").read_text())),
+                          registry, arm)
+    result = metrics(state, arm)
+    write(output / arm / "metrics.json", result)
+    return result
+
+
+def require_connectivity_gate(output):
+    """Refuse to start the real agent arm unless the 3/3 connectivity gate passed.
+
+    The gate is the small committed summary produced by
+    ``scripts/check_minimax_connectivity.py``. Without it, a transport failure
+    would again be misread as an agent decision failure.
+    """
+    gate = ROOT / "runs/samples/minimax_connectivity_20260919_summary.json"
+    if not gate.exists():
+        raise ValueError("Agent arm blocked: connectivity gate summary is missing")
+    summary = json.loads(gate.read_text(encoding="utf-8"))
+    if summary.get("successful") != summary.get("attempted") or summary.get("successful") != 3:
+        raise ValueError(
+            f"Agent arm blocked: connectivity gate not passed "
+            f"({summary.get('successful')}/{summary.get('attempted')} successful)")
+    return summary
+
+
+def drive_arm(store, policy, registry, arm):
     for _ in range(45):
         state = Harness(store, policy, registry).run(1)
         print(json.dumps({"arm": arm, "step": state.steps_used, "calls": state.model_calls_used if arm == "agent" else 0,
                           "evaluations": state.evaluations_used, "reason": state.reason}), flush=True)
         if state.reason != "action_limit":
             break
-    result = metrics(state, arm)
-    write(output / arm / "metrics.json", result)
-    return result
+    return state
 
 
 def report(output):

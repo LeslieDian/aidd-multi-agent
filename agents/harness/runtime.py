@@ -1,21 +1,67 @@
-"""Decision loop with atomic tool commits and explicit interrupted-call handling."""
+"""Decision loop with atomic tool commits and explicit interrupted-call handling.
+
+Client lifetime
+---------------
+``LLMPolicy`` owns one :class:`ClientScope`, so a task that makes 45 planning
+calls still opens exactly one HTTP client per provider. ``Harness`` closes the
+scope when the caller leaves its context manager (or calls ``close()``), and
+the close is idempotent. The scope is never written into ``TaskState``: the
+state object only ever contains JSON-serializable data.
+"""
 from copy import deepcopy
 import json
 from uuid import uuid4
 import time
 
 from .tools import default_registry
-from .reliability import BudgetExceeded, client_config, reserve, transient
+from .reliability import (
+    BudgetExceeded, ClientScope, RetryPolicy, client_config, error_category, reserve, transient,
+)
+from agents.redaction import sanitize
 
 
 class LLMPolicy:
+    """Real planner: one model client per provider, reused for the whole task."""
+
+    def __init__(self, evidence=None, scope=None):
+        self.scope = scope if scope is not None else ClientScope()
+        self.evidence = evidence
+        self._secrets = ()
+
+    @property
+    def client_scope(self):
+        return self.scope
+
+    def _contextual_evidence(self, state):
+        """Return the evidence sink for this call.
+
+        Provenance (``task_id``/``step``/``attempt``) is added centrally by
+        ``Harness._record_request``, which is what an injected policy gets
+        installed with. A policy constructed standalone simply has no sink.
+        """
+        return self.evidence
+
+    def close(self) -> None:
+        """Close the owned HTTP clients. Idempotent."""
+        self.scope.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        self.close()
+
     def decide(self, state, registry):
         from agents.llm import get_client
         from .editor import molecule_atom_table
         from .planning import experience
         from .attribution import breakdown
         provider = state.config.get("harness", {}).get("planner") or state.config["llm"]["judge"]
-        client = get_client(provider, client_config(state.config))
+        config = client_config(state.config)
+        # The scope lives only for the duration of this call; it is injected
+        # into a *copy* of the config and never enters TaskState.
+        config["_client_scope"] = self.scope
+        client = get_client(provider, config, evidence=self._contextual_evidence(state))
         from .tools import available_actions
         availability = available_actions(state)
         offered_tools = registry.describe(state)
@@ -68,7 +114,10 @@ class LLMPolicy:
             "Distinguish failed execution from a poor scientific result. "
             "When require_planned_edits is true, replace record_hypothesis/direct edit with: propose_edits (2-4 alternatives), "
             "evaluate_options (required if require_option_screening), select_edit (automatically records hypothesis), execute_selected_edit, evaluate, compare_parent_child. "
-            "Use native options arrays and evidence_ids arrays, never JSON strings. Each option needs predictions: "
+            "Use native options arrays and evidence_ids arrays, never JSON strings. Each option must contain exactly "
+            "these keys and no others: edit, rationale, expected_benefit, allowed_cost, expected_metric, "
+            "expected_direction, predictions. evidence_ids belongs to select_edit only, never inside an option. "
+            "Each option needs predictions: "
             "[{metric,direction:increase/decrease,min_change:positive number}], recorded before screening. "
             "Never use min_change=0 to express unchanged/no increase. Omit such predictions; "
             "non-regression is enforced by constraints.max_regressions and can be explained in allowed_cost. "
@@ -153,6 +202,70 @@ class Harness:
         self.registry = registry or default_registry()
         self.on_event = on_event or (lambda event: None)
         self.sleep = sleep
+        # A policy injected by the caller is owned by the caller: it is closed
+        # by the caller so one HTTP client can serve several runs. A policy this
+        # Harness creates is closed when the run returns.
+        self._owns_policy = policy is None
+        self.request_evidence = []
+        self._secrets = ()
+        self._closed = False
+        self._attempt_no = 1
+        self._current_task_id = None
+        self._current_step = 0
+
+    # ------------------------------------------------------------------
+    # Model-request evidence
+    # ------------------------------------------------------------------
+    def _record_request(self, event):
+        """Collect one sanitized model-request record.
+
+        The record is emitted for live display immediately and flushed into the
+        persisted ``state.events`` right after the decision attempt, so it ends
+        up in the JSON checkpoint, the receipts and the Repository's
+        ``agent_events`` table through the existing mechanism. ``task_id``,
+        ``step``/``round`` and ``attempt`` tie each record to the exact decision
+        it belongs to; nothing credential-bearing is ever added.
+        """
+        event = dict(event)
+        event["id"] = event.get("request_id") or uuid4().hex
+        event["attempt"] = self._attempt_no
+        event.setdefault("task_id", self._current_task_id)
+        event.setdefault("step", self._current_step)
+        event.setdefault("round", self._current_step)
+        self.request_evidence.append(event)
+        self._emit(event)
+
+    def _flush_request_evidence(self, state):
+        """Move newly recorded request evidence into the persisted event log."""
+        if not self.request_evidence:
+            return 0
+        known = {e.get("id") for e in state.events if e.get("type") == "model_request"}
+        flushed = 0
+        for event in self.request_evidence:
+            if event["id"] in known:
+                continue
+            state.events.append(dict(event))
+            flushed += 1
+        return flushed
+
+    def close(self):
+        """Close the policy's HTTP clients. Idempotent; never raises."""
+        if self._closed:
+            return
+        self._closed = True
+        closer = getattr(self.policy, "close", None)
+        if closer is None:
+            return
+        try:
+            closer()
+        except Exception:
+            pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        self.close()
 
     def _save(self, state):
         try:
@@ -204,12 +317,18 @@ class Harness:
             return None
 
     def _attempt(self, state, operation, action=None, retry_safe=True):
-        configured = state.config.get("harness", {}).get("max_attempts", 3)
-        if type(configured) is not int or not 1 <= configured <= 5:
-            raise ValueError("harness.max_attempts must be between 1 and 5")
-        attempts = configured if retry_safe else 1
+        """Run one operation with Harness-owned bounded retries.
+
+        Only retryable transport errors (``classify_error``) are retried, and
+        only when the tool declares itself retry-safe. Everything else fails on
+        the first attempt so schema errors, illegal actions, tool argument
+        errors and unknown defects are never converted into extra requests.
+        """
+        retry = RetryPolicy.from_config(state.config, sleep=self.sleep)
+        attempts = retry.max_attempts if retry_safe else 1
         revision = state.revision
         for attempt in range(1, attempts + 1):
+            self._attempt_no = attempt
             self._controls(state)
             if state.status != "running":
                 raise _StopExecution
@@ -226,22 +345,51 @@ class Harness:
                 return operation()
             except Exception as exc:
                 state.pending = None  # Exception was observed; unlike an interrupted/unknown outcome.
-                if attempt == attempts or not transient(exc):
+                category = error_category(exc)
+                retryable = category == "network"
+                if attempt == attempts or not retryable:
                     raise
+                delay = retry.delay(attempt, exc)
+                # Annotate the request record for this attempt so "retry
+                # scheduled" and the chosen delay live next to the failure.
+                for recorded in reversed(self.request_evidence):
+                    if recorded.get("attempt") == attempt and recorded.get("outcome") == "request_failed":
+                        recorded["retry_scheduled"] = True
+                        recorded["retry_delay_s"] = delay
+                        break
                 event = {"type": "retry", "phase": "tool" if action else "decision",
                          "revision": revision, "action": action, "attempt": attempt,
-                         "error": f"{type(exc).__name__}: {exc}",
-                         "error_category": "network" if transient(exc) else "tool"}
+                         "error": self._safe_error_text(exc),
+                         "error_category": "network",
+                         "retry_scheduled": True, "retry_delay_s": delay}
                 state.events.append(event)
                 self._save(state)
                 self._emit(event)
-                self.sleep(min(2 ** (attempt - 1), 4))
+                retry.sleep(delay)
+
+    def _scope_token(self):
+        """Opaque token for the policy's live client scope, or ``None``.
+
+        Tools receive a deep-copied ``TaskState`` and cannot hold the scope
+        object (it owns sockets and must stay out of the checkpoint), so the
+        token is injected into the working config for the duration of the tool
+        call only. It contains no credential material.
+        """
+        scope = getattr(self.policy, "client_scope", None)
+        return getattr(scope, "token", None) if scope is not None else None
 
     def _execute(self, state, action):
         working = deepcopy(state)
         if self.store.repository is not None:
             working.repository = self.store.repository
-        result = self.registry.execute(working, action, self.store.directory, enforce_state_machine=True)
+        token = self._scope_token()
+        if token:
+            working.config["_client_scope_token"] = token
+        try:
+            result = self.registry.execute(working, action, self.store.directory, enforce_state_machine=True)
+        finally:
+            # Never let the token reach the checkpoint or the Repository.
+            working.config.pop("_client_scope_token", None)
         return working, result
 
     def run(self, max_actions=5, instruction=None, acknowledge_interrupted=False):
@@ -294,7 +442,25 @@ class Harness:
             from .evidence import revalidate
             revalidate(state)
             self.store.save(state)
-            policy = self.policy or (MockPolicy() if state.mock else LLMPolicy())
+            policy = self.policy
+            if policy is None:
+                # A Harness that creates its own policy also owns its lifetime:
+                # it closes the HTTP client when this run returns. A policy
+                # injected by the caller is closed by the caller instead, so one
+                # client can serve several runs.
+                policy = MockPolicy() if state.mock else LLMPolicy(evidence=self._record_request)
+                self.policy = policy
+                self._closed = False
+            elif getattr(policy, "evidence", "absent") is None:
+                # An injected policy must still contribute request evidence: the
+                # audit trail belongs to the Harness, not to the caller. Without
+                # this, an externally built LLMPolicy produced zero
+                # model_request events (observed in v4, 2026-09-19).
+                try:
+                    policy.evidence = self._record_request
+                except Exception:
+                    pass
+            self._secrets = getattr(policy, "_secrets", ())
             try:
                 for _ in range(max_actions):
                     self._controls(state)
@@ -305,11 +471,14 @@ class Harness:
                         break
                     # Count decisions, including malformed ones, against the persistent budget.
                     state.steps_used += 1
+                    self._current_task_id = state.task_id
+                    self._current_step = state.steps_used
                     self.store.save(state)
                     action = None
                     try:
                         revision = state.revision
                         action = self._attempt(state, lambda: policy.decide(deepcopy(state), self.registry))
+                        self._flush_request_evidence(state)
                         self._controls(state)
                         if state.status != "running":
                             break
@@ -349,6 +518,9 @@ class Harness:
                     except _CheckpointFailure:
                         raise
                     except Exception as exc:
+                        # Request evidence is flushed before classification so a
+                        # transport failure is still fully auditable.
+                        self._flush_request_evidence(state)
                         self._error(state, action, exc)
                         if state.consecutive_errors >= 3:
                             state.status, state.reason = "paused", "consecutive_errors"
@@ -369,19 +541,25 @@ class Harness:
                     state.status, state.reason = "paused", "action_limit"
             except KeyboardInterrupt:
                 state.status, state.reason = "paused", "user_interrupt"
+            finally:
+                # Close only clients this Harness created. An explicitly injected
+                # policy is owned by its caller so several runs can reuse one
+                # HTTP client (and the caller closes it once, idempotently).
+                if self._owns_policy:
+                    self.close()
             self.store.save(state)
             return state
 
+    def _safe_error_text(self, exc):
+        """Prefer the client's already-redacted rendering; never the raw text."""
+        safe = getattr(exc, "sanitized_message", None)
+        if isinstance(safe, str) and safe:
+            return safe
+        return sanitize(f"{type(exc).__name__}: {exc}", self._secrets)
+
     def _error(self, state, action, exc):
-        message = f"{type(exc).__name__}: {exc}"
-        if transient(exc) or "APIConnectionError" in message:
-            category = "network"
-        elif "Expected arguments" in message or "Action must contain" in message:
-            category = "schema"
-        elif "Illegal action" in message or "hypothesis" in message or "stage=" in message:
-            category = "state_machine"
-        else:
-            category = "tool"
+        category = error_category(exc)
+        message = self._safe_error_text(exc)
         event = {"type": "error", "revision": state.revision, "action": action,
                  "call_id": (state.pending or {}).get("call_id"),
                  "error": message, "error_category": category,

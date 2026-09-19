@@ -154,7 +154,7 @@ def test_planner_gets_components_and_only_applicable_stage_tools(tmp_path, confi
         assert "Never use min_change=0" in system
         captured.append(json.loads(payload))
         return action("finish", candidate_ids=["c1"], summary="No qualifying screened options")
-    monkeypatch.setattr(agents.llm, "get_client", lambda *a: SimpleNamespace(chat_json=chat))
+    monkeypatch.setattr(agents.llm, "get_client", lambda *a, **k: SimpleNamespace(chat_json=chat))
     LLMPolicy().decide(state, default_registry())
     context = captured[0]
     names = {t["name"] for t in context["tools"]}
