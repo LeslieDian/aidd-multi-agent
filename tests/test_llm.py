@@ -66,6 +66,38 @@ def test_chat_json_accepts_first_complete_object_but_keeps_schema_validation_sep
     assert parsed["reason"] == "ok"
 
 
+def test_proxy_policy_is_explicit_and_tls_remains_verified():
+    import copy
+    import os
+    from unittest.mock import patch
+    import agents.llm as llm_module
+    cfg = copy.deepcopy(load_config())
+    name = next(iter(cfg["llm"]["providers"]))
+    cfg["llm"]["providers"][name].update(timeout=17, max_retries=4)
+    captured = {}
+    sentinel_http = object()
+
+    def fake_http_client(**kwargs):
+        captured["http"] = kwargs
+        return sentinel_http
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            captured["openai"] = kwargs
+
+    with patch.object(llm_module.httpx, "Client", side_effect=fake_http_client), \
+         patch.object(llm_module, "OpenAI", FakeOpenAI), \
+         patch.dict(os.environ, {cfg['llm']['providers'][name]['api_key_env']: 'test-placeholder'}):
+        client = get_client(name, cfg)
+    assert captured["http"] == {"trust_env": False, "verify": True}
+    assert captured["openai"]["http_client"] is sentinel_http
+    assert captured["openai"]["base_url"] == cfg["llm"]["providers"][name]["base_url"]
+    assert captured["openai"]["timeout"] == 17
+    assert captured["openai"]["max_retries"] == 4
+    assert captured["openai"]["api_key"] == "test-placeholder"
+    assert client.model == cfg["llm"]["providers"][name]["model"]
+
+
 if __name__ == "__main__":
     print("== LLM client tests ==")
     test_mock_client()

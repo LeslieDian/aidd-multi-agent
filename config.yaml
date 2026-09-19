@@ -38,6 +38,8 @@ target:
 # Two generators (heterogeneous) + one judge (more deterministic).
 #
 llm:
+  # Do not inherit Windows/system HTTP proxies by default; TLS verification remains enabled.
+  trust_env_proxy: false
   judge: judge_MiniMax
   providers:
     # NOTE: this project intentionally does NOT call the DeepSeek API.

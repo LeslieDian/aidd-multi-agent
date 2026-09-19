@@ -9,6 +9,10 @@ def test_frozen_catalogue_and_equal_budgets(tmp_path):
     manifest = prepare(output)
     assert len(catalogue()) == 35
     assert manifest["constraints"]["min_effects"]["property_score"] == .01
+    assert manifest["llm_transport"] == {
+        "provider": "MiniMax", "base_url_host": "api.minimaxi.com", "model": "MiniMax-M3",
+        "timeout_seconds": 60, "max_sdk_retries": 0, "trust_env_proxy": False,
+        "tls_verify": True, "thinking": "disabled"}
     for name in ("rule", "agent"):
         state = new_state(manifest, name)
         assert state.max_evaluations == 11
@@ -66,3 +70,39 @@ def test_new_positive_control_is_reachable_and_hides_scores(tmp_path):
     assert all(set(row) == {"id", "edit"} for row in manifest["catalogue"])
     rule = run_arm(output, "rule")
     assert rule["total_charged_evaluations"] <= 11
+
+
+def test_goal_not_met_requires_exhaustion_or_budget(tmp_path):
+    output = tmp_path / "stop_gate"
+    manifest = prepare(output, scenario="phenol")
+    audit(output)
+    state = new_state(manifest, "agent")
+    registry = CatalogRegistry(manifest)
+    state.candidates["c1"]["evaluation_status"] = "screening_only"
+    with pytest.raises(ValueError, match="unexplored feasible products"):
+        registry.preflight(state, action("finish", candidate_ids=["c1"], summary="all failed"))
+    try:
+        registry.preflight(state, action("finish", candidate_ids=["c1"], summary="all failed"))
+    except ValueError as exc:
+        assert exc.audit_event["type"] == "invalid_early_stop_attempt"
+        assert not exc.audit_event["facts"]["deterministic_stop_allowed"]
+    state.evaluations_used = state.max_evaluations
+    registry.preflight(state, action("finish", candidate_ids=["c1"], summary="budget exhausted"))
+
+
+def test_goal_not_met_allowed_after_all_unique_products_are_explored(tmp_path):
+    output = tmp_path / "stop_gate_exhausted"
+    manifest = prepare(output, scenario="phenol")
+    audit(output)
+    state = new_state(manifest, "agent")
+    state.candidates["c1"]["evaluation_status"] = "screening_only"
+    rows = json.loads((output / "structural_catalogue.json").read_text(encoding="utf-8"))
+    products = {r["precheck"]["product_smiles"] for r in rows if r["precheck"]["passed"]}
+    state.option_screenings = {str(i): {"evaluation": {"smiles": smiles}}
+                               for i, smiles in enumerate(products)}
+    CatalogRegistry(manifest).preflight(
+        state, action("finish", candidate_ids=["c1"], summary="space exhausted"))
+    event = state.events[-1]
+    assert event["type"] == "diagnostic_stop_decision"
+    assert event["facts"]["unexplored_unique_products"] == 0
+    assert event["facts"]["deterministic_stop_allowed"]

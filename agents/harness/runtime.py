@@ -16,7 +16,9 @@ class LLMPolicy:
         from .attribution import breakdown
         provider = state.config.get("harness", {}).get("planner") or state.config["llm"]["judge"]
         client = get_client(provider, client_config(state.config))
-        offered_tools = registry.describe()
+        from .tools import available_actions
+        availability = available_actions(state)
+        offered_tools = registry.describe(state)
         if state.constraints.get("require_planned_edits"):
             hidden = {"record_hypothesis", "refine"}
             if not any(h.get("status") == "assessed" for h in state.hypotheses.values()):
@@ -95,6 +97,7 @@ class LLMPolicy:
                         "model_calls_remaining": state.max_model_calls - state.model_calls_used,
                         "evaluations_remaining": state.max_evaluations - state.evaluations_used,
                         "dock_enabled": state.dock_enabled, "candidates": candidates,
+                        "available_actions": availability,
                         "recent_events": state.events[-8:], "tools": offered_tools}, ensure_ascii=False))
 
 
@@ -227,7 +230,8 @@ class Harness:
                     raise
                 event = {"type": "retry", "phase": "tool" if action else "decision",
                          "revision": revision, "action": action, "attempt": attempt,
-                         "error": f"{type(exc).__name__}: {exc}"}
+                         "error": f"{type(exc).__name__}: {exc}",
+                         "error_category": "network" if transient(exc) else "tool"}
                 state.events.append(event)
                 self._save(state)
                 self._emit(event)
@@ -237,7 +241,7 @@ class Harness:
         working = deepcopy(state)
         if self.store.repository is not None:
             working.repository = self.store.repository
-        result = self.registry.execute(working, action, self.store.directory)
+        result = self.registry.execute(working, action, self.store.directory, enforce_state_machine=True)
         return working, result
 
     def run(self, max_actions=5, instruction=None, acknowledge_interrupted=False):
@@ -313,7 +317,7 @@ class Harness:
                             state.events.append({"type": "decision_discarded", "reason": "new_user_instruction"})
                             self._save(state)
                             continue
-                        tool = self.registry.preflight(state, action)
+                        tool = self.registry.validate(action)
                         previous = [e for e in state.events if e.get("type") in {"tool_result", "error"}][-2:]
                         if len(previous) == 2 and all(
                             e.get("revision") == state.revision
@@ -369,11 +373,23 @@ class Harness:
             return state
 
     def _error(self, state, action, exc):
+        message = f"{type(exc).__name__}: {exc}"
+        if transient(exc) or "APIConnectionError" in message:
+            category = "network"
+        elif "Expected arguments" in message or "Action must contain" in message:
+            category = "schema"
+        elif "Illegal action" in message or "hypothesis" in message or "stage=" in message:
+            category = "state_machine"
+        else:
+            category = "tool"
         event = {"type": "error", "revision": state.revision, "action": action,
                  "call_id": (state.pending or {}).get("call_id"),
-                 "error": f"{type(exc).__name__}: {exc}",
+                 "error": message, "error_category": category,
                  "recoverable": isinstance(exc, ValueError) or transient(exc)}
         state.events.append(event)
+        audit_event = getattr(exc, "audit_event", None)
+        if isinstance(audit_event, dict):
+            state.events.append(audit_event)
         state.pending = None
         state.consecutive_errors += 1
         self.store.save(state)

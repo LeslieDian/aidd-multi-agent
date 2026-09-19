@@ -16,6 +16,7 @@ import re
 from typing import Any
 
 from openai import OpenAI
+import httpx
 
 # Load .env if present (no-op if python-dotenv is missing)
 try:
@@ -39,6 +40,10 @@ class LLMClient:
         self.client = OpenAI(
             base_url=provider_config["base_url"],
             api_key=self.api_key,
+            http_client=httpx.Client(
+                trust_env=bool(provider_config.get("trust_env_proxy", False)),
+                verify=True,
+            ),
             **{key: provider_config[key] for key in ("timeout", "max_retries") if key in provider_config},
         )
 
@@ -181,6 +186,7 @@ def get_client(provider_name: str, config: dict, mock: bool = False) -> LLMClien
     if provider_name not in providers:
         raise KeyError(f"Unknown provider: {provider_name}. Available: {list(providers)}")
     provider_cfg = providers[provider_name]
+    provider_cfg = {**provider_cfg, "trust_env_proxy": config.get("llm", {}).get("trust_env_proxy", False)}
 
     if mock:
         return MockLLMClient(provider_cfg)

@@ -33,7 +33,7 @@ class ControlRequest(BaseModel):
 
 
 class ApprovalRequest(BaseModel):
-    decision: str = Field(min_length=1)
+    decision: str = Field(pattern="^(approve|reject|request_changes)$")
     reason: str = Field(min_length=1)
     reviewer: str = Field(min_length=1)
 
@@ -48,6 +48,7 @@ def create_app(task_root: str | Path = "runs/api", database: str | Path = "runs/
     active_lock = Lock()
     app = FastAPI(title="AIDD Agent API", version="0.1.0")
     app.state.repository = repository
+    app.state.single_writer_scope = "one FastAPI process"
 
     def store_for(task_id: str) -> CheckpointStore:
         task_dir = root / task_id
@@ -75,6 +76,8 @@ def create_app(task_root: str | Path = "runs/api", database: str | Path = "runs/
         finally:
             with active_lock:
                 active.discard(task_id)
+
+    app.state.execute_run = execute
 
     @app.get("/health")
     def health():
@@ -121,6 +124,9 @@ def create_app(task_root: str | Path = "runs/api", database: str | Path = "runs/
     @app.post("/runs/{task_id}/resume", status_code=202)
     def resume_run(task_id: str, background: BackgroundTasks, request: ControlRequest | None = None):
         store = store_for(task_id)
+        state = store.load_from_repository()
+        if state.status in {"completed", "cancelled"}:
+            raise HTTPException(status_code=409, detail="Terminal runs cannot be resumed")
         if request and request.instruction:
             store.submit_control("steer", request.instruction)
         background.add_task(execute, task_id, 5)

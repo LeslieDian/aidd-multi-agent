@@ -188,6 +188,9 @@ def test_planned_policy_hides_strategy_until_hypothesis_is_assessed(tmp_path):
     store = create(tmp_path)
     state = store.load()
     state.constraints.update(require_planned_edits=True, require_option_screening=True)
+    state.candidates["c1"] = {
+        "candidate_id": "c1", "smiles": "CCO", "evaluation_status": "screening_only"
+    }
     state.hypotheses["planned_s1"] = {
         "hypothesis_id": "planned_s1", "status": "proposed", "revision": state.revision,
         "parent_id": "c1"
@@ -208,6 +211,73 @@ def test_planned_policy_hides_strategy_until_hypothesis_is_assessed(tmp_path):
         assert LLMPolicy().decide(state, default_registry())["tool"] == "finish"
     finally:
         agents.llm.get_client = original
+
+
+def test_available_actions_excludes_strategy_for_unqualified_screening(tmp_path):
+    from agents.harness.tools import available_actions, default_registry
+    store = create(tmp_path)
+    state = store.load()
+    state.constraints.update(require_planned_edits=True, require_option_screening=True)
+    state.candidates["c1"] = {"candidate_id": "c1", "smiles": "CCO", "evaluation_status": "screening_only"}
+    state.edit_proposals["p1"] = {"proposal_id": "p1", "revision": state.revision, "parent_id": "c1",
+        "screening_protocol_id": "unused", "options": [
+            {"precheck": {"passed": True}, "screening": {"evaluation_status": "screening_only",
+             "effect_assessment": {"outcome": "tradeoff_exceeded"}}}]}
+    from agents.harness import screening
+    state.edit_proposals["p1"]["screening_protocol_id"] = screening.protocol(state)
+    availability = available_actions(state)
+    assert availability["stage"] == "screening_no_qualifying_option"
+    assert "choose_strategy" not in availability["tools"]
+    with pytest.raises(ValueError, match="allowed_tools"):
+        default_registry().preflight(state, action("choose_strategy", hypothesis_id="h1",
+            choice="switch_strategy", parent_id="c1", rationale="invalid"))
+
+
+def test_registry_description_and_enforcement_share_available_actions(tmp_path):
+    from agents.harness.tools import available_actions, default_registry
+    state = create(tmp_path).load()
+    state.constraints.update(require_planned_edits=True, allow_generation=False)
+    registry = default_registry()
+    availability = available_actions(state)
+    assert availability == {"stage": "no_candidates", "tools": ["pause"],
+                            "references": {"candidate_ids": []}}
+    assert [item["name"] for item in registry.describe(state)] == ["pause"]
+    with pytest.raises(ValueError, match="stage=no_candidates"):
+        registry.preflight(state, action("history", limit=1), enforce_state_machine=True)
+
+
+def test_strategy_decision_cannot_skip_directly_to_new_proposal(tmp_path):
+    from agents.harness.tools import available_actions, default_registry
+    state = create(tmp_path).load()
+    state.constraints.update(require_planned_edits=True)
+    state.candidates = {
+        "c1": {"candidate_id": "c1", "smiles": "CCO", "evaluation_status": "screening_only"},
+        "c2": {"candidate_id": "c2", "smiles": "CCCO", "parent_id": "c1",
+               "evaluation_status": "screening_only"},
+    }
+    state.hypotheses["h1"] = {"hypothesis_id": "h1", "parent_id": "c1",
+                                "child_id": "c2", "status": "assessed"}
+    assert available_actions(state)["stage"] == "strategy_decision"
+    option = {"edit": {"operation": "attach_fragment", "arguments": {
+                  "atom_index": 0, "fragment_smiles": "C", "fragment_atom_index": 0}},
+              "rationale": "different edit", "expected_benefit": "test",
+              "allowed_cost": "limits apply", "expected_metric": "property_score",
+              "expected_direction": "increase", "predictions": [{
+                  "metric": "property_score", "direction": "increase", "min_change": .01}]}
+    with pytest.raises(ValueError, match="stage=strategy_decision"):
+        default_registry().preflight(state, action("propose_edits", parent_id="c1",
+            options=[option, deepcopy(option)]), enforce_state_machine=True)
+
+
+def test_terminal_state_exposes_and_accepts_no_model_tools(tmp_path):
+    from agents.harness.tools import available_actions, default_registry
+    state = create(tmp_path).load()
+    state.status = "completed"
+    assert available_actions(state)["tools"] == []
+    assert default_registry().describe(state) == []
+    with pytest.raises(ValueError, match="stage=terminal"):
+        default_registry().preflight(state, action("pause", message="wait"),
+                                     enforce_state_machine=True)
 
 
 def test_transient_planner_retry_and_budget_accounted(tmp_path):

@@ -68,11 +68,79 @@ def test_repository_refuses_evaluation_from_different_protocol(tmp_path):
     }
     repo.save_state(state)
     assert repo.get_evaluation("task-5", "c1", "protocol-a")["property_score"] == 0.5
-    with pytest.raises(ValueError, match="protocol changed"):
-        repo.get_evaluation("task-5", "c1", "protocol-b")
+    assert repo.get_evaluation("task-5", "c1", "protocol-b") is None
 
 
-def test_harness_refuses_candidate_evidence_from_old_protocol(tmp_path):
+def test_current_evaluation_view_recovers_after_error_and_preserves_success(tmp_path):
+    repo = SQLiteRepository(tmp_path / "aidd.sqlite3")
+    state = TaskState(goal="screen", config={}, task_id="task-8")
+    state.candidates["c1"] = {"candidate_id": "c1", "smiles": "CCO",
+                                "protocol_id": "protocol-a",
+                                "evaluation_status": "evaluation_error"}
+    repo.save_state(state)
+    repo.record_evaluation_attempt("task-8", "c1", "protocol-a", "evaluation_error", {"attempt": 1})
+    assert repo.get_evaluation("task-8", "c1", "protocol-a") is None
+    success = {"candidate_id": "c1", "evaluation_status": "complete", "protocol_id": "protocol-a", "value": 1}
+    state.candidates["c1"] = {"candidate_id": "c1", "smiles": "CCO", **success}
+    repo.save_state(state)
+    repo.record_evaluation_attempt("task-8", "c1", "protocol-a", "complete", success)
+    assert repo.get_evaluation("task-8", "c1", "protocol-a")["value"] == 1
+    state.candidates["c1"] = {"candidate_id": "c1", "smiles": "CCO",
+                                "protocol_id": "protocol-a",
+                                "evaluation_status": "evaluation_error"}
+    repo.save_state(state)
+    repo.record_evaluation_attempt("task-8", "c1", "protocol-a", "evaluation_error", {"attempt": 3})
+    assert repo.get_evaluation("task-8", "c1", "protocol-a")["value"] == 1
+    history = repo.evaluation_history("task-8", "c1", "protocol-a")
+    assert [row["status"] for row in history] == ["evaluation_error", "complete", "evaluation_error"]
+    assert repo.count("evaluation_attempts", "task-8") == 3
+    repo.close()
+
+
+def test_protocol_change_re_evaluates_and_current_protocol_reuses(tmp_path, monkeypatch):
+    import yaml
+    from pathlib import Path
+    import agents.evaluator
+
+    config = yaml.safe_load((Path(__file__).resolve().parents[1] / "config.yaml").read_text(encoding="utf-8"))
+    repo = SQLiteRepository(tmp_path / "aidd.sqlite3")
+    store = CheckpointStore(tmp_path / "task", repository=repo)
+    state = TaskState(goal="screen", config=config, task_id="task-7", mock=True)
+    state.candidates["c1"] = {"candidate_id": "c1", "smiles": "CCO"}
+    store.save(state)
+    from tools.provenance import digest, evaluation_protocol
+
+    def fake(candidates, scoring, target, *, dock_enabled, **kwargs):
+        protocol = digest(evaluation_protocol(target, scoring, dock_enabled))
+        return [{**c, "evaluation_status": "complete", "protocol_id": protocol, "property_score": 0.5} for c in candidates]
+    monkeypatch.setattr(agents.evaluator, "evaluate_candidates", fake)
+    policy = type("P", (), {"decide": lambda self, state, registry: {
+        "tool": "evaluate", "arguments": {"candidate_ids": ["c1"]}, "reason": "protocol a"
+    }})()
+    Harness(store, policy=policy).run(1)
+    first = store.load()
+    first.config["scoring"]["objective"]["precision"] = 5
+    first.protocol_id = None
+    store.save(first)
+    calls = []
+    def changed(candidates, scoring, target, *, dock_enabled, **kwargs):
+        calls.append(1)
+        protocol = digest(evaluation_protocol(target, scoring, dock_enabled))
+        return [{**candidates[0], "evaluation_status": "complete", "protocol_id": protocol, "property_score": 0.6}]
+    monkeypatch.setattr(agents.evaluator, "evaluate_candidates", changed)
+    Harness(store, policy=type("P", (), {"decide": lambda self, state, registry: {
+        "tool": "evaluate", "arguments": {"candidate_ids": ["c1"]}, "reason": "protocol b"
+    }})()).run(1)
+    assert calls == [1]
+    before = len(calls)
+    Harness(store, policy=type("P", (), {"decide": lambda self, state, registry: {
+        "tool": "evaluate", "arguments": {"candidate_ids": ["c1"]}, "reason": "reuse b"
+    }})()).run(1)
+    assert len(calls) == before
+    assert len(repo.evaluation_history("task-7", "c1")) >= 2
+
+
+def test_harness_replaces_candidate_evidence_from_old_protocol(tmp_path, monkeypatch):
     import yaml
     from pathlib import Path
     from agents.harness.tools import default_registry
@@ -81,12 +149,15 @@ def test_harness_refuses_candidate_evidence_from_old_protocol(tmp_path):
     repo = SQLiteRepository(tmp_path / "aidd.sqlite3")
     store = CheckpointStore(tmp_path / "task", repository=repo)
     state = TaskState(goal="screen", config=config, task_id="task-6", protocol_id="new")
-    state.candidates["c1"] = {"smiles": "CCO", "evaluation_status": "complete", "protocol_id": "old"}
+    state.candidates["c1"] = {"candidate_id": "c1", "smiles": "CCO", "evaluation_status": "complete", "protocol_id": "old"}
     store.save(state)
-    with pytest.raises(ValueError, match="protocol changed"):
-        default_registry().execute(state, {
-            "tool": "evaluate", "arguments": {"candidate_ids": ["c1"]}, "reason": "recheck"
-        }, tmp_path)
+    monkeypatch.setattr("agents.evaluator.evaluate_candidates", lambda candidates, *args, **kwargs: [
+        {**candidates[0], "evaluation_status": "complete", "protocol_id": "new", "property_score": 0.6}
+    ])
+    default_registry().execute(state, {
+        "tool": "evaluate", "arguments": {"candidate_ids": ["c1"]}, "reason": "recheck"
+    }, tmp_path)
+    assert state.candidates["c1"]["property_score"] == 0.6
 
 
 def test_harness_writes_tool_events_candidates_evaluations_and_rounds(tmp_path):

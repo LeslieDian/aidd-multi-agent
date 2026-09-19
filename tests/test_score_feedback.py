@@ -102,8 +102,10 @@ def test_repeated_screening_cache_charges_zero_and_selection_gate(tmp_path, conf
     state = Harness(store, ScriptedPolicy(initial_actions()[:2])).run(2)
     with pytest.raises(ValueError, match="evaluate_options"):
         default_registry().execute(state, action("select_edit", proposal_id="p1", option_index=0, rationale="Premature", evidence_ids=[]), tmp_path)
-    state = Harness(store, ScriptedPolicy([initial_actions()[2], action("propose_edits", parent_id="c1", options=alternatives()),
-        action("evaluate_options", proposal_id="p2")])).run(3)
+    state = Harness(store, ScriptedPolicy([initial_actions()[2]])).run(1)
+    registry = default_registry()
+    registry.execute(state, action("propose_edits", parent_id="c1", options=alternatives()), tmp_path)
+    registry.execute(state, action("evaluate_options", proposal_id="p2"), tmp_path)
     assert state.evaluations_used == 3
     assert state.edit_proposals["p2"]["screening_comparison"]["new_evaluations"] == 0
     assert state.edit_proposals["p1"]["options"][0]["prediction_provenance"]["new_to_task_screening"]

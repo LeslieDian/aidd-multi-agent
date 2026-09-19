@@ -15,19 +15,21 @@ class Tool:
 
 
 class ToolRegistry:
-    def __init__(self):
+    def __init__(self, enforce_state_machine=False):
         self.tools = {}
+        self.enforce_state_machine = enforce_state_machine
 
     def register(self, tool: Tool):
         if tool.name in self.tools:
             raise ValueError(f"Duplicate tool: {tool.name}")
         self.tools[tool.name] = tool
 
-    def describe(self):
+    def describe(self, state=None):
+        allowed = set(available_actions(state)["tools"]) if state is not None else None
         return [{"name": t.name, "description": t.description,
                  "parameters": {"type": "object", "properties": t.parameters,
                                 "required": list(t.parameters), "additionalProperties": False}}
-                for t in self.tools.values()]
+                for t in self.tools.values() if allowed is None or t.name in allowed]
 
     def validate(self, action):
         if not isinstance(action, dict) or set(action) != {"tool", "arguments", "reason"}:
@@ -46,8 +48,17 @@ class ToolRegistry:
             validate_value(args[key], spec, key)
         return self.tools[name]
 
-    def preflight(self, state, action):
+    def preflight(self, state, action, *, enforce_state_machine=False):
         tool = self.validate(action)
+        availability = available_actions(state)
+        requested = action["tool"]
+        enforce = (enforce_state_machine and self.enforce_state_machine) or requested == "choose_strategy"
+        if enforce and requested not in availability["tools"]:
+            raise ValueError(
+                f"Illegal action at stage={availability['stage']}: {requested!r}; "
+                f"allowed_tools={availability['tools']}; "
+                f"allowed_ids={availability['references']}"
+            )
         args = action["arguments"]
         from .evidence import revalidate
         revalidate(state)
@@ -119,15 +130,16 @@ class ToolRegistry:
         if name == "evaluate_options":
             from .screening import screening_cost
             return {"model_calls": 0, "evaluations": screening_cost(state, args)}
+        selected = _select(state, args["candidate_ids"]) if name in {"evaluate", "retry_evaluation"} else []
         return {
             "model_calls": int(name in {"generate", "refine"}),
-            "evaluations": sum("evaluation_status" not in state.candidates[cid]
-                               for cid in args["candidate_ids"]) if name == "evaluate" else
-                           len(args["candidate_ids"]) if name == "retry_evaluation" else 0,
+            "evaluations": sum("evaluation_status" not in candidate
+                               for candidate in selected) if name == "evaluate" else
+                           len(selected) if name == "retry_evaluation" else 0,
         }
 
-    def execute(self, state, action, directory):
-        tool = self.preflight(state, action)
+    def execute(self, state, action, directory, *, enforce_state_machine=False):
+        tool = self.preflight(state, action, enforce_state_machine=enforce_state_machine)
         return tool.handler(state, action["arguments"], directory)
 
 
@@ -135,6 +147,87 @@ def _select(state, ids):
     if any(cid not in state.candidates for cid in ids):
         raise ValueError("Unknown candidate ID; inspect task state before choosing IDs")
     return [state.candidates[cid] for cid in ids]
+
+
+def available_actions(state):
+    """Return the deterministic action stage and valid evidence references."""
+    if state is None:
+        return {"stage": "unknown", "tools": [], "references": {}}
+    if state.status in {"completed", "cancelled"}:
+        return {"stage": "terminal", "tools": [], "references": {}}
+    ids = list(state.candidates)
+    if not ids:
+        tools = ["pause"]
+        if state.constraints.get("allow_generation", True):
+            tools.insert(0, "generate")
+        if not state.constraints.get("allow_generation", True):
+            tools = ["pause"]
+        return {"stage": "no_candidates", "tools": tools, "references": {"candidate_ids": []}}
+    evaluated = [cid for cid in ids if state.candidates[cid].get("evaluation_status") in {"complete", "screening_only"}]
+    if not state.constraints.get("require_planned_edits"):
+        return {"stage": "general", "tools": [name for name in (
+            "evaluate", "generate", "refine", "import_candidates", "record_hypothesis",
+            "choose_strategy", "compare", "compare_parent_child", "history", "pause", "finish",
+            "retry_evaluation", "attach_fragment", "replace_substituent",
+            "remove_terminal_group", "replace_bioisostere", "change_bond_order")],
+                "references": {"candidate_ids": ids}}
+    pending = [cid for cid in ids if "evaluation_status" not in state.candidates[cid]]
+    failed = [cid for cid in ids if state.candidates[cid].get("evaluation_status") == "evaluation_error"]
+    if pending:
+        return {"stage": "candidate_evaluation", "tools": ["evaluate", "pause"],
+                "references": {"candidate_ids": pending}}
+    if failed:
+        return {"stage": "evaluation_recovery", "tools": ["retry_evaluation", "pause"],
+                "references": {"candidate_ids": failed}}
+    selected = [s for s in state.edit_selections.values()
+                if s.get("status") == "selected" and s.get("revision") == state.revision]
+    if selected:
+        return {"stage": "execute_selected_edit", "tools": ["execute_selected_edit", "pause"],
+                "references": {"selection_ids": [s["selection_id"] for s in selected]}}
+    executed = [h for h in state.hypotheses.values()
+                if h.get("status") == "edit_executed" and h.get("child_id")]
+    if executed:
+        return {"stage": "parent_child_comparison", "tools": ["compare_parent_child", "pause"],
+                "references": {"candidate_ids": [h["child_id"] for h in executed]}}
+    decided_hypotheses = {s.get("hypothesis_id") for s in state.strategies
+                          if s.get("revision") == state.revision and s.get("status") == "selected"}
+    assessed = [h for h in state.hypotheses.values()
+                if h.get("status") == "assessed" and h.get("child_id")
+                and h.get("hypothesis_id") not in decided_hypotheses]
+    if assessed:
+        last = assessed[-1]
+        return {"stage": "strategy_decision", "tools": ["choose_strategy", "finish", "pause"],
+                "references": {"hypothesis_ids": [last["hypothesis_id"]],
+                               "parent_ids": [last["parent_id"], last["child_id"]]}}
+    used_edits = sum(c.get("candidate_role") == "deterministic_edit" for c in state.candidates.values())
+    if used_edits >= _constraints(state)["max_edits"]:
+        return {"stage": "edit_budget_exhausted", "tools": ["finish", "pause"],
+                "references": {"candidate_ids": evaluated}}
+    consumed = {s.get("proposal_id") for s in state.edit_selections.values()}
+    proposals = [p for p in state.edit_proposals.values()
+                 if p.get("revision") == state.revision and p.get("proposal_id") not in consumed]
+    if proposals:
+        proposal = proposals[-1]
+        from .screening import screening_complete
+        if state.constraints.get("require_option_screening") and not screening_complete(state, proposal):
+            return {"stage": "option_screening", "tools": ["evaluate_options", "pause"],
+                    "references": {"proposal_ids": [proposal["proposal_id"]]}}
+        rejected_outcomes = {"tradeoff_exceeded", "insufficient_evidence"}
+        feasible = [i for i, option in enumerate(proposal["options"])
+                    if option.get("precheck", {}).get("passed") and (
+                        not state.constraints.get("require_option_screening") or
+                        option.get("screening", {}).get("effect_assessment", {}).get("outcome")
+                        not in rejected_outcomes)]
+        if feasible:
+            supported = [i for i in feasible if proposal["options"][i].get("screening", {})
+                         .get("effect_assessment", {}).get("outcome") == "supported"]
+            tools = ["select_edit", "pause"] if supported else ["select_edit", "propose_edits", "finish", "pause"]
+            return {"stage": "select_edit", "tools": tools,
+                    "references": {"proposal_ids": [proposal["proposal_id"]], "option_indices": feasible}}
+        return {"stage": "screening_no_qualifying_option", "tools": ["propose_edits", "finish", "pause"],
+                "references": {"candidate_ids": evaluated, "proposal_ids": [proposal["proposal_id"]]}}
+    return {"stage": "propose_edits", "tools": ["propose_edits", "pause"],
+            "references": {"candidate_ids": evaluated}}
 
 
 def _constraints(state):
@@ -333,7 +426,9 @@ def _evaluate(state, args, directory):
     protocol_id = state.protocol_id
     for candidate in selected:
         if candidate.get("evaluation_status") and candidate.get("protocol_id") != protocol_id:
-            raise ValueError("Evaluation protocol changed; refusing to reuse persisted evaluation")
+            for key in ("evaluation_status", "protocol_id", "property_attribution", "composite_score",
+                        "property_score", "safety_gate_pass", "dock", "admet", "validate"):
+                candidate.pop(key, None)
     missing = [c for c in selected if "evaluation_status" not in c]
     repository = getattr(state, "repository", None)
     if repository is not None and protocol_id:
@@ -350,6 +445,11 @@ def _evaluate(state, args, directory):
             from .attribution import breakdown
             candidate["property_attribution"] = breakdown(candidate, state.config["scoring"])
             state.candidates[candidate["candidate_id"]] = candidate
+            if repository is not None and candidate.get("protocol_id"):
+                repository.record_evaluation_attempt(
+                    state.task_id, candidate["candidate_id"], candidate["protocol_id"],
+                    candidate.get("evaluation_status", "unknown"), candidate,
+                )
     return {"evaluated_ids": [c["candidate_id"] for c in missing],
             "reused_ids": [c["candidate_id"] for c in selected if c not in missing],
             "statuses": {cid: state.candidates[cid]["evaluation_status"] for cid in args["candidate_ids"]}}
@@ -447,7 +547,7 @@ def default_registry():
     from .planning import propose, select, execute_selected
     from .screening import evaluate_options
     from .attribution import METRICS
-    registry = ToolRegistry()
+    registry = ToolRegistry(enforce_state_machine=True)
     text = {"type": "string"}
     ids = {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 20, "uniqueItems": True}
     generation = {"count": {"type": "integer", "minimum": 1, "maximum": 10}, "focus": text}

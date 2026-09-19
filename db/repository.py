@@ -37,6 +37,8 @@ class SQLiteRepository:
         self._lock = RLock()
         self.connection.row_factory = sqlite3.Row
         self.connection.execute("PRAGMA foreign_keys = ON")
+        self.connection.execute("PRAGMA busy_timeout = 5000")
+        self.connection.execute("PRAGMA journal_mode = WAL")
         self.connection.executescript(
             """
             CREATE TABLE IF NOT EXISTS runs (
@@ -63,6 +65,12 @@ class SQLiteRepository:
                 payload_json TEXT NOT NULL, payload_sha256 TEXT NOT NULL,
                 PRIMARY KEY(task_id, evaluation_key)
             );
+            CREATE TABLE IF NOT EXISTS evaluation_attempts (
+                attempt_key TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES runs(task_id) ON DELETE CASCADE,
+                candidate_id TEXT NOT NULL, protocol_id TEXT NOT NULL, attempt_no INTEGER NOT NULL,
+                status TEXT NOT NULL, payload_json TEXT NOT NULL, payload_sha256 TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
             CREATE TABLE IF NOT EXISTS agent_events (
                 event_key TEXT NOT NULL, task_id TEXT NOT NULL REFERENCES runs(task_id) ON DELETE CASCADE,
                 event_type TEXT NOT NULL, payload_json TEXT NOT NULL, payload_sha256 TEXT NOT NULL,
@@ -83,7 +91,8 @@ class SQLiteRepository:
         self.connection.commit()
 
     def close(self):
-        self.connection.close()
+        with self._lock:
+            self.connection.close()
 
     def save_state(self, state: TaskState) -> None:
         payload = asdict(state)
@@ -139,26 +148,68 @@ class SQLiteRepository:
     def get_evaluation(self, task_id: str, candidate_id: str, protocol_id: str) -> dict | None:
         with self._lock:
             row = self.connection.execute(
-                """SELECT protocol_id, payload_json FROM evaluations
-                   WHERE task_id=? AND candidate_id=? ORDER BY rowid DESC LIMIT 1""",
-                (task_id, candidate_id),
+                """SELECT payload_json FROM evaluations
+                   WHERE task_id=? AND candidate_id=? AND protocol_id=?
+                   AND status NOT IN ('evaluation_error', 'error')
+                   ORDER BY rowid DESC LIMIT 1""",
+                (task_id, candidate_id, protocol_id),
             ).fetchone()
         if row is None:
             return None
-        if row["protocol_id"] != protocol_id:
-            raise ValueError("Evaluation protocol changed; refusing to reuse persisted evaluation")
         return json.loads(row["payload_json"])
+
+    def state_matches(self, state: TaskState) -> bool:
+        payload = _json(asdict(state))
+        expected = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        with self._lock:
+            row = self.connection.execute(
+                "SELECT state_sha256 FROM runs WHERE task_id=?", (state.task_id,)
+            ).fetchone()
+        return bool(row and row["state_sha256"] == expected)
+
+    def record_evaluation_attempt(self, task_id: str, candidate_id: str, protocol_id: str,
+                                  status: str, payload: dict, attempt_no: int | None = None) -> str:
+        with self._lock, self.connection:
+            if attempt_no is None:
+                attempt_no = self.connection.execute(
+                    "SELECT COALESCE(MAX(attempt_no), 0) + 1 FROM evaluation_attempts "
+                    "WHERE task_id=? AND candidate_id=? AND protocol_id=?",
+                    (task_id, candidate_id, protocol_id),
+                ).fetchone()[0]
+            key = f"{task_id}:{candidate_id}:{protocol_id}:{attempt_no}"
+            payload_json = _json(payload)
+            self.connection.execute(
+                """INSERT INTO evaluation_attempts(attempt_key, task_id, candidate_id, protocol_id,
+                   attempt_no, status, payload_json, payload_sha256)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(attempt_key) DO NOTHING""",
+                (key, task_id, candidate_id, protocol_id, attempt_no, status, payload_json, _hash(payload)),
+            )
+            return key
+
+    def evaluation_history(self, task_id: str, candidate_id: str, protocol_id: str | None = None) -> list[dict]:
+        with self._lock:
+            query = "SELECT * FROM evaluation_attempts WHERE task_id=? AND candidate_id=?"
+            params = [task_id, candidate_id]
+            if protocol_id is not None:
+                query += " AND protocol_id=?"
+                params.append(protocol_id)
+            query += " ORDER BY created_at, attempt_no"
+            return [dict(row) for row in self.connection.execute(query, params).fetchall()]
 
     def _save_evaluation(self, state, candidate_id: str, candidate: dict) -> None:
         evaluation_key = f"{candidate_id}:{candidate.get('protocol_id', state.protocol_id or 'current')}"
         candidate_json = _json(candidate)
+        protocol_id = candidate.get("protocol_id", state.protocol_id)
+        status = candidate.get("evaluation_status", "unknown")
+        if status in {"evaluation_error", "error"}:
+            return
         self.connection.execute(
             """INSERT INTO evaluations(evaluation_key, task_id, candidate_id, protocol_id, status,
                payload_json, payload_sha256) VALUES (?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(task_id, evaluation_key) DO UPDATE SET status=excluded.status,
                payload_json=excluded.payload_json, payload_sha256=excluded.payload_sha256""",
-            (evaluation_key, state.task_id, candidate_id, candidate.get("protocol_id", state.protocol_id),
-             candidate.get("evaluation_status", "unknown"), candidate_json, _hash(candidate)),
+            (evaluation_key, state.task_id, candidate_id, protocol_id,
+             status, candidate_json, _hash(candidate)),
         )
 
     def load_state(self, task_id: str) -> TaskState:
@@ -209,7 +260,8 @@ class SQLiteRepository:
             )
 
     def count(self, table: str, task_id: str) -> int:
-        allowed = {"runs", "rounds", "candidates", "evaluations", "agent_events", "artifacts", "human_approvals"}
+        allowed = {"runs", "rounds", "candidates", "evaluations", "evaluation_attempts",
+                   "agent_events", "artifacts", "human_approvals"}
         if table not in allowed:
             raise ValueError("Unknown repository table")
         with self._lock:

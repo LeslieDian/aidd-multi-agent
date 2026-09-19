@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sys
+from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -64,7 +65,9 @@ def new_state(manifest, arm):
         "若找到合格方案，请选择、执行并比较后 finish；若无合理方案可以提前停止。"
         "目录没有提供评分，禁止假定已知其结果。预测阈值必须为正数。\n"
         + json.dumps(manifest["catalogue"], ensure_ascii=False))
-    state = TaskState(goal=goal, config=deepcopy(manifest["config"]), mock=arm != "agent", dock_enabled=False,
+    config = deepcopy(manifest["config"])
+    config["_diagnostic_output"] = manifest["output_dir"]
+    state = TaskState(goal=goal, config=config, mock=arm != "agent", dock_enabled=False,
         max_steps=45, max_model_calls=60, max_evaluations=11, constraints=deepcopy(manifest["constraints"]))
     add_seed_candidates(state, [manifest["parent_smiles"]], source="frozen_diagnostic")
     return state
@@ -81,9 +84,15 @@ def prepare(output, scenario="phenetole"):
     output = Path(output)
     output.mkdir(parents=True, exist_ok=False)
     config = yaml.safe_load((ROOT / "config.yaml").read_text(encoding="utf-8"))
-    manifest = {"created_utc": datetime.now(timezone.utc).isoformat(), "parent_smiles": "Oc1ccccc1" if scenario == "phenol" else "CCOc1ccccc1",
+    planner_name = config.get("harness", {}).get("planner") or config["llm"]["judge"]
+    planner = config["llm"]["providers"][planner_name]
+    manifest = {"created_utc": datetime.now(timezone.utc).isoformat(), "output_dir": str(output.resolve()), "parent_smiles": "Oc1ccccc1" if scenario == "phenol" else "CCOc1ccccc1",
         "scenario": scenario, "selection_rationale": "phenol chosen as a separate reachable positive-control task based on earlier parent-child evidence; not a blind generalization benchmark" if scenario == "phenol" else "original diagnostic",
         "config": config, "versions": versions(), "source_hashes": source_hashes(), "catalogue": catalogue(scenario),
+        "llm_transport": {"provider": planner_name, "base_url_host": urlparse(planner["base_url"]).hostname,
+            "model": planner["model"], "timeout_seconds": config.get("harness", {}).get("request_timeout", 60),
+            "max_sdk_retries": 0, "trust_env_proxy": config.get("llm", {}).get("trust_env_proxy", False),
+            "tls_verify": True, "thinking": planner.get("extra_body", {}).get("thinking", {}).get("type")},
         "constraints": normalize_constraints({"allow_generation": False, "allow_freeform_refine": False,
             "require_planned_edits": True, "require_option_screening": True, "require_verified_refinement": True,
             "require_meaningful_improvement": True, "max_edits": 3}),
@@ -147,17 +156,46 @@ def audit(output):
 class CatalogRegistry(ToolRegistry):
     def __init__(self, manifest):
         self.tools = default_registry().tools
+        self.enforce_state_machine = True
         for name in ("generate", "refine", "import_candidates"):
             self.tools.pop(name)
         self.allowed = {edit_key(r["edit"]) for r in manifest["catalogue"]}
 
-    def preflight(self, state, action):
-        tool = super().preflight(state, action)
+    def preflight(self, state, action, *, enforce_state_machine=False):
+        tool = super().preflight(state, action, enforce_state_machine=enforce_state_machine)
         args = action["arguments"]
         if "parent_id" in args and args["parent_id"] != "c1":
             raise ValueError("Frozen comparison only allows one-hop edits of c1")
         if action["tool"] == "propose_edits" and any(edit_key(o["edit"]) not in self.allowed for o in args["options"]):
             raise ValueError("Use exact edits from the frozen catalogue, including operation and atom indices")
+        if action["tool"] == "finish":
+            rows = json.loads((Path(state.config["_diagnostic_output"]) / "structural_catalogue.json").read_text())
+            valid = {r["precheck"]["product_smiles"] for r in rows if r["precheck"].get("passed")}
+            explored = {entry["evaluation"]["smiles"] for entry in state.option_screenings.values()}
+            remaining = valid - explored
+            remaining_budget = max(0, state.max_evaluations - state.evaluations_used)
+            remaining_edits = max(0, state.constraints.get("max_edits", 3) -
+                                  sum(c.get("candidate_role") == "deterministic_edit"
+                                      for c in state.candidates.values()))
+            stop_reasons = []
+            if remaining_budget == 0:
+                stop_reasons.append("budget_exhausted")
+            if remaining_edits == 0:
+                stop_reasons.append("edit_budget_exhausted")
+            if not remaining:
+                stop_reasons.append("all_feasible_products_explored")
+            goal_met = any(c.get("parent_id") and c.get("current_improvement", {}).get("outcome") == "supported"
+                           for c in state.candidates.values())
+            facts = {"finite_space_products": len(valid), "explored_unique_products": len(explored),
+                     "unexplored_unique_products": len(remaining), "remaining_evaluation_budget": remaining_budget,
+                     "remaining_edit_budget": remaining_edits,
+                     "deterministic_stop_allowed": bool(stop_reasons), "deterministic_stop_reasons": stop_reasons}
+            if not goal_met and not stop_reasons:
+                error = ValueError("Illegal goal_not_met stop: unexplored feasible products remain")
+                error.audit_event = {"type": "invalid_early_stop_attempt", "facts": facts}
+                raise error
+            state.events.append({"type": "diagnostic_stop_decision", "facts": facts,
+                                 "reason": "goal_met" if goal_met else stop_reasons[0]})
         return tool
 
 
@@ -215,17 +253,52 @@ def metrics(state, arm):
         successes.append({"smiles": child["smiles"], "property_score": child["property_score"], "decision": decision})
     options = [o for p in state.edit_proposals.values() for o in p["options"]]
     feasible = [r for r in successes if r["decision"]["outcome"] not in {"tradeoff_exceeded", "insufficient_evidence"}]
-    return {"arm": arm, "status": state.status, "reason": state.reason, "final_outcome": (state.final or {}).get("outcome"),
+    errors = [e for e in state.events if e.get("type") == "error"]
+    retries = [e for e in state.events if e.get("type") == "retry"]
+    def category(event):
+        if event.get("error_category"):
+            return event["error_category"]
+        message = event.get("error", "")
+        return "network" if any(token in message for token in (
+            "APIConnectionError", "TimeoutError", "ConnectionError")) else "tool"
+    failed_decisions = sum(e.get("phase") == "decision" for e in retries) + sum(
+        category(e) == "network" and not e.get("action") for e in errors)
+    rejected = [e for e in errors if e.get("action") and category(e) in {"schema", "state_machine", "tool"}]
+    stop_events = [e for e in state.events if e.get("type") == "diagnostic_stop_decision"]
+    stop_evidence = stop_events[-1] if stop_events else None
+    final_outcome = (state.final or {}).get("outcome")
+    if final_outcome == "goal_met":
+        termination_outcome = "goal_met"
+    elif stop_evidence and stop_evidence.get("reason") == "all_feasible_products_explored":
+        termination_outcome = "goal_not_met_after_valid_exhaustion"
+    elif stop_evidence and stop_evidence.get("reason") in {"budget_exhausted", "edit_budget_exhausted"}:
+        termination_outcome = stop_evidence["reason"]
+    elif state.reason in {"consecutive_errors", "repeated_action", "interrupted_action_requires_acknowledgement"}:
+        termination_outcome = "execution_failure"
+    elif state.reason in {"user_paused", "user_cancelled"}:
+        termination_outcome = "user_stopped"
+    else:
+        termination_outcome = final_outcome or state.reason
+    return {"arm": arm, "status": state.status, "reason": state.reason, "final_outcome": final_outcome,
+        "termination_outcome": termination_outcome, "stop_evidence": stop_evidence,
         "new_structure_evaluations": len(state.option_screenings), "total_charged_evaluations": state.evaluations_used,
         "successful_screened_products": sum(r["decision"]["outcome"] == "supported" for r in successes),
         "first_hit_new_evaluations_batch_end": first_hit,
         "best_compliant_delta": max((r["decision"]["observed_delta"] for r in feasible), default=None),
         "accepted_proposed_options": len(options), "structure_passes": sum(o["precheck"]["passed"] for o in options),
         "structure_pass_rate_among_accepted_options": sum(o["precheck"]["passed"] for o in options)/len(options) if options else None,
-        "rejected_actions": sum(e["type"] == "error" for e in state.events),
-        "network_retries": sum(e["type"] == "retry" for e in state.events), "steps": state.steps_used,
+        "rejected_actions": len(rejected),
+        "network_retries": sum(category(e) == "network" for e in retries),
+        "network_failures": sum(category(e) == "network" for e in errors),
+        "schema_errors": sum(category(e) == "schema" for e in errors),
+        "state_machine_rejections": sum(category(e) == "state_machine" for e in errors),
+        "tool_errors": sum(category(e) == "tool" for e in errors),
+        "invalid_early_stop_attempts": sum(e.get("type") == "invalid_early_stop_attempt" for e in state.events),
         "planner_attempts": state.model_calls_used if arm == "agent" else 0,
-        "actual_edits": len(state.candidates)-1, "screened_products": successes,
+        "successful_planner_responses": max(0, state.model_calls_used - failed_decisions) if arm == "agent" else 0,
+        "executed_tool_actions": sum(e.get("type") == "tool_result" for e in state.events),
+        "steps": state.steps_used,
+        "actual_edits": sum(c.get("candidate_role") == "deterministic_edit" for c in state.candidates.values()), "screened_products": successes,
         "intent_check": "Exact catalogue parameters enforced; free-text chemical claims require separate manual audit"}
 
 

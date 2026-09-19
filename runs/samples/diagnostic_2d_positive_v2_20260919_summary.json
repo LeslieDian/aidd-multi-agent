@@ -1,0 +1,52 @@
+{
+  "experiment": "diagnostic_2d_positive_v2_20260919",
+  "protocol": {
+    "parent_smiles": "Oc1ccccc1",
+    "catalogue_actions": 24,
+    "unique_valid_products": 16,
+    "property_score_min_improvement": 0.01,
+    "max_new_structure_evaluations": 10,
+    "docking": false,
+    "provider": "MiniMax",
+    "model": "MiniMax-M3",
+    "trust_env_proxy": false,
+    "tls_verify": true,
+    "planner_thinking": "disabled",
+    "judge_route_used": false
+  },
+  "arms": {
+    "rule": {
+      "new_structure_evaluations": 10,
+      "total_charged_evaluations": 11,
+      "successful_screened_products": 0,
+      "termination_outcome": "budget_exhausted",
+      "rejected_actions": 0,
+      "network_retries": 0,
+      "actual_edits": 0
+    },
+    "agent": {
+      "new_structure_evaluations": 3,
+      "total_charged_evaluations": 4,
+      "successful_screened_products": 0,
+      "raw_outcome": "goal_not_met",
+      "stop_evidence_supported": false,
+      "explored_unique_products": 3,
+      "unexplored_unique_products": 13,
+      "remaining_evaluation_budget": 7,
+      "planner_attempts": 9,
+      "successful_planner_responses": 4,
+      "network_retries": 4,
+      "network_failures": 1,
+      "rejected_actions": 0,
+      "actual_edits": 0,
+      "parent_child_comparisons": 0
+    }
+  },
+  "conclusion": "The rule arm exhausted its budget. The agent stopped after 3 of 16 products while budget and feasible unexplored products remained, so its goal_not_met claim was not evidence-supported.",
+  "limitations": [
+    "One parent and one real model run per arm",
+    "Property and hERG values are screening heuristics",
+    "No docking or biological validation",
+    "Token usage and monetary cost were unavailable"
+  ]
+}

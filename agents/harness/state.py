@@ -24,6 +24,7 @@ class TaskState:
     max_steps: int = 20
     task_id: str = field(default_factory=lambda: uuid4().hex)
     schema_version: int = 1
+    persistence_version: int = 0
     status: str = "paused"
     reason: str = "created"
     revision: int = 0
@@ -99,9 +100,13 @@ class CheckpointStore:
         data = json.loads(self.path.read_text(encoding="utf-8"))
         if data.get("schema_version") != 1:
             raise ValueError("Unsupported checkpoint version")
-        return TaskState(**data)
+        state = TaskState(**data)
+        if self.repository is not None and not self.repository.state_matches(state):
+            raise ValueError("JSON checkpoint and SQLite repository are inconsistent")
+        return state
 
     def save(self, state: TaskState) -> None:
+        state.persistence_version += 1
         self._write(self.path, asdict(state))
         if self.repository is not None:
             self.repository.save_state(state)
