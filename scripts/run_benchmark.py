@@ -16,7 +16,8 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from experiments.reporting import write_report
+from experiments.reporting import write_report, extract_run_metrics
+from experiments.contract import treatments, validate_design, resolve_budget, check_resume, normalized_config, contract_hashes
 from loop import load_config, run_loop
 
 
@@ -84,20 +85,43 @@ def assess_confirmatory_futility(manifest: dict) -> dict:
     if not spec or not bool(futility.get("enabled", False)):
         return {"stop": False, "reason": "disabled"}
 
-    treatment = spec.get("treatment_group", "reflection_memory")
+    arms = treatments(spec)
+    if len(arms) > 1:
+        decisions = {}
+        for arm in arms:
+            child = copy.deepcopy(manifest)
+            child['confirmatory'].pop('treatment_groups', None)
+            child['confirmatory']['treatment_group'] = arm
+            decisions[arm] = assess_confirmatory_futility(child)
+        stop = all(d['stop'] for d in decisions.values())
+        return {'stop': stop, 'decision_final': stop, 'treatments': decisions,
+                'reason': 'all_treatments_unreachable' if stop else 'at_least_one_reachable'}
+    treatment = arms[0]
     planned = int(manifest["execution"]["repeats"])
     minimum_rate = float(spec.get("min_improved_run_rate", 0.7))
     minimum_successes = math.ceil(minimum_rate * planned - 1e-12)
     completed = 0
     successes = 0
+    seen = set()
     for run in manifest.get("runs", []):
         if run.get("group") != treatment or not run.get("eligible"):
             continue
         summary_path = Path(run["run_dir"]) / "summary.json"
         if not summary_path.is_file():
             continue
-        summary = json.loads(summary_path.read_text(encoding="utf-8"))
-        improved = (summary.get("agent_metrics") or {}).get("run_shows_improvement")
+        repeat_key = run.get('repeat') if run.get('repeat') is not None else run['run_dir']
+        if repeat_key in seen:
+            continue
+        seen.add(repeat_key)
+        metric = spec.get('improvement_metric', 'run_improvement_rate')
+        if metric == 'safe_run_improvement_rate':
+            value = extract_run_metrics(summary_path.parent).get(metric)
+            improved = value == 1 if value is not None else False
+        else:
+            summary = json.loads(summary_path.read_text(encoding='utf-8'))
+            improved = (summary.get('agent_metrics') or {}).get('run_shows_improvement')
+        # Missing evidence cannot establish success and still consumes a completed repeat.
+        improved = improved is True
         if isinstance(improved, bool):
             completed += 1
             successes += int(improved)
@@ -140,6 +164,7 @@ def main() -> None:
                         help="maximum attempts for each eligible repeat")
     parser.add_argument("--no-futility-stop", action="store_true",
                         help="finish the fixed sample even after a deterministic gate failure")
+    parser.add_argument('--dry-run', action='store_true', help='Validate and display the resolved plan; no writes or API calls')
     args = parser.parse_args()
 
     matrix_path = Path(args.matrix).resolve()
@@ -156,12 +181,11 @@ def main() -> None:
         if not profile:
             raise ValueError(f"unknown or empty experiment profile: {profile_name}")
         base_config = deep_merge(base_config, profile.get("config_overrides") or {})
-    repeats = args.repeats or int(profile.get("repeats", execution.get("repeats", 3)))
-    rounds = args.rounds or int(profile.get("rounds", execution.get("rounds", 3)))
-    n_per_provider = args.n or int(profile.get(
-        "candidates_per_round_per_generator",
-        execution.get("candidates_per_round_per_generator", 5),
-    ))
+    budget = resolve_budget({'repeats': args.repeats, 'rounds': args.rounds,
+                             'candidates_per_round_per_generator': args.n},
+                            execution, profile, smoke=profile_name == 'smoke')
+    repeats, rounds, n_per_provider = (budget[k] for k in
+        ('repeats', 'rounds', 'candidates_per_round_per_generator'))
     use_mock = bool(args.mock or profile.get("mock", False))
     dock_enabled = bool(profile.get("dock_enabled", True)) and not args.no_dock
     if min(repeats, rounds, n_per_provider, args.max_attempts) < 1:
@@ -171,6 +195,7 @@ def main() -> None:
     unknown = sorted(set(selected) - set(matrix["groups"]))
     if unknown:
         raise ValueError(f"unknown groups: {unknown}")
+    validate_design(matrix, selected)
     benchmark_id = args.benchmark_id or (
         datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:6]
     )
@@ -192,11 +217,18 @@ def main() -> None:
         if manifest["execution"].get("profile") != profile_name:
             raise ValueError("resume profile differs from the existing benchmark")
         selected = list(manifest["groups"])
-        manifest["execution"]["max_attempts_per_repeat"] = args.max_attempts
+        configs = {g: deep_merge(base_config, matrix['groups'][g].get('overrides') or {}) for g in selected}
+        checked = check_resume(ROOT, manifest, matrix, configs)
+        print('[BENCH] resume checks: ' + json.dumps(checked))
+        manifest.setdefault('resume_history', []).append({
+            'at': datetime.now().isoformat(timespec='seconds'), **checked,
+            'old_max_attempts': prior.get('max_attempts_per_repeat'), 'new_max_attempts': args.max_attempts})
+        manifest['execution']['max_attempts_per_repeat'] = args.max_attempts
         manifest.pop("finished_at", None)
     else:
-        root.mkdir(parents=True)
         manifest = {
+            "contract_hashes": contract_hashes(ROOT),
+            "resolved_group_configs": {g: normalized_config(deep_merge(base_config, matrix['groups'][g].get('overrides') or {})) for g in selected},
             "schema_version": 1,
             "benchmark_id": benchmark_id,
             "name": matrix.get("name"),
@@ -219,6 +251,13 @@ def main() -> None:
             "groups": {name: matrix["groups"][name] for name in selected},
             "runs": [],
         }
+    print('[BENCH] resolved plan: ' + json.dumps({
+        'groups': selected, 'budget': budget, 'profile': profile_name,
+        'mode': manifest['mode'], 'primary_metric': manifest['execution']['primary_metric'],
+        'confirmatory': manifest.get('confirmatory'), 'max_attempts': args.max_attempts}, ensure_ascii=False))
+    if args.dry_run:
+        return
+    root.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
 
     order = manifest["execution"].get("order", "grouped")

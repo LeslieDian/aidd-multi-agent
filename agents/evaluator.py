@@ -396,6 +396,15 @@ def summarize_round(enriched):
     properties = [c['admet']['summary_score'] for c in valid
                   if c['admet'].get('valid') and finite(c['admet'].get('summary_score'))]
     best = min(docked, key=lambda c: c['dock']['score']) if docked else None
+    # Safety-gated twin of `best`. `best_vina` is retained unchanged for metric
+    # comparability with earlier runs; `best_safe_vina` is what the loop's
+    # patience counter watches when loop.progress_signal == "safe_vina".
+    # Rationale: on the confirmatory pool the all-candidate optimum had
+    # herg_risk 0.830 while a safety-passing molecule was only 0.020 kcal/mol
+    # behind, so a Vina-only progress signal rewards molecules the project
+    # explicitly does not want to optimise toward.
+    safe_docked = [c for c in docked if c.get('safety_gate_pass')]
+    best_safe = min(safe_docked, key=lambda c: c['dock']['score']) if safe_docked else None
     ranked = sorted(complete, key=candidate_priority_key, reverse=True)[:3]
     pareto_front = [c for c in complete if c.get('pareto_rank') == 1]
     safe = [c for c in complete if c.get('safety_gate_pass')]
@@ -409,6 +418,7 @@ def summarize_round(enriched):
         'n_total': len(enriched), 'n_valid': len(valid), 'n_complete': len(complete),
         'valid_ratio': round(len(valid) / max(len(enriched), 1), 3),
         'n_docked': len(docked),
+        'n_docked_safe': len(safe_docked),
         'n_safety_pass': len(safe),
         'safety_pass_rate': round(len(safe) / max(len(complete), 1), 6),
         'pareto_front_size': len(pareto_front),
@@ -421,6 +431,9 @@ def summarize_round(enriched):
         'avg_admet': round(sum(properties) / len(properties), 3) if properties else None,
         'best_vina': best['dock']['score'] if best else None,
         'best_smiles': best['smiles'] if best else None,
+        'best_safe_vina': best_safe['dock']['score'] if best_safe else None,
+        'best_safe_smiles': best_safe['smiles'] if best_safe else None,
+        'best_safe_composite': best_safe['composite_score'] if best_safe else None,
         'top_candidates': [{'candidate_id': c.get('candidate_id'), 'smiles': c['smiles'],
                             'score': c['composite_score'], 'vina': c['dock']['score'],
                             'pareto_rank': c.get('pareto_rank'),

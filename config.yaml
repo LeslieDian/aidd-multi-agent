@@ -184,6 +184,20 @@ loop:
   # and gives Judge enough signal to find a real structural weakness.
   candidates_per_round_per_generator: 15
   early_stop_patience: 3
+  # Which per-round number the patience counter watches (2026-09-17):
+  #   vina      - legacy: best docking score over EVERY docked candidate. This
+  #               signal ignores the safety gate, so a molecule with excellent
+  #               Vina and bad hERG/logP counts as progress and resets patience.
+  #   safe_vina - preferred: best docking score among safety-gate-passing
+  #               candidates only.
+  # Measured on benchmarks/confirmatory_pareto_v3_1_20260916 the all-candidate
+  # optimum had herg_risk 0.830 while a safety-passing molecule was only
+  # 0.020 kcal/mol behind, so the hERG regression came from the progress signal,
+  # not from an unavoidable docking/safety trade-off.
+  # NOTE: this changes loop control flow, not scoring, so it is stamped into
+  # manifest.json but deliberately kept OUT of `protocol_id` (evaluation caches
+  # stay valid). Runs with different settings are not directly comparable.
+  progress_signal: safe_vina
   output_dir: runs/
   memory_dir: memory/v2
   memory_namespace: default     # set a different name for each experiment arm
@@ -203,5 +217,8 @@ loop:
 
 # Persistent task agent (agent_task.py); independent of the benchmark loop.
 harness:
+  # Persistent agent planner. The non-thinking MiniMax-M3 route reliably
+  # returns the strict single-action JSON contract used by the harness.
+  planner: MiniMax
   max_attempts: 3       # bounded transient retries for planner/generator
   request_timeout: 60  # SDK request timeout in seconds; hidden SDK retries disabled

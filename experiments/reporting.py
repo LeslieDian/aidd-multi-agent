@@ -8,6 +8,7 @@ import warnings
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from experiments.contract import treatments
 
 try:
     from scipy import stats as scipy_stats
@@ -22,6 +23,8 @@ METRIC_SPECS = {
     "top5_safe_composite_mean": ("max", "Top-5 safety-passing composite mean"),
     "best_vina_global": ("min", "Best Vina"),
     "top5_vina_mean": ("min", "Top-5 Vina mean"),
+    "best_safe_vina_global": ("min", "Best Vina among safety-passing"),
+    "top5_safe_vina_mean": ("min", "Top-5 safe Vina mean"),
     "valid_rate": ("max", "Valid rate"),
     "unique_valid_smiles": ("max", "Unique valid molecules"),
     "unique_scaffolds": ("max", "Unique scaffolds"),
@@ -31,6 +34,8 @@ METRIC_SPECS = {
     "pareto_front_candidates": ("max", "Pareto-front candidates"),
     "safe_pareto_candidates": ("max", "Safe Pareto-front candidates"),
     "cross_round_duplicates": ("min", "Cross-round duplicates"),
+    "best_safe_vina_delta": ("min", "First-to-last safety-passing Vina delta"),
+    "safe_run_improvement_rate": ("max", "Runs with safe first-to-last Vina improvement"),
     "best_vina_delta": ("min", "First-to-last Vina delta"),
     "run_improvement_rate": ("max", "Runs showing improvement"),
     "adoption_rate_avg_llm": ("neutral", "Judge-reported adoption"),
@@ -99,6 +104,11 @@ def extract_run_metrics(run_dir: str | Path) -> dict[str, Any]:
     ]
     vinas = [float((c.get("dock") or {})["score"]) for c in unique_complete
              if _finite((c.get("dock") or {}).get("score"))]
+    # Safety-gated twin of `vinas`. Computed from the candidate records rather
+    # than from `summary.best_safe_vina`, so it can also be reported for runs
+    # saved before that field existed.
+    safe_vinas = [float((c.get("dock") or {})["score"]) for c in safe_complete
+                  if _finite((c.get("dock") or {}).get("score"))]
     scaffolds = {c.get("scaffold") for c in valid if c.get("scaffold")}
     herg_values = [float((c.get("admet") or {}).get("herg_risk")) for c in unique_complete
                    if _finite((c.get("admet") or {}).get("herg_risk"))]
@@ -109,14 +119,24 @@ def extract_run_metrics(run_dir: str | Path) -> dict[str, Any]:
     cache_hits = sum(bool((c.get("evaluation_cache") or {}).get("hit")) for c in candidates)
     new_dockings = sum(
         c.get("evaluation_status") == "complete"
-        and (c.get("dock") or {}).get("valid")
+        and bool((c.get("dock") or {}).get("valid"))
         and not bool((c.get("evaluation_cache") or {}).get("hit"))
         for c in candidates
     )
     agent_metrics = summary.get("agent_metrics") or {}
     run_improved = agent_metrics.get("run_shows_improvement")
 
+    safe_rounds = []
+    for record in rounds:
+        scores = [float(c['dock']['score']) for c in record.get('candidates', [])
+                  if c.get('evaluation_status') == 'complete' and c.get('safety_gate_pass') is True
+                  and _finite((c.get('dock') or {}).get('score'))]
+        safe_rounds.append(min(scores) if scores else None)
+    safe_delta = (safe_rounds[-1] - safe_rounds[0] if len(safe_rounds) >= 2
+                  and safe_rounds[0] is not None and safe_rounds[-1] is not None else None)
     return {
+        'best_safe_vina_delta': safe_delta,
+        'safe_run_improvement_rate': float(safe_delta < 0) if safe_delta is not None else None,
         "run_dir": str(run_path.resolve()),
         "run_id": summary.get("run_id"),
         "group": meta.get("group"),
@@ -145,6 +165,8 @@ def extract_run_metrics(run_dir: str | Path) -> dict[str, Any]:
         "top5_safe_composite_mean": _mean_top(safe_composites, 5, reverse=True),
         "best_vina_global": min(vinas) if vinas else None,
         "top5_vina_mean": _mean_top(vinas, 5, reverse=False),
+        "best_safe_vina_global": min(safe_vinas) if safe_vinas else None,
+        "top5_safe_vina_mean": _mean_top(safe_vinas, 5, reverse=False),
         "herg_flag_rate": round(statistics.mean(herg_values), 6) if herg_values else None,
         "mean_herg_risk_score": (
             round(statistics.mean(herg_risk_scores), 6) if herg_risk_scores else None
@@ -209,7 +231,7 @@ def _compare_metric_groups(reference: dict, treatment: dict) -> dict[str, Any]:
     return comparison
 
 
-def _welch_delta_ci(reference: list[float], treatment: list[float]) -> list[float | None]:
+def _welch_delta_ci(reference: list[float], treatment: list[float], alpha: float = .05) -> list[float | None]:
     """95% Welch interval for treatment minus reference."""
     if len(reference) < 2 or len(treatment) < 2 or scipy_stats is None:
         return [None, None]
@@ -226,7 +248,7 @@ def _welch_delta_ci(reference: list[float], treatment: list[float]) -> list[floa
     degrees = (variance ** 2) / denominator if denominator else min(
         len(reference), len(treatment)
     ) - 1
-    half = float(scipy_stats.t.ppf(0.975, degrees)) * math.sqrt(variance)
+    half = float(scipy_stats.t.ppf(1 - alpha / 2, degrees)) * math.sqrt(variance)
     return [round(delta - half, 6), round(delta + half, 6)]
 
 
@@ -261,6 +283,7 @@ def build_report(benchmark_dir: str | Path) -> dict[str, Any]:
             "repeat": meta.get("repeat"),
             "status": meta.get("status"),
             "quality_reasons": meta.get("quality_reasons", []),
+            "duration_seconds": meta.get("duration_seconds"),
         })
 
     groups: dict[str, Any] = {}
@@ -288,17 +311,27 @@ def build_report(benchmark_dir: str | Path) -> dict[str, Any]:
         comparisons[group] = comparison
 
     incremental_comparisons = {}
-    if "reflection" in groups and "reflection_memory" in groups:
-        incremental_comparisons["reflection_memory_vs_reflection"] = _compare_metric_groups(
-            groups["reflection"]["metrics"], groups["reflection_memory"]["metrics"]
-        )
+    for reference, treatment in [('reflection', 'reflection_memory'),
+                                 ('reflection', 'reflection_failed_set'),
+                                 ('reflection_failed_set', 'reflection_memory')]:
+        if reference in groups and treatment in groups:
+            incremental_comparisons[f'{treatment}_vs_{reference}'] = _compare_metric_groups(
+                groups[reference]['metrics'], groups[treatment]['metrics'])
 
     primary = manifest["execution"].get("primary_metric", "best_composite_global")
     confirmatory_decision = _confirmatory_decision(
         manifest, groups, comparisons, primary
     )
     return {
-        "schema_version": 1,
+        'attempt_accounting': {
+            g: {'eligible': sum(r.get('group') == g for r in runs),
+                'excluded': sum(r.get('group') == g for r in excluded_runs),
+                'recorded_tokens_all_attempts': sum(r.get('tokens_used') or 0 for r in runs + excluded_runs if r.get('group') == g),
+                'seconds_all_attempts': sum(r.get('duration_seconds') or 0 for r in runs + excluded_runs if r.get('group') == g),
+                'tokens_note': 'Recorded usage only; failed requests may have unknown billed usage.'}
+            for g in groups},
+        'analysis_version': '20260919-contract-review',
+        "schema_version": 2,
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "benchmark_id": manifest["benchmark_id"],
         "primary_metric": primary,
@@ -321,7 +354,20 @@ def _confirmatory_decision(
     if not spec:
         return None
     reference = spec.get("reference_group", "reflection")
-    treatment = spec.get("treatment_group", "reflection_memory")
+    arms = treatments(spec)
+    if len(arms) > 1:
+        from copy import deepcopy
+        decisions = {}
+        alpha = float(spec.get('alpha', .05)) / len(arms)
+        for arm in arms:
+            child = deepcopy(manifest)
+            child['confirmatory'].pop('treatment_groups', None)
+            child['confirmatory'].update(treatment_group=arm, alpha=alpha)
+            decisions[arm] = _confirmatory_decision(child, groups, comparisons, primary)
+        return {'status': 'per_treatment_decisions', 'multiplicity': 'bonferroni',
+                'family_alpha': spec.get('alpha', .05), 'per_treatment_alpha': alpha,
+                'treatments': decisions, 'automatic_default_change': False}
+    treatment = arms[0]
     if reference not in groups or treatment not in groups:
         return {"status": "invalid_design", "reason": "missing confirmatory group"}
     comparison = comparisons.get(treatment) if manifest.get("baseline_group") == reference else None
@@ -333,26 +379,50 @@ def _confirmatory_decision(
     safety_metric = spec.get("safety_metric", "mean_herg_risk_score")
     safety_result = comparison.get(safety_metric) or {}
     safety_margin = float(spec.get("safety_noninferiority_margin", 0.05))
-    safety_upper = (safety_result.get("delta_ci95") or [None, None])[1]
+    alpha = float(spec.get('alpha', .05))
+    safety_ci = safety_result.get('delta_ci95') or [None, None]
+    if alpha != .05:
+        safety_ci = _welch_delta_ci(groups[reference]['metrics'].get(safety_metric, {}).get('values', []),
+                                   groups[treatment]['metrics'].get(safety_metric, {}).get('values', []), alpha)
+    safety_upper = safety_ci[1]
+    p = primary_result.get('welch_p_value')
+    significant = (p < alpha if _finite(p) else
+                   bool(primary_result.get('statistically_significant')) if alpha == .05 else False)
     efficacy_supported = bool(
         primary_result.get("favorable")
-        and primary_result.get("statistically_significant")
+        and significant
     )
     safety_noninferior = bool(
         safety_upper is not None and safety_upper <= safety_margin
     )
     improved_run_rate = (
-        groups[treatment]["metrics"].get("run_improvement_rate", {}).get("mean")
+        groups[treatment]["metrics"].get(spec.get("improvement_metric", "run_improvement_rate"), {}).get("mean")
     )
     min_improved = float(spec.get("min_improved_run_rate", 0.7))
-    vina_delta = groups[treatment]["metrics"].get("best_vina_delta", {}).get("mean")
+    vina_delta = groups[treatment]["metrics"].get(spec.get("improvement_delta_metric", "best_vina_delta"), {}).get("mean")
     stable_improvement = bool(
         improved_run_rate is not None and improved_run_rate >= min_improved
         and vina_delta is not None and vina_delta < 0
     )
-    approved = efficacy_supported and safety_noninferior and stable_improvement
+    planned = manifest.get('execution', {}).get('repeats')
+    complete = planned is None or all(groups[g].get('runs', 0) >= planned for g in [reference, treatment])
+    if planned is not None:
+        endpoint_coverage = all(groups[g]['metrics'].get(primary, {}).get('n', 0) >= planned
+                                and groups[g]['metrics'].get(safety_metric, {}).get('n', 0) >= planned
+                                for g in [reference, treatment])
+        endpoint_coverage = endpoint_coverage and groups[treatment]['metrics'].get(
+            spec.get('improvement_metric', 'run_improvement_rate'), {}).get('n', 0) >= planned
+    else:
+        endpoint_coverage = True
+    approved = endpoint_coverage and complete and efficacy_supported and safety_noninferior and stable_improvement
     return {
-        "status": "approve_long_term_memory" if approved else "do_not_approve",
+        "status": ("approve_long_term_memory" if treatment == 'reflection_memory' else 'approve_treatment') if approved else ("do_not_approve" if complete or manifest.get('early_stop') else 'insufficient_repeats'),
+        'complete_planned_sample': complete,
+        'complete_endpoint_coverage': endpoint_coverage,
+        'alpha': alpha,
+        'improvement_metric': spec.get('improvement_metric', 'run_improvement_rate'),
+        'improvement_delta_metric': spec.get('improvement_delta_metric', 'best_vina_delta'),
+        'safety_interval_confidence': 1 - alpha,
         "reference_group": reference,
         "treatment_group": treatment,
         "primary_metric": primary,
@@ -365,6 +435,7 @@ def _confirmatory_decision(
         "safety_noninferior": safety_noninferior,
         "safety_metric": safety_metric,
         "safety_delta_ci95": safety_result.get("delta_ci95"),
+        "safety_decision_interval": safety_ci,
         "safety_noninferiority_margin": safety_margin,
         "early_stop": manifest.get("early_stop"),
         "rule": (
@@ -447,36 +518,29 @@ def _to_markdown(report: dict) -> str:
             f"| {group} | {_fmt(result['delta_vs_baseline'])} | "
             f"{_fmt(result['welch_p_value'])} | {verdicts[group]} |"
         )
-    decision = report.get("confirmatory_decision")
+    lines.extend(['', '## Safety-gated metrics (separate from all-candidate metrics)', '',
+                  '| Group | Best safe composite | Best safe Vina | Safe first-last delta | Safe improved runs |',
+                  '|---|---:|---:|---:|---:|'])
+    for group, data in report['groups'].items():
+        m = data['metrics']
+        lines.append('| ' + group + ' | ' + ' | '.join(_fmt(m[k]['mean']) for k in
+            ['best_safe_composite_global', 'best_safe_vina_global', 'best_safe_vina_delta', 'safe_run_improvement_rate']) + ' |')
+    lines.extend(['', 'Missing safety endpoints are unknown, not improvements. Rate denominators exclude unknown endpoints; confirmation requires full endpoint coverage.', '',
+                  '## All-attempt cost and failures', '',
+                  '| Group | Eligible | Excluded | Recorded tokens | Seconds |', '|---|---:|---:|---:|---:|'])
+    for group, row in report.get('attempt_accounting', {}).items():
+        lines.append(f"| {group} | {row['eligible']} | {row['excluded']} | {row['recorded_tokens_all_attempts']} | {_fmt(row['seconds_all_attempts'])} |")
+    lines.extend(['', 'Tokens are recorded usage, not a billing reconciliation; failed-request usage may be unavailable. Cache reuse affects runtime and docking cost.'])
+    decision = report.get('confirmatory_decision')
     if decision:
-        lines.extend([
-            "",
-            "## Confirmatory decision",
-            "",
-            f"Decision: **{decision['status']}**.",
-            "",
-            f"- Primary efficacy supported: `{decision['efficacy_supported']}`",
-            f"- Stable improvement: `{decision['stable_improvement']}`",
-            f"- Safety non-inferior: `{decision['safety_noninferior']}`",
-            f"- Safety delta 95% CI: `{decision['safety_delta_ci95']}`; "
-            f"margin: `{decision['safety_noninferiority_margin']}`",
-        ])
-    if report.get("incremental_comparisons"):
-        lines.extend([
-            "",
-            "## Incremental memory comparison",
-            "",
-            "| Metric | Memory minus reflection | Welch p | Favorable |",
-            "|---|---:|---:|---|",
-        ])
-        incremental = report["incremental_comparisons"]["reflection_memory_vs_reflection"]
-        for metric in ("best_composite_global", "best_vina_global", "best_vina_delta",
-                       "cross_round_duplicates", "tokens_used"):
+        lines.extend(['', '## Confirmatory decision', '', '```json', json.dumps(decision, indent=2), '```'])
+    for label, incremental in report.get('incremental_comparisons', {}).items():
+        lines.extend(['', '## Incremental comparison: ' + label, '',
+                      '| Metric | Treatment minus reference | Welch p | Favorable |', '|---|---:|---:|---|'])
+        for metric in ('best_composite_global', 'best_safe_composite_global', 'best_vina_global',
+                       'best_safe_vina_global', 'best_vina_delta', 'best_safe_vina_delta', 'cross_round_duplicates', 'tokens_used'):
             result = incremental[metric]
-            lines.append(
-                f"| {METRIC_SPECS[metric][1]} | {_fmt(result['delta_vs_reference'])} | "
-                f"{_fmt(result['welch_p_value'])} | {result['favorable']} |"
-            )
+            lines.append(f"| {METRIC_SPECS[metric][1]} | {_fmt(result['delta_vs_reference'])} | {_fmt(result['welch_p_value'])} | {result['favorable']} |")
     lines.extend([
         "",
         "## Agent behavior",

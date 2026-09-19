@@ -185,6 +185,55 @@ def test_working_memory_compression():
     print(f"  [OK] compression output includes round info + strategy")
 
 
+def _make_best_candidate(smiles="CCO", vina=-8.8, composite=0.58, **extra):
+    row = {
+        "smiles": smiles,
+        "validate": {"valid": True},
+        "admet": {"summary_score": 0.85, "herg_risk_score": 0.83},
+        "dock": {"score": vina},
+        "composite_score": composite,
+        "scaffold": "C",
+    }
+    row.update(extra)
+    return row
+
+
+def test_working_memory_never_labels_unsafe_best_as_safe():
+    """Regression (2026-09-17): the best-so-far line said "safe" unconditionally.
+
+    On the confirmatory pool the all-candidate optimum had herg_risk 0.830 while
+    a safety-passing molecule was 0.020 kcal/mol behind, so calling an unsafe
+    molecule "safe" in the generator prompt pushed it toward the rejected profile.
+    """
+    print("\n=== test_working_memory_never_labels_unsafe_best_as_safe ===")
+    mem = WorkingMemory(max_recent=3)
+    mem.add_round([_make_best_candidate(safety_gate_pass=False)], focus="F")
+    out = mem.compress_for_generator()
+    assert "Best safe Pareto candidate" not in out
+    assert "FAILS the safety gate" in out
+    assert "hERG-risk=0.830" in out
+    print("  [OK] unsafe best is labelled as failing the gate, not as safe")
+
+    mem2 = WorkingMemory(max_recent=3)
+    mem2.add_round([_make_best_candidate(safety_gate_pass=True)], focus="F")
+    out2 = mem2.compress_for_generator()
+    assert "Best safety-gate-passing candidate" in out2
+    assert "FAILS the safety gate" not in out2
+    print("  [OK] safety-passing best is labelled as such")
+
+    # Unknown gate + legacy v1 ADMET schema (no herg_risk_score) must not
+    # render a bare None into the prompt.
+    mem3 = WorkingMemory(max_recent=3)
+    legacy = _make_best_candidate()
+    legacy["admet"] = {"summary_score": 0.85, "herg_risk": 0.0}
+    mem3.add_round([legacy], focus="F")
+    out3 = mem3.compress_for_generator()
+    assert "safety gate not evaluated" in out3
+    assert "hERG-risk=0.000" in out3
+    assert "None" not in out3
+    print("  [OK] unknown gate + v1 ADMET schema handled without None leakage")
+
+
 def test_working_memory_rounds_since_improvement():
     print("\n=== test_working_memory_rounds_since_improvement ===")
     mem = WorkingMemory()
@@ -351,6 +400,70 @@ def test_loop_controller_convergence():
     print("  [OK] judge_convergence trigger after N rounds without improvement")
 
 
+def test_loop_controller_progress_signal_safe_vina():
+    """safe_vina watches only safety-gate-passing progress (2026-09-17)."""
+    print("\n=== test_loop_controller_progress_signal_safe_vina ===")
+    config = LoopConfig(max_rounds=10, token_budget=100000,
+                        judge_convergence_patience=2, progress_signal="safe_vina")
+    ctrl = LoopController(config)
+    state = LoopState(round=1)
+    # A great-but-unsafe Vina must NOT count as progress under this signal.
+    state.note_round_result(-9.5)
+    state.note_round_safe_result(None)
+    state.note_round_result(-9.4)
+    state.note_round_safe_result(-7.0)   # first safe evidence -> improvement
+    assert not ctrl.should_stop(state)[0]
+    assert state.rounds_without_vina_improvement == 1
+    assert state.rounds_without_safe_vina_improvement == 0
+    # Two rounds with no safe improvement now trip the counter.
+    state.note_round_result(-9.3)
+    state.note_round_safe_result(-7.0)
+    state.note_round_result(-9.2)
+    state.note_round_safe_result(-7.0)
+    assert ctrl.should_stop(state)[0]
+    assert ctrl.should_stop(state)[1] == "no_improvement"
+    assert "safe_vina" in ctrl.explain("no_improvement")
+    print("  [OK] safe_vina ignores unsafe Vina gains and honours safe progress")
+
+
+def test_loop_controller_safe_vina_none_does_not_advance_patience():
+    """A round with no safety-passing candidate is 'unknown', not a plateau."""
+    print("\n=== test_loop_controller_safe_vina_none_does_not_advance_patience ===")
+    ctrl = LoopController(LoopConfig(max_rounds=10, token_budget=100000,
+                                     judge_convergence_patience=2,
+                                     progress_signal="safe_vina"))
+    state = LoopState(round=1)
+    for _ in range(5):
+        state.note_round_safe_result(None)
+    assert state.rounds_without_safe_vina_improvement == 0
+    assert not ctrl.should_stop(state)[0]
+    print("  [OK] None keeps the counter frozen (matches --no-dock smoke behaviour)")
+
+
+def test_loop_controller_rejects_unknown_progress_signal():
+    print("\n=== test_loop_controller_rejects_unknown_progress_signal ===")
+    try:
+        LoopController(LoopConfig(progress_signal="safe"))
+    except ValueError as exc:
+        assert "progress_signal" in str(exc)
+        print("  [OK] invalid progress_signal rejected")
+    else:
+        raise AssertionError("expected ValueError for an unknown progress_signal")
+
+
+def test_loop_controller_legacy_default_unchanged():
+    """Default stays 'vina' so pre-2026-09-17 runs remain comparable."""
+    print("\n=== test_loop_controller_legacy_default_unchanged ===")
+    ctrl = LoopController(LoopConfig())
+    assert ctrl.progress_signal == "vina"
+    state = LoopState(round=1)
+    state.note_round_result(-3.0)
+    state.note_round_result(-3.0)
+    state.note_round_result(-3.0)
+    assert ctrl.should_stop(state)[0]
+    print("  [OK] default signal is the legacy all-candidate vina")
+
+
 def test_loop_controller_hitl_veto():
     print("\n=== test_loop_controller_hitl_veto ===")
     ctrl = LoopController(LoopConfig())
@@ -430,6 +543,7 @@ def main():
     test_failed_set_lru_persists_across_reload()
     test_failed_set_unbounded_when_max_size_zero()
     test_working_memory_compression()
+    test_working_memory_never_labels_unsafe_best_as_safe()
     test_working_memory_rounds_since_improvement()
     test_working_memory_truncation()
     test_strategy_chain_persists_across_sessions()
@@ -437,6 +551,10 @@ def main():
     test_best_molecules_persists_across_sessions()
     test_loop_controller_max_rounds()
     test_loop_controller_convergence()
+    test_loop_controller_legacy_default_unchanged()
+    test_loop_controller_progress_signal_safe_vina()
+    test_loop_controller_safe_vina_none_does_not_advance_patience()
+    test_loop_controller_rejects_unknown_progress_signal()
     test_loop_controller_hitl_veto()
     test_loop_controller_token_budget()
     test_hitl_disabled()

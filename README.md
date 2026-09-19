@@ -1,8 +1,103 @@
 # aidd-multi-agent
 
+## Local API（研究原型）
+
+The persistent Harness is available through a local FastAPI service. It uses SQLite by default and does not start model calls unless a run is created with `mock: false`.
+
+```powershell
+uvicorn api:app --host 127.0.0.1 --port 8766
+```
+
+Available endpoints include `POST /runs`, `GET /runs/{task_id}`, `GET /runs/{task_id}/candidates`, pause/resume/cancel controls, and `POST /runs/{task_id}/approvals`. The API stores task snapshots and auditable facts through the same Repository used by Harness.
+
+这是绑定 `127.0.0.1` 的本地研究原型。FastAPI `BackgroundTasks` 仍在 Web 进程内执行，不是持久 Worker；进程退出、鉴权、多用户权限和任务迁移尚未解决。未实现鉴权前不要暴露到公网；请求中的 `mock: false` 可能调用付费模型。approval 当前只保存人工记录，不会自动授权或阻止某个工具动作。
+
+## 当前验收结果与下一阶段（2026-09-19）
+
+当前全量回归为 **210 passed, 1 skipped**；其中 API 测试 2 项、Repository 测试 7 项。Repository 已能保存和恢复任务、候选、评估、事件与步骤快照，但 artifact/approval 仍需显式写入；文件 checkpoint 与 SQLite 也尚不是一个原子事务。因此当前应称为“本地研究持久化层”，不能称为完成的生产数据库平台。
+
+`real_ablation_v4` 已补齐四组各 3 个合格重复。主指标比较均未达到显著：reflection vs baseline Δ=+0.006、p=0.717；reflection_failed_set vs reflection Δ=+0.025、p=0.164；reflection_memory vs reflection_failed_set Δ=-0.009、p=0.400。现有证据不支持启动每组 20 次确认实验，也不支持把长期记忆设为默认配置。
+
+二维正对照 pilot 的有限空间包含 16 个不同产物和 2 个可达的合格产物。规则组评估 10 个新结构未命中；MiniMax-M3 智能体评估 3 个，最佳 property_score 改善为 `+0.008208575961059172`，随后因 5 次网络重试和错误的 `choose_strategy` 状态动作以 `consecutive_errors` 暂停。它证明当前瓶颈是决策阶段可靠性和连接稳定性，尚不能比较智能体与规则谁更优。
+
+下一阶段按以下顺序执行：Repository 精确协议复用与跨协议重评 → 确定性 `available_actions(state)` 阶段机 → MiniMax 显式代理策略 → 新的二维正对照 v2。暂停鉴权、RBAC、Redis/Celery、分布式 Worker、3D 扩展和 n=20。可直接复制给 MiniMax 的完整任务书见 [MiniMax 下一阶段连续交付提示词](docs/MINIMAX_NEXT_TASK_PROMPT.md)。
+
+> **2026-09-19 更新**：最初复核时旧 v4 为 10/12 个合格重复，见 [原复核记录](docs/REVIEW_EXPERIMENTS_20260919.md)。随后已修复实验合同和报告问题，并按用户授权补跑；当前规则和执行结果以本页“实验合同与报告修复”一节为准。下文旧“v4 待跑”与“过滤器是真因”均不作为当前结论。
+
 新增持久任务智能体入口：支持母体导入、受约束分子优化、工具选择、检查点、暂停恢复和用户干预。
 离线演示及真实运行方法见 [Agent Harness 使用说明](docs/AGENT_HARNESS.md)。
 运行 `python agent_dashboard.py`，打开 `http://127.0.0.1:8765`，即可在浏览器中查看并干预执行。
+
+## 实验合同与报告修复（2026-09-19，优先于下文旧执行说明）
+
+本轮先修实验可信度，再补旧 v4，之后推进独立的二维 Harness 对照；不增加分子工具、不扩展 3D 链路、不启动每组 20 次实验。
+
+### 实际执行规则
+
+- `experiments/contract.py` 集中校验预算与确认规则。正式预算优先级为 **CLI > matrix.execution > profile 默认值**；`--profile smoke` 明确采用小预算预设，CLI 仍可覆盖。0/负数预算报错。`--dry-run` 打印实际组别、轮次、候选数、模式、主指标、判决配置、attempt 上限，不写实验数据、不请求模型。
+- `treatment_group` 与 `treatment_groups` 二选一；未知确认字段和未实现的 futility 规则拒绝运行。多个处理组分别比较同一 reference，采用 Bonferroni：family alpha=0.05，两组各 alpha=0.025；不选择最小 p 值，不自动修改默认记忆配置。安全非劣性使用对应置信区间（两组时 97.5% 双侧区间的上界）；这是程序预设门控，不是生物安全证明。
+- 新 v4 确认配置使用 `safe_run_improvement_rate` 与 `best_safe_vina_delta`：从首末轮安全门通过且 complete 的候选分别取最优 Vina，末轮减首轮，小于 0 才计改善。缺少任一端点记 unknown；报告显示有效端点的统计，确认批准要求计划重复及端点覆盖完整。旧协议未指定此字段时仍使用旧全候选口径，避免追溯改变历史定义。
+- 无望达标早停：`minimum_successes=ceil(rate*planned-1e-12)`；20 次、70% 要求 14 次成功。已合格但缺少改善证据的重复不计成功。对每个处理组计算剩余最大成功数，**所有处理组均不可达才停止整套矩阵**。无中期显著性早停，也无注释曾声称的“连续两批 2-sigma”规则。
+- `--resume` 在写文件或 API 调用前比对原组 overrides、确认规则、主指标、顺序、预算、模式、profile、各 attempt 的 resolved_config、记录的执行代码哈希及评分资产；仅忽略必须独立的 memory_namespace。新实验另冻结各组完整配置与执行/报告合同哈希。老 v4 无合同哈希，因此报告代码升级另记录版本，原执行代码必须一致。
+- 已合格重复跳过；失败重复从新的 attempt 第 0 轮开始，原 attempt 不覆盖。`--max-attempts` 是每个重复的累计上限，不是额外次数；旧 v4 已到 3，因此补一次需设 4。增加上限记录在 resume_history。
+- 本次**未修改旧 v4 的生成、评分、safe_vina 控制行为**：没有安全候选时 patience 不增加，仍受总轮次/预算限制。3 轮 v4 不能证明新进度信号的提前终止收益。
+
+### 报告与证据规则
+
+`experiments/reporting.py` 同时输出以下对照，差值始终为 treatment − reference：
+
+1. reflection_failed_set vs reflection：加入失败过滤器的增量。
+2. reflection_memory vs reflection_failed_set：加入 WorkingMemory 的增量。
+3. reflection_memory vs reflection：保留旧组合比较，不能称为记忆独立作用。
+
+全部候选与安全门内 composite/Vina、首末轮变化分别呈现。主指标沿用各 manifest 声明；旧 screening v4 仍为 best_composite_global，不事后换指标。额外比较是探索性描述，不因一次 p 值宣布因果。新增 all-attempt 表包含合格与排除次数、全部已记录 token 和时间；失败 API 请求可能缺 usage，记录值不等于供应商完整账单。缓存会影响时间与 docking 成本。
+
+新增 `tests/test_experiment_contract.py` 覆盖预算覆盖、字段冲突、多处理组早停、alpha 校正、缺样本禁止批准、恢复漂移、缺安全端点和失败成本。此前“回放已证明过滤器是真因”的表述已改为待验证假设。
+
+全量离线回归：`python -m pytest -q`，**200 passed, 1 skipped**（25.83 秒）。首次全量回归发现历史记录缺 repeat 字段时的兼容问题，已修复为缺字段时以 run_dir 去重；最终结果为上述全部通过。另有真实 API 连通性与实际运行验收，不能用离线通过代替真实行为证据。
+
+```powershell
+# 仅验证配置；不会启动 20 次确认实验
+python scripts/run_benchmark.py --matrix experiments/confirmatory_matrix_v4.yaml --profile confirmatory --benchmark-id dry_check_only --dry-run
+# 旧 v4 补跑之前先只核查
+python scripts/run_benchmark.py --matrix experiments/matrix_v4.yaml --profile screening --benchmark-id real_ablation_v4 --resume --max-attempts 4 --dry-run
+```
+
+2026-09-19 已核对旧 v4 全部 17 个 attempt：当前配置与记录的执行源码一致。补跑前保存原 manifest/report 快照；补跑结果与二维对照记录见本节后续更新。最初复核状态保留在 [复核记录](docs/REVIEW_EXPERIMENTS_20260919.md)，其中“尚未修复”指该复核时点。
+
+### 补跑连接修复与证据保存
+
+定位到 Python/httpx 自动读取的 Windows 系统代理 `127.0.0.1:12000`：默认连接报 TLS `UNEXPECTED_EOF_WHILE_READING`；同机直连同一 API 主机可正常握手。仅对本次进程设置 `NO_PROXY=api.minimaxi.com,localhost,127.0.0.1` 后，真实 MiniMax-M3 JSON 请求成功（记录 usage=173 tokens）。没有改系统代理、模型、API 地址、评分配置或 TLS 证书验证。
+
+连通性记录与补跑日志在 `runs/review_repair_20260919/`；最初两次带系统代理的失败请求未返回 usage，不能断言没有计费。成功请求保存在 `connectivity_direct.json`。原报告、manifest 与升级口径的补跑前报告保存在 `benchmarks/real_ablation_v4/review_before_resume_20260919/`，原 attempt 文件保留。
+
+```powershell
+$env:NO_PROXY = 'api.minimaxi.com,localhost,127.0.0.1'
+$env:HF_HUB_OFFLINE = '1'
+$env:TRANSFORMERS_OFFLINE = '1'
+$env:AIDD_EMBED_AUTO_DOWNLOAD = '0'
+python scripts/run_benchmark.py --matrix experiments/matrix_v4.yaml --profile screening --benchmark-id real_ablation_v4 --resume --max-attempts 4
+```
+
+### 独立二维对照：任务与边界
+
+新目录 `runs/diagnostic_2d_positive_20260919/`，旧 `diagnostic_2d_comparison_20260918` 完整保留，不继续旧失败运行。新母体苯酚 `Oc1ccccc1`，来源是此前父子评分证据提示其存在可改善方向：这是**经可达性筛选的正对照诊断**，不是盲测或泛化基准。
+
+- 阈值仍是 property_score 改善至少 0.01，hERG 代理风险不允许上升，保留骨架；关闭 docking，最多 3 次正式编辑。
+- 冻结 24 个已有 attach_fragment 操作：O 原子 0 上的 4 个碳片段，以及芳环 2–6 号位各 C/N/O/F。预检查全部通过，去重后 16 个产物；离线可达性检查另计母体与产物共 17 次评分，发现 2 个达标产物。
+- 两组只看相同的未评分目录；模型上下文不含可达性评分、达标结构名单或规则组结果。两组上限均为母体 1 次＋新结构 10 次评分，备选评分计入；最多 45 步、60 次请求。首次命中按整批结束时评估数计，避免批内顺序优势。
+- 规则仍按改动原子少、Morgan 相似度高、目录 ID 排序，产物去重，每批 2 个。它不看可达性结果，也不根据模型结果调整排序。
+- 模型用 MiniMax-M3，模型负责提方案与选择，RDKit 执行既有工具。修复仅加强顶层 reason 必填与正数 min_change 的提示，并让验证错误显示具体范围；不自动补写理由、不把 0 偷改成正数、不放宽阈值。预计不变的性质写 allowed_cost/数值约束，不伪造方向性改善预测。
+- 在评分前保存 manifest、SHA256、代码哈希和规则排序；可达性通过后才允许两组运行。单次真实模型对照，无人工重启凑成功，不因分数不理想改任务。结果仅说明此固定任务的行为，不证明药理活性或普遍优于规则。
+
+```powershell
+python scripts/compare_2d_policies.py prepare --output runs/diagnostic_2d_positive_20260919 --scenario phenol
+python scripts/compare_2d_policies.py audit --output runs/diagnostic_2d_positive_20260919
+python scripts/compare_2d_policies.py rule --output runs/diagnostic_2d_positive_20260919
+# 确保当前进程 NO_PROXY 如上设置，随后运行真实模型组
+python scripts/compare_2d_policies.py agent --output runs/diagnostic_2d_positive_20260919
+python scripts/compare_2d_policies.py report --output runs/diagnostic_2d_positive_20260919
+```
 
 ## 结果判断、约束重验与策略执行（2026-09-18）
 

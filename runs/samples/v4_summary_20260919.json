@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "source_directory": "benchmarks/real_ablation_v4",
+  "note": "Small committed summary only; full candidates, docking artifacts, logs and caches remain local.",
+  "primary_metric": "best_composite_global",
+  "eligible_runs": {
+    "baseline": 3,
+    "reflection": 3,
+    "reflection_failed_set": 3,
+    "reflection_memory": 3
+  },
+  "group_means": {
+    "baseline": {"best_composite_global": 0.772, "best_vina_global": -8.407, "tokens": 5384.0},
+    "reflection": {"best_composite_global": 0.778, "best_vina_global": -8.473, "tokens": 24524.0},
+    "reflection_failed_set": {"best_composite_global": 0.803, "best_vina_global": -8.456, "tokens": 29077.667},
+    "reflection_memory": {"best_composite_global": 0.793, "best_vina_global": -8.393, "tokens": 34490.0}
+  },
+  "incremental_primary_comparisons": {
+    "reflection_vs_baseline": {"delta": 0.006, "welch_p": 0.717, "verdict": "inconclusive"},
+    "reflection_failed_set_vs_reflection": {"delta": 0.025, "welch_p": 0.164, "verdict": "inconclusive"},
+    "reflection_memory_vs_reflection_failed_set": {"delta": -0.009, "welch_p": 0.4, "verdict": "inconclusive"}
+  },
+  "limitations": [
+    "Three repeats per arm; exploratory, not confirmatory.",
+    "Vina and hERG values are computational proxies, not measured activity or safety.",
+    "Excluded attempts and recorded cost must be reported with eligible results.",
+    "No result supports enabling long-term memory by default."
+  ]
+}

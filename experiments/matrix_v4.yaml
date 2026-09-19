@@ -2,19 +2,10 @@ schema_version: 1
 name: feedback-memory-ablation-v4
 base_config: ../config.yaml
 description: >
-  v4 ablation built on the v3 diagnosis (2026-09-18):
-  the reflection group's regression was caused by
-  `failed_set_enabled: false` (Judge could see its own failure but
-  the loop did not block re-emission of structurally similar molecules),
-  not by the Judge prompt or temperature.
-  v4 adds a 4th arm that isolates FailedLigandSet from WorkingMemory so
-  we can tell whether the v3 winner is the persistent strategy history,
-  the deterministic failed-ligand filter, or both.
-
-  The matrix also switches the per-round progress signal to
-  `safe_vina` so a round where nothing passes the safety gate is not
-  counted as progress. This is now the default in config.yaml
-  (2026-09-17) and is inherited automatically.
+  Exploratory four-arm ablation. Failure filtering and WorkingMemory are
+  separate increments. The hypothesis that filtering explains earlier
+  improvement is not a causal conclusion. Inherits safe_vina from config;
+  this three-round design does not establish a benefit of early stopping.
 
 execution:
   repeats: 3
@@ -24,7 +15,7 @@ execution:
 
 groups:
   baseline:
-    description: Dual generators without Judge, memory, or failed-set.
+    description: Single generator without Judge, memory, or failed-set.
     overrides:
       loop:
         judge_enabled: false
@@ -32,7 +23,7 @@ groups:
         failed_set_enabled: false
 
   reflection:
-    description: Judge feedback only. Reproduction of v3 to confirm regression.
+    description: Judge feedback only. Exploratory feedback arm.
     overrides:
       loop:
         judge_enabled: true

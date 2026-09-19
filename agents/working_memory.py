@@ -147,10 +147,30 @@ class WorkingMemory:
         if self.best_so_far:
             bv = self.best_so_far.get("dock", {}).get("score")
             if bv is not None:
+                admet = self.best_so_far.get("admet") or {}
+                # v1 ADMET records carry a binary `herg_risk`; v2 carries the
+                # continuous `herg_risk_score`. Accept either, and say "unknown"
+                # rather than rendering a bare None into the prompt.
+                risk = admet.get("herg_risk_score", admet.get("herg_risk"))
+                risk_text = "unknown" if risk is None else f"{float(risk):.3f}"
+                gate = self.best_so_far.get("safety_gate_pass")
+                if gate is True:
+                    label = "Best safety-gate-passing candidate"
+                elif gate is False:
+                    # 2026-09-17: this used to read "Best safe Pareto candidate"
+                    # unconditionally. On the confirmatory pool the all-candidate
+                    # optimum had herg_risk 0.830 while a safety-passing molecule
+                    # was only 0.020 kcal/mol behind, so telling the generator an
+                    # unsafe molecule was "safe" pushed it toward exactly the
+                    # profile the project rejects.
+                    label = ("Best candidate so far (WARNING: FAILS the safety "
+                             "gate - do not copy its hERG/logP profile)")
+                else:
+                    label = "Best candidate so far (safety gate not evaluated)"
                 parts.append(
-                    f"Best safe Pareto candidate: Vina={bv:.2f}, "
+                    f"{label}: Vina={bv:.2f}, "
                     f"composite={self.best_so_far.get('composite_score')}, "
-                    f"hERG-risk={self.best_so_far.get('admet', {}).get('herg_risk_score')}, "
+                    f"hERG-risk={risk_text}, "
                     f"smiles={self.best_so_far['smiles']}"
                 )
         if self.strategy_chain:

@@ -2,24 +2,11 @@ schema_version: 1
 name: memory-confirmatory-pareto-v4
 base_config: ../config.yaml
 description: >
-  Pre-registered confirmation (v4) of three arms under the v3.1
-  safety-gated scoring:
-    1) reflection         - Judge only (v3 reference)
-    2) reflection_failed_set - Judge + deterministic re-emission guard
-    3) reflection_memory  - Judge + failed_set + persistent memory (v3 best)
-  Doubled sample size to 20 each to satisfy the pre-registered
-  `min_improved_run_rate >= 0.70` gate and enable the
-  `futility: minimum_improvement_rate_unreachable` early stop.
-
-  Carries the v3 futility rule forward and additionally stops when the
-  reference and treatment mean `best_safe_composite_global` have already
-  diverged beyond a 2-sigma-equivalent interval in the same direction
-  for two consecutive batches (interim look).
-
-  Built on the v3 diagnosis (2026-09-18): the prior confirmatory
-  returned `do_not_approve` because the safety-gated improvement was
-  small. v4 is the gate that, if passed, lets the project actually
-  switch WorkingMemory + FailedLigandSet into the default configuration.
+  Planned three-arm confirmation, not yet run. Each treatment is compared
+  separately against reflection with Bonferroni family alpha 0.05.
+  No minimum-p selection or interim efficacy testing is implemented.
+  Only stop the whole matrix when ALL treatments are mathematically unable
+  to reach the required improvement rate. Larger samples do not guarantee success.
 
 baseline_group: reflection
 
@@ -32,8 +19,10 @@ execution:
 
 confirmatory:
   reference_group: reflection
-  # Two parallel treatments; the runner picks the one with the smallest
-  # p-value for `efficacy_supported` when both are eligible.
+  # Separate decisions; no automatic selection or configuration change.
+  multiplicity: bonferroni
+  improvement_metric: safe_run_improvement_rate
+  improvement_delta_metric: best_safe_vina_delta
   treatment_groups:
     - reflection_failed_set
     - reflection_memory
@@ -48,7 +37,7 @@ confirmatory:
     # Stop when the treatment cannot mathematically reach the
     # required improvement rate given the running successes count.
     # Logic (see scripts/run_benchmark.py::assess_confirmatory_futility):
-    #   minimum_successes = ceil(min_rate * planned) - 1
+    #   minimum_successes = ceil(min_rate * planned - 1e-12)
     #   maximum_possible  = current_successes + (planned - completed)
     #   stop iff completed >= min_completed AND maximum_possible < minimum_successes
 

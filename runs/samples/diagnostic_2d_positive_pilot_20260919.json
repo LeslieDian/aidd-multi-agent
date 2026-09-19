@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "source_directory": "runs/diagnostic_2d_positive_20260919",
+  "protocol": {
+    "parent_smiles": "Oc1ccccc1",
+    "docking": false,
+    "catalogue_actions": 24,
+    "unique_valid_products": 16,
+    "reachable_qualifying_products": 2,
+    "minimum_property_score_improvement": 0.01,
+    "new_structure_evaluation_budget_per_arm": 10
+  },
+  "rule": {
+    "status": "paused",
+    "reason": "goal_not_met",
+    "new_structure_evaluations": 10,
+    "successful_screened_products": 0,
+    "best_compliant_delta": 0.00019537077806763836,
+    "rejected_actions": 0
+  },
+  "agent": {
+    "model": "MiniMax-M3",
+    "status": "paused",
+    "reason": "consecutive_errors",
+    "new_structure_evaluations": 3,
+    "successful_screened_products": 0,
+    "best_compliant_delta": 0.008208575961059172,
+    "planner_attempts": 14,
+    "network_retries": 5,
+    "rejected_actions": 5,
+    "actual_edits": 0
+  },
+  "interpretation": "Pilot diagnoses network and stage-action reliability. It does not establish superiority of either policy.",
+  "preservation_rule": "Do not overwrite or restart this pilot to obtain a favorable result; reliability changes require a new frozen protocol."
+}

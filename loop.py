@@ -313,6 +313,14 @@ def run_loop(
     judge_max_attempts = int(loop_cfg_dict.get("judge_max_attempts", 1))
     if generation_max_attempts < 1 or judge_max_attempts < 1:
         raise ValueError("loop generation/judge max attempts must be positive")
+    # 2026-09-17: which per-round number the patience counter watches.
+    # "safe_vina" (preferred for real experiments) only counts Vina progress
+    # made by candidates that pass the safety gate; "vina" is the legacy
+    # all-candidates signal that let a high-hERG molecule count as progress.
+    # See docs/REVIEW_MINIMAX_ADVICE_20260917.md.
+    progress_signal = str(loop_cfg_dict.get("progress_signal", "vina"))
+    if progress_signal not in ("vina", "safe_vina"):
+        raise ValueError("loop.progress_signal must be 'vina' or 'safe_vina'")
     manifest = {"schema_version": 2, "run_id": run_id, "is_mock": use_mock,
                 "protocol_id": protocol_id, "protocol": protocol,
                 "execution": {
@@ -324,6 +332,8 @@ def run_loop(
                     "judge_enabled": judge_enabled,
                     "memory_enabled": memory_enabled,
                     "failed_set_enabled": failed_set_enabled,
+                    "progress_signal": progress_signal,
+                    "progress_patience": loop_cfg_dict.get("early_stop_patience", 3),
                     "require_all_generators": require_all_generators,
                     "generation_max_attempts": generation_max_attempts,
                     "judge_max_attempts": judge_max_attempts,
@@ -349,6 +359,7 @@ def run_loop(
             "early_stop_patience",
             loop_cfg_dict.get("judge_convergence_patience", 2),
         ),
+        progress_signal=progress_signal,
     ))
     state = LoopState()
     # Phase 4.3 (P0-3 / P1-1): persistence paths for strategy history + best molecules
@@ -518,7 +529,9 @@ def run_loop(
             print(f"  [B] valid={summary['n_valid']}/{summary['n_total']} "
                   f"avg_ADMET={summary['avg_admet']} "
                   f"unique_scaffolds={summary['n_unique_scaffolds']} "
-                  f"best_Vina={summary['best_vina']}")
+                  f"best_Vina={summary['best_vina']} "
+                  f"best_safe_Vina={summary['best_safe_vina']} "
+                  f"(safe {summary['n_docked_safe']}/{summary['n_docked']} docked)")
             print(
                 f"  [cache] hits={evaluation_cache_stats['hits']} "
                 f"misses={evaluation_cache_stats['misses']} "
@@ -622,17 +635,28 @@ def run_loop(
         if verbose and failed_set_enabled and failed_set.failed:
             print(f"  [memory] failed_set now holds {len(failed_set.failed)} SMILES")
 
-        # ----- LoopController: track best Vina -----
+        # ----- LoopController: track both progress signals -----
+        # Both counters are always maintained, so a saved run can be re-audited
+        # under either termination policy. Only the configured one stops the loop.
         round_best_vina = summary.get("best_vina")
+        round_best_safe_vina = summary.get("best_safe_vina")
         prior_best = state.best_vina
+        prior_best_safe = state.best_safe_vina
         state.note_round_result(round_best_vina)
+        state.note_round_safe_result(round_best_safe_vina)
         if verbose:
-            print(f"  [controller] rounds_without_improvement = "
-                  f"{state.rounds_without_vina_improvement}")
+            print(f"  [controller] signal={progress_signal} "
+                  f"patience={loop_controller.config.judge_convergence_patience} "
+                  f"no_improvement={loop_controller.rounds_without_improvement(state)} "
+                  f"(vina={state.rounds_without_vina_improvement}, "
+                  f"safe_vina={state.rounds_without_safe_vina_improvement})")
 
-        if hitl and prior_best is not None and round_best_vina is not None:
-            if round_best_vina < prior_best:
-                state.hitl_veto = not hitl_cp.on_vina_breakthrough(prior_best, round_best_vina)
+        # HITL reports a "breakthrough" on whichever signal the loop is optimising.
+        hitl_prior = prior_best_safe if progress_signal == "safe_vina" else prior_best
+        hitl_now = round_best_safe_vina if progress_signal == "safe_vina" else round_best_vina
+        if hitl and hitl_prior is not None and hitl_now is not None:
+            if hitl_now < hitl_prior:
+                state.hitl_veto = not hitl_cp.on_vina_breakthrough(hitl_prior, hitl_now)
 
         # ----- Save round JSON -----
         round_record = {
@@ -665,7 +689,9 @@ def run_loop(
             },
             "loop_state": {
                 "round": state.round,
+                "progress_signal": progress_signal,
                 "rounds_without_vina_improvement": state.rounds_without_vina_improvement,
+                "rounds_without_safe_vina_improvement": state.rounds_without_safe_vina_improvement,
             },
         }
         round_file = out_path / f"round_{round_num}.json"
@@ -719,7 +745,11 @@ def run_loop(
         "history": summary_history,
         "final_focus": focus,
         "loop_state": {
+            "progress_signal": progress_signal,
             "rounds_without_vina_improvement": state.rounds_without_vina_improvement,
+            "rounds_without_safe_vina_improvement": state.rounds_without_safe_vina_improvement,
+            "best_vina": state.best_vina,
+            "best_safe_vina": state.best_safe_vina,
             "hitl_veto": state.hitl_veto,
             "failed_set_size": len(failed_set.failed),
             "memory_rounds": len(memory.recent_rounds),

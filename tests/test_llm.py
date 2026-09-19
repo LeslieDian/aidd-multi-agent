@@ -58,6 +58,14 @@ def test_get_client_unknown_provider():
         print(f"  OK  unknown provider raises KeyError: {e}")
 
 
+def test_chat_json_accepts_first_complete_object_but_keeps_schema_validation_separate():
+    client = object.__new__(LLMClient)
+    client.chat = lambda *args, **kwargs: 'prefix {"tool":"evaluate","arguments":{},"reason":"ok"} trailing text'
+    parsed = client.chat_json("system", "user")
+    assert parsed["tool"] == "evaluate"
+    assert parsed["reason"] == "ok"
+
+
 if __name__ == "__main__":
     print("== LLM client tests ==")
     test_mock_client()

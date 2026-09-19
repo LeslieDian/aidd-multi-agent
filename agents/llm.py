@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any
 
 from openai import OpenAI
@@ -91,10 +92,34 @@ class LLMClient:
             if lines and lines[-1].startswith("```"):
                 lines = lines[:-1]
             text = "\n".join(lines)
-        return json.loads(text)
+        decoder = json.JSONDecoder()
+        last_error = None
+        for match in re.finditer(r"[\[{]", text):
+            try:
+                value, _ = decoder.raw_decode(text[match.start():])
+                return value
+            except json.JSONDecodeError as exc:
+                last_error = exc
+        if last_error:
+            raise last_error
+        raise json.JSONDecodeError("No JSON value in model response", text, 0)
 
 
 # --------- Mock client for offline testing ---------
+
+# Stable, drug-like, RDKit-parseable molecules the mock generator cycles
+# through. Kept as a module constant so the mock can satisfy any requested
+# candidate count instead of a hard-coded five.
+_MOCK_BASE_SMILES = [
+    "CC(=O)Oc1ccccc1C(=O)O",          # aspirin
+    "CC(C)Cc1ccc(C(C)C(=O)O)cc1",     # ibuprofen
+    "Cn1cnc2c1c(=O)n(C)c(=O)n2C",     # caffeine
+    "OC(=O)C1CCCCC1",                 # cyclohexanecarboxylic acid
+    "CCO",                            # ethanol
+]
+# Refuse absurd counts so a typo in config cannot spin the mock forever.
+_MOCK_MAX_SMILES = 200
+
 
 class MockLLMClient:
     """Deterministic mock used when API keys are missing or in CI."""
@@ -123,16 +148,23 @@ class MockLLMClient:
                     "confidence": 0.7,
                     "adopted_count": 2,
                 })
-            # Default: generator-style response (SMILES list)
+            # Default: generator-style response (SMILES list).
+            # The requested count is carried in the system prompt
+            # ("Provide exactly __N__ SMILES"). Honour it: a hard-coded list of
+            # five made every --mock run fail closed with
+            # "candidate_count=5 expected=15" and stop after zero rounds, because
+            # loop.candidates_per_round_per_generator was raised to 15 in
+            # Phase 4.4 (2026-09-14).
+            match = re.search(r"Provide exactly\s+(\d+)\s+SMILES", system)
+            requested = int(match.group(1)) if match else len(_MOCK_BASE_SMILES)
+            requested = max(1, min(requested, _MOCK_MAX_SMILES))
+            # Cycle deterministically; downstream exact deduplication then has
+            # something real to collapse, which is itself useful in smoke tests.
+            smiles = [_MOCK_BASE_SMILES[i % len(_MOCK_BASE_SMILES)]
+                      for i in range(requested)]
             return json.dumps({
-                "smiles_list": [
-                    "CC(=O)Oc1ccccc1C(=O)O",   # aspirin
-                    "CC(C)Cc1ccc(C(C)C(=O)O)cc1",  # ibuprofen
-                    "Cn1cnc2c1c(=O)n(C)c(=O)n2C",  # caffeine
-                    "OC(=O)C1CCCCC1",            # cyclohexanecarboxylic acid
-                    "CCO",                       # ethanol
-                ],
-                "rationale": "Mock: 5 stable drug-like molecules.",
+                "smiles_list": smiles,
+                "rationale": f"Mock: {len(smiles)} stable drug-like molecules.",
             })
         return "Mock response for: " + user[:60]
 

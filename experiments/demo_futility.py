@@ -2,7 +2,7 @@
 
 The rule in scripts/run_benchmark.py::assess_confirmatory_futility is:
 
-  minimum_successes = ceil(min_rate * planned) - 1
+  minimum_successes = ceil(min_rate * planned - 1e-12)
   maximum_possible  = current_successes + (planned - completed)
   stop iff completed >= min_completed AND maximum_possible < minimum_successes
 
