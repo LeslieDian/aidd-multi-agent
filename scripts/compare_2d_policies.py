@@ -58,11 +58,19 @@ def catalogue(scenario="phenetole"):
 
 
 def new_state(manifest, arm):
+    # The stop rule is stated explicitly because the default task text invites an
+    # early stop ("若无合理方案可以提前停止"), while this frozen diagnostic forbids
+    # one until the feasible space or the evaluation budget is exhausted. Leaving
+    # that contradiction in place made the planner repeatedly attempt an illegal
+    # goal_not_met stop and exhausted its error budget (observed in v7, 2026-09-20).
     goal = ("固定二维诊断任务：从母体 c1 出发做单步局部修改，提高 property_score 至少 0.01，保留骨架，"
         "hERG 风险不允许上升，其他数值约束以 constraints 为准。所有编辑必须精确来自下列目录，"
         "不得修改其他母体或自创目录外操作。自己决定先评估哪些方案并使用结果反馈。"
         "新结构评分预算为10，母体另计1，备选评分也计入；相同产物只计一次。"
-        "若找到合格方案，请选择、执行并比较后 finish；若无合理方案可以提前停止。"
+        "若找到合格方案，请选择、执行并比较后 finish。"
+        "重要停止规则：本诊断要求穷尽验证后才可结束。只要仍有未评估的可行目录产物且评分预算未用尽，"
+        "finish 会被拒绝。请继续提出并筛选剩余可行方案；只有在评分预算耗尽或所有可行产物都已评估后，"
+        "才允许用 finish 报告无合格方案。"
         "目录没有提供评分，禁止假定已知其结果。预测阈值必须为正数。\n"
         + json.dumps(manifest["catalogue"], ensure_ascii=False))
     config = deepcopy(manifest["config"])
@@ -163,15 +171,28 @@ class CatalogRegistry(ToolRegistry):
         self.enforce_state_machine = True
         for name in ("generate", "refine", "import_candidates"):
             self.tools.pop(name)
+        self.rows = manifest["catalogue"]
         self.allowed = {edit_key(r["edit"]) for r in manifest["catalogue"]}
 
     def preflight(self, state, action, *, enforce_state_machine=False):
-        tool = super().preflight(state, action, enforce_state_machine=enforce_state_machine)
         args = action["arguments"]
-        if "parent_id" in args and args["parent_id"] != "c1":
-            raise ValueError("Frozen comparison only allows one-hop edits of c1")
+        if isinstance(args, dict) and "parent_id" in args and args["parent_id"] != "c1":
+            # The diagnostic is one-hop only. Check this before generic ID
+            # validation so the planner gets the most specific error: name the
+            # constraint and the only legal parent instead of "unknown candidate"
+            # (observed in v9, 2026-09-20).
+            raise ValueError(
+                f"Frozen comparison only allows one-hop edits of c1; got parent_id={args['parent_id']!r}; "
+                "allowed_parent_ids=['c1']")
+        tool = super().preflight(state, action, enforce_state_machine=enforce_state_machine)
         if action["tool"] == "propose_edits" and any(edit_key(o["edit"]) not in self.allowed for o in args["options"]):
-            raise ValueError("Use exact edits from the frozen catalogue, including operation and atom indices")
+            offending = [o["edit"] for o in args["options"] if edit_key(o["edit"]) not in self.allowed]
+            error = ValueError(
+                "Use exact edits from the frozen catalogue, including operation and atom indices; "
+                "unmatched=" + json.dumps(offending, ensure_ascii=True)
+                + "; allowed_catalogue_ids=" + json.dumps([r["id"] for r in self.rows]))
+            error.audit_event = {"type": "off_catalogue_edit_attempt", "unmatched": offending}
+            raise error
         if action["tool"] == "finish":
             rows = json.loads((Path(state.config["_diagnostic_output"]) / "structural_catalogue.json").read_text())
             valid = {r["precheck"]["product_smiles"] for r in rows if r["precheck"].get("passed")}
@@ -195,8 +216,15 @@ class CatalogRegistry(ToolRegistry):
                      "remaining_edit_budget": remaining_edits,
                      "deterministic_stop_allowed": bool(stop_reasons), "deterministic_stop_reasons": stop_reasons}
             if not goal_met and not stop_reasons:
-                error = ValueError("Illegal goal_not_met stop: unexplored feasible products remain")
-                error.audit_event = {"type": "invalid_early_stop_attempt", "facts": facts}
+                by_smiles = {r["precheck"].get("product_smiles"): r["id"] for r in rows if r["precheck"].get("passed")}
+                unexplored_ids = sorted(by_smiles[s] for s in remaining if s in by_smiles)
+                error = ValueError(
+                    "Illegal goal_not_met stop: unexplored feasible products remain; "
+                    "unexplored_catalogue_ids=" + json.dumps(unexplored_ids)
+                    + "; remaining_evaluation_budget=" + str(remaining_budget)
+                    + "; propose and screen them, or stop only once the budget or the feasible space is exhausted")
+                error.audit_event = {"type": "invalid_early_stop_attempt", "facts": facts,
+                                     "unexplored_catalogue_ids": unexplored_ids}
                 raise error
             state.events.append({"type": "diagnostic_stop_decision", "facts": facts,
                                  "reason": "goal_met" if goal_met else stop_reasons[0]})
@@ -278,8 +306,13 @@ def metrics(state, arm):
         termination_outcome = "goal_not_met_after_valid_exhaustion"
     elif stop_evidence and stop_evidence.get("reason") in {"budget_exhausted", "edit_budget_exhausted"}:
         termination_outcome = stop_evidence["reason"]
-    elif state.reason in {"consecutive_errors", "repeated_action", "interrupted_action_requires_acknowledgement"}:
+    elif state.reason in {"consecutive_errors", "interrupted_action_requires_acknowledgement"}:
         termination_outcome = "execution_failure"
+    elif state.reason == "repeated_action":
+        # A decision loop is a property of the planner's choices, not of the
+        # execution layer. Reporting it as execution_failure would repeat the
+        # exact conflation this diagnostic exists to avoid.
+        termination_outcome = "decision_loop"
     elif state.reason in {"user_paused", "user_cancelled"}:
         termination_outcome = "user_stopped"
     else:
@@ -358,22 +391,35 @@ def run_arm(output, arm):
     return result
 
 
-def require_connectivity_gate(output):
+def connectivity_gate_path():
+    """Newest committed connectivity summary, or None.
+
+    The filename embeds an ISO date (``minimax_connectivity_YYYYMMDD_summary.json``),
+    so lexical sorting is chronological. Using the newest one means a fresh
+    acceptance run supersedes an older gate instead of being ignored.
+    """
+    candidates = sorted((ROOT / "runs/samples").glob("minimax_connectivity_*_summary.json"))
+    return candidates[-1] if candidates else None
+
+
+def require_connectivity_gate(output=None, gate_path=None):
     """Refuse to start the real agent arm unless the 3/3 connectivity gate passed.
 
     The gate is the small committed summary produced by
     ``scripts/check_minimax_connectivity.py``. Without it, a transport failure
     would again be misread as an agent decision failure.
     """
-    gate = ROOT / "runs/samples/minimax_connectivity_20260919_summary.json"
-    if not gate.exists():
+    gate = Path(gate_path) if gate_path is not None else connectivity_gate_path()
+    if gate is None or not gate.exists():
         raise ValueError("Agent arm blocked: connectivity gate summary is missing")
     summary = json.loads(gate.read_text(encoding="utf-8"))
     if summary.get("successful") != summary.get("attempted") or summary.get("successful") != 3:
         raise ValueError(
             f"Agent arm blocked: connectivity gate not passed "
             f"({summary.get('successful')}/{summary.get('attempted')} successful)")
-    return summary
+    if summary.get("gate") != "passed":
+        raise ValueError(f"Agent arm blocked: connectivity gate status is {summary.get('gate')!r}")
+    return {**summary, "summary_file": str(gate.relative_to(ROOT)).replace("\\", "/")}
 
 
 def drive_arm(store, policy, registry, arm):

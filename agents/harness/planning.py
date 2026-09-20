@@ -129,10 +129,19 @@ def select(state, args, directory):
     ids = args["evidence_ids"]
     known = {r["evidence_id"] for r in experience(state)}
     if not isinstance(ids, list) or any(not isinstance(i, str) or i not in known for i in ids):
-        raise ValueError("Cite only existing task experience IDs")
+        unknown = [i for i in (ids if isinstance(ids, list) else []) if not isinstance(i, str) or i not in known]
+        raise ValueError(
+            "Cite only existing task experience IDs; unknown=" + json.dumps(unknown)
+            + "; allowed=" + json.dumps(sorted(known)))
     assessed = [h for h in state.hypotheses.values() if h.get("status") == "assessed"]
-    if assessed and "h:" + assessed[-1]["hypothesis_id"] not in ids:
-        raise ValueError("Selection must cite the most recent assessed hypothesis")
+    required = "h:" + assessed[-1]["hypothesis_id"] if assessed else None
+    if required and required not in ids:
+        # Name the exact ID. Without it the planner can only guess, and a
+        # guessing loop of identical rejections terminates the task
+        # (observed in v5, 2026-09-20).
+        raise ValueError(
+            "Selection must cite the most recent assessed hypothesis: add "
+            + json.dumps(required) + " to evidence_ids (allowed=" + json.dumps(sorted(known)) + ")")
     sid = f"s{len(state.edit_selections) + 1}"
     hid = "planned_" + sid
     _record_hypothesis(state, {"hypothesis_id": hid, "parent_id": proposal["parent_id"],

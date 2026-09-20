@@ -106,9 +106,20 @@ def error_category(exc) -> str:
         return "provider"
     message = f"{type(exc).__name__}: {exc}"
     if ("Expected arguments" in message or "invalid keys" in message
-            or "Action must contain" in message or "Action needs" in message):
+            or "invalid arguments" in message
+            or "Action must contain" in message or "Action needs" in message
+            or "Unknown tool" in message):
         return "schema"
-    if "Illegal action" in message or "hypothesis" in message or "stage=" in message:
+    if ("Illegal action" in message or "hypothesis" in message or "stage=" in message
+            # A rejected action that carries a structured audit_event was
+            # rejected by the state machine, not by a tool. Without this the
+            # illegal-stop rejection was reported as a tool defect
+            # (observed in v5, 2026-09-20).
+            or isinstance(getattr(exc, "audit_event", None), dict)
+            or "unexplored" in message or "already selected" in message or "already executed" in message
+            or "evidence_ids" in message or "task experience IDs" in message
+            or "requires supported evidence" in message or "must return to the hypothesis" in message
+            or "only allows one-hop" in message or "violates current constraints" in message):
         return "state_machine"
     return "tool"
 

@@ -117,6 +117,8 @@ class LLMPolicy:
             "Use native options arrays and evidence_ids arrays, never JSON strings. Each option must contain exactly "
             "these keys and no others: edit, rationale, expected_benefit, allowed_cost, expected_metric, "
             "expected_direction, predictions. evidence_ids belongs to select_edit only, never inside an option. "
+            "select_edit evidence_ids must contain the exact string from task_experience, and when a hypothesis is "
+            "already assessed it must include that assessed hypothesis ID (\"h:<id>\"); never invent an ID. "
             "Each option needs predictions: "
             "[{metric,direction:increase/decrease,min_change:positive number}], recorded before screening. "
             "Never use min_change=0 to express unchanged/no increase. Omit such predictions; "
@@ -135,8 +137,12 @@ class LLMPolicy:
             "Use exact atom indices; do not invent ortho/meta/para labels. One observed edit does not establish general SAR. "
             "Citing a result does not prove your causal explanation. State uncertainty and keep predictions separate from facts. "
             "If a previous hypothesis is assessed, choose_strategy before select_edit. Do not repeat failed products. "
+            "choose_strategy is one-shot per assessment: after you call it for an assessed hypothesis, the next step "
+            "must be propose_edits (a new batch), select_edit of an already-screened option, or finish. Calling it "
+            "again for the same hypothesis is an identical repeated action and stops the task. "
             "Stop with finish when max_edits is reached, a candidate qualifies, or no reasonable feasible alternative remains; "
-            "explain the reason. A feasibility pass does not imply synthetic accessibility or activity.",
+            "explain the reason. If the task text states a stricter stop rule, the task text wins: obey it exactly. "
+            "A feasibility pass does not imply synthetic accessibility or activity.",
             json.dumps({"goal": state.goal, "instructions": state.instructions,
                         "constraints": state.constraints, "hypotheses": state.hypotheses, "strategies": state.strategies,
                         "task_experience": experience(state),
@@ -195,6 +201,23 @@ class _CheckpointFailure(OSError):
     pass
 
 
+# Free-text fields whose exact wording is never what makes an action legal or
+# illegal. Two calls that differ only in these are the *same* action, so the
+# repeat guard must treat them as one. A planner that reworded an illegal
+# ``finish`` summary otherwise evaded the guard, retried the same illegal stop
+# until the consecutive-error budget tripped, and turned a state-machine
+# disagreement into a reported ``execution_failure`` (observed in v7, 2026-09-20).
+_SEMANTIC_FREETEXT_KEYS = {"reason", "rationale", "summary", "message"}
+
+
+def _semantic_arguments(arguments):
+    """Strip free text so the repeat guard sees the action, not the wording."""
+    if not isinstance(arguments, dict):
+        return arguments
+    return {k: ("<text>" if k in _SEMANTIC_FREETEXT_KEYS and isinstance(v, str) else v)
+            for k, v in arguments.items()}
+
+
 class Harness:
     def __init__(self, store, policy=None, registry=None, on_event=None, sleep=time.sleep):
         self.store = store
@@ -212,6 +235,7 @@ class Harness:
         self._attempt_no = 1
         self._current_task_id = None
         self._current_step = 0
+        self._chained_evidence = None
 
     # ------------------------------------------------------------------
     # Model-request evidence
@@ -234,6 +258,13 @@ class Harness:
         event.setdefault("round", self._current_step)
         self.request_evidence.append(event)
         self._emit(event)
+        # Forward to a caller-supplied sink (best effort): installing the
+        # Harness recorder must never silently disable someone else's audit.
+        if self._chained_evidence is not None:
+            try:
+                self._chained_evidence(event)
+            except Exception:
+                pass
 
     def _flush_request_evidence(self, state):
         """Move newly recorded request evidence into the persisted event log."""
@@ -451,11 +482,23 @@ class Harness:
                 policy = MockPolicy() if state.mock else LLMPolicy(evidence=self._record_request)
                 self.policy = policy
                 self._closed = False
-            elif getattr(policy, "evidence", "absent") is None:
+            elif getattr(policy, "evidence", "absent") is not self._record_request:
                 # An injected policy must still contribute request evidence: the
                 # audit trail belongs to the Harness, not to the caller. Without
                 # this, an externally built LLMPolicy produced zero
                 # model_request events (observed in v4, 2026-09-19).
+                #
+                # Re-bind on *every* run, not only when the sink is empty. A
+                # caller that drives several one-action Harness runs over a
+                # single policy otherwise leaves the sink pointing at the first,
+                # already-finished Harness: later requests were collected into
+                # that dead Harness's list and never flushed into the checkpoint
+                # (observed in v5, 2026-09-20: 12 planner attempts, 1 persisted
+                # model_request record). A caller-supplied sink is preserved by
+                # chaining rather than being overwritten.
+                current = getattr(policy, "evidence", None)
+                if current is not None and getattr(current, "__func__", None) is not Harness._record_request:
+                    self._chained_evidence = current
                 try:
                     policy.evidence = self._record_request
                 except Exception:
@@ -492,7 +535,8 @@ class Harness:
                             e.get("revision") == state.revision
                             and isinstance(e.get("action"), dict)
                             and e["action"].get("tool") == action["tool"]
-                            and e["action"].get("arguments") == action["arguments"] for e in previous
+                            and _semantic_arguments(e["action"].get("arguments")) == _semantic_arguments(action["arguments"])
+                            for e in previous
                         ):
                             state.status, state.reason = "paused", "repeated_action"
                             break

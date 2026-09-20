@@ -677,3 +677,257 @@ def test_evidence_hook_failure_never_breaks_a_request():
         client = llm_module.get_client(name, cfg, evidence=broken)
         assert client.chat("s", "u") == "{}"
         client.close()
+
+
+# ---------------------------------------------------------------------------
+# Request evidence must survive one-policy-per-arm, one-Harness-per-step driving
+# (v5, 2026-09-20: 12 planner attempts produced a single persisted record)
+# ---------------------------------------------------------------------------
+
+def test_request_evidence_is_rebound_on_every_harness_run(tmp_path, monkeypatch):
+    """A reused policy must re-point its sink at the Harness that is running now.
+
+    ``scripts/compare_2d_policies.drive_arm`` builds one policy but a fresh
+    Harness per action. If the sink is only installed when it is empty, every
+    request after the first step is recorded into a finished Harness and never
+    reaches the checkpoint.
+    """
+    import agents.llm
+    store = create(tmp_path)
+    state = store.load()
+    state.mock = False
+    store.save(state)
+
+    class Client:
+        def __init__(self):
+            self.evidence = None
+        def chat_json(self, system, user):
+            if self.evidence is not None:
+                self.evidence({"type": "model_request", "request_id": uuid_hex(),
+                               "outcome": "response_received"})
+            return action("pause", message="Need input")
+        def close(self):
+            pass
+
+    def fake_get_client(name, cfg, evidence=None, **kwargs):
+        client.evidence = evidence
+        return client
+
+    client = Client()
+    monkeypatch.setattr(agents.llm, "get_client", fake_get_client)
+    policy = LLMPolicy()
+    for _ in range(3):
+        Harness(store, policy).run(1)
+    records = [e for e in store.load().events if e["type"] == "model_request"]
+    assert len(records) == 3, "every planner attempt must persist exactly one record"
+    assert len({r["id"] for r in records}) == 3
+    # ``steps_used`` is cumulative across runs, so each record keeps its own step.
+    assert [r["step"] for r in records] == [1, 2, 3]
+
+
+def test_caller_supplied_evidence_sink_is_chained_not_replaced(tmp_path, monkeypatch):
+    """Installing the Harness sink must not silently disable a caller's audit."""
+    import agents.llm
+    store = create(tmp_path)
+    state = store.load()
+    state.mock = False
+    store.save(state)
+    external = []
+
+    class Client:
+        def chat_json(self, system, user):
+            return action("pause", message="Need input")
+        def close(self):
+            pass
+
+    monkeypatch.setattr(agents.llm, "get_client", lambda *a, **k: Client())
+    policy = LLMPolicy(evidence=external.append)
+    harness = Harness(store, policy)
+    harness.run(1)
+    harness._record_request({"type": "model_request", "request_id": "chained",
+                             "outcome": "response_received"})
+    assert [e["request_id"] for e in external] == ["chained"]
+    assert policy.evidence == harness._record_request
+
+
+def test_evidence_flush_never_duplicates_records(tmp_path, monkeypatch):
+    import agents.llm
+    store = create(tmp_path)
+    state = store.load()
+    state.mock = False
+    store.save(state)
+
+    class Client:
+        def chat_json(self, system, user):
+            return action("pause", message="Need input")
+        def close(self):
+            pass
+
+    monkeypatch.setattr(agents.llm, "get_client", lambda *a, **k: Client())
+    harness = Harness(store, LLMPolicy())
+    harness.run(1)
+    state = store.load()
+    harness._record_request({"type": "model_request", "request_id": "once",
+                             "outcome": "response_received"})
+    assert harness._flush_request_evidence(state) == 1
+    assert harness._flush_request_evidence(state) == 0
+
+
+# ---------------------------------------------------------------------------
+# Rejections must name the exact fix, and be classified as state-machine
+# (v5, 2026-09-20: the planner repeated an identical select_edit call because
+# the message never said which evidence ID was required)
+# ---------------------------------------------------------------------------
+
+def test_select_edit_error_names_the_required_evidence_id(tmp_path):
+    from agents.harness.planning import select
+    from agents.harness.molecule_ops import add_seed_candidates, normalize_constraints
+    config = load_config()
+    state = TaskState(goal="Improve", config=config, mock=True, max_steps=30,
+                      constraints=normalize_constraints({"require_planned_edits": True}))
+    add_seed_candidates(state, ["CCOc1ccccc1"])
+    state.candidates["c1"]["evaluation_status"] = "complete"
+    state.candidates["c1"]["current_improvement"] = {"outcome": "inconclusive"}
+    state.hypotheses["planned_s1"] = {"hypothesis_id": "planned_s1", "parent_id": "c1",
+                                      "child_id": "c1", "status": "assessed", "outcome": "inconclusive"}
+    state.edit_proposals["p1"] = {"proposal_id": "p1", "parent_id": "c1", "revision": state.revision,
+                                  "options": [{"edit": {"operation": "attach_fragment",
+                                                        "arguments": {"atom_index": 6, "fragment_smiles": "C",
+                                                                      "fragment_atom_index": 0}},
+                                               "rationale": "r", "expected_benefit": "b",
+                                               "allowed_cost": "c", "expected_metric": "property_score",
+                                               "expected_direction": "increase",
+                                               "predictions": [{"metric": "property_score", "direction": "increase",
+                                                                "min_change": .01}],
+                                               "screening": {"effect_assessment": {"outcome": "inconclusive"}},
+                                               "precheck": {"passed": True}}]}
+    with pytest.raises(ValueError) as exc:
+        select(state, {"proposal_id": "p1", "option_index": 0, "rationale": "r",
+                       "evidence_ids": ["screen:p1:0"]}, tmp_path)
+    message = str(exc.value)
+    assert "h:planned_s1" in message, "the required evidence ID must be named verbatim"
+    assert "allowed=" in message
+    assert error_category(exc.value) == "state_machine"
+    assert classify_error(exc.value) is None
+
+
+def test_unknown_evidence_id_lists_what_is_allowed(tmp_path):
+    from agents.harness.planning import select
+    from agents.harness.molecule_ops import add_seed_candidates, normalize_constraints
+    state = TaskState(goal="Improve", config=load_config(), mock=True, max_steps=30,
+                      constraints=normalize_constraints({"require_planned_edits": True}))
+    add_seed_candidates(state, ["CCOc1ccccc1"])
+    state.candidates["c1"]["evaluation_status"] = "complete"
+    state.edit_proposals["p1"] = {"proposal_id": "p1", "parent_id": "c1", "revision": state.revision,
+                                  "options": [{"edit": {"operation": "attach_fragment",
+                                                        "arguments": {"atom_index": 6, "fragment_smiles": "C",
+                                                                      "fragment_atom_index": 0}},
+                                               "rationale": "r", "expected_benefit": "b",
+                                               "allowed_cost": "c", "expected_metric": "property_score",
+                                               "expected_direction": "increase",
+                                               "predictions": [{"metric": "property_score", "direction": "increase",
+                                                                "min_change": .01}],
+                                               "precheck": {"passed": True}}]}
+    with pytest.raises(ValueError) as exc:
+        select(state, {"proposal_id": "p1", "option_index": 0, "rationale": "r",
+                       "evidence_ids": ["h:does_not_exist"]}, tmp_path)
+    message = str(exc.value)
+    assert "unknown=" in message and "h:does_not_exist" in message
+    assert "allowed=" in message
+
+
+def test_illegal_stop_is_classified_as_state_machine():
+    """A rejection carrying a structured audit event came from the state machine."""
+    exc = ValueError("Illegal goal_not_met stop: unexplored feasible products remain")
+    exc.audit_event = {"type": "invalid_early_stop_attempt", "facts": {}}
+    assert error_category(exc) == "state_machine"
+    assert classify_error(exc) is None
+
+
+# ---------------------------------------------------------------------------
+# Action-envelope rejections must also name the offending keys
+# (v6, 2026-09-20: a finish call with a stray key and a finish call with the
+# wrong argument names both failed without saying which key was wrong)
+# ---------------------------------------------------------------------------
+
+def test_action_envelope_error_names_missing_and_unexpected_keys():
+    from agents.harness.tools import default_registry
+    registry = default_registry()
+    with pytest.raises(ValueError) as exc:
+        registry.validate({"tool": "finish", "arguments": {"candidate_ids": ["c1"], "summary": "s"},
+                           "reason": "r", "extra": 1})
+    message = str(exc.value)
+    assert "unexpected=['extra']" in message
+    assert error_category(exc.value) == "schema"
+    assert classify_error(exc.value) is None
+
+
+def test_action_argument_error_names_missing_argument():
+    from agents.harness.tools import default_registry
+    registry = default_registry()
+    with pytest.raises(ValueError) as exc:
+        registry.validate({"tool": "finish", "arguments": {"candidate_ids": ["c1"]}, "reason": "r"})
+    message = str(exc.value)
+    assert "finish: invalid arguments" in message
+    assert "missing=['summary']" in message
+    assert "allowed=" in message
+    assert error_category(exc.value) == "schema"
+
+
+def test_unknown_tool_lists_allowed_tools():
+    from agents.harness.tools import default_registry
+    registry = default_registry()
+    with pytest.raises(ValueError) as exc:
+        registry.validate({"tool": "no_such_tool", "arguments": {}, "reason": "r"})
+    message = str(exc.value)
+    assert "Unknown tool 'no_such_tool'" in message
+    assert "allowed=" in message
+    assert error_category(exc.value) == "schema"
+
+
+def test_strategy_rejection_names_the_required_parent():
+    """A wrong-parent rejection must state the only legal parent."""
+    from agents.harness.tools import default_registry
+    from agents.harness.molecule_ops import add_seed_candidates, normalize_constraints
+    state = TaskState(goal="Improve", config=load_config(), mock=True, max_steps=30,
+                      constraints=normalize_constraints({"require_planned_edits": True}))
+    add_seed_candidates(state, ["CCOc1ccccc1"])
+    state.candidates["c1"]["evaluation_status"] = "complete"
+    state.candidates["c2"] = {**state.candidates["c1"], "candidate_id": "c2", "parent_id": "c1"}
+    state.hypotheses["planned_s1"] = {"hypothesis_id": "planned_s1", "parent_id": "c1",
+                                      "child_id": "c2", "status": "assessed", "outcome": "supported"}
+    with pytest.raises(ValueError) as exc:
+        default_registry().execute(state, {"tool": "choose_strategy",
+                                           "arguments": {"hypothesis_id": "planned_s1", "choice": "continue",
+                                                         "parent_id": "c1", "rationale": "r"},
+                                           "reason": "r"}, None)
+    message = str(exc.value)
+    assert "required_parent_id='c2'" in message
+    assert "allowed_parent_ids=" in message
+    assert error_category(exc.value) == "state_machine"
+    assert classify_error(exc.value) is None
+
+
+def test_one_hop_constraint_names_the_allowed_parent():
+    from scripts.compare_2d_policies import CatalogRegistry, prepare, new_state
+    import tempfile, pathlib
+    with tempfile.TemporaryDirectory() as tmp:
+        manifest = prepare(pathlib.Path(tmp) / "exp", scenario="phenol")
+        state = new_state(manifest, "agent")
+        state.candidates["c1"]["evaluation_status"] = "complete"
+        options = [{"edit": {"operation": "attach_fragment",
+                             "arguments": {"atom_index": 6, "fragment_smiles": "C", "fragment_atom_index": 0}},
+                    "rationale": "r", "expected_benefit": "b", "allowed_cost": "c",
+                    "expected_metric": "property_score", "expected_direction": "increase",
+                    "predictions": [{"metric": "property_score", "direction": "increase", "min_change": .01}]}] * 2
+        with pytest.raises(ValueError) as exc:
+            CatalogRegistry(manifest).preflight(
+                state, {"tool": "propose_edits",
+                        "arguments": {"parent_id": "c2", "options": options}, "reason": "r"})
+        assert "allowed_parent_ids=['c1']" in str(exc.value)
+        assert error_category(exc.value) == "state_machine"
+
+
+def uuid_hex():
+    from uuid import uuid4
+    return uuid4().hex

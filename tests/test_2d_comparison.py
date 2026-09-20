@@ -40,12 +40,34 @@ def test_agent_arm_is_blocked_without_a_passed_connectivity_gate(tmp_path, monke
     with pytest.raises(ValueError, match="connectivity gate summary is missing"):
         require_connectivity_gate(output)
 
-    real_gate.write_text(json.dumps({"attempted": 3, "successful": 1}), encoding="utf-8")
+    real_gate.write_text(json.dumps({"attempted": 3, "successful": 1, "gate": "failed"}), encoding="utf-8")
     with pytest.raises(ValueError, match="not passed"):
         require_connectivity_gate(output)
 
-    real_gate.write_text(json.dumps({"attempted": 3, "successful": 3}), encoding="utf-8")
+    real_gate.write_text(json.dumps({"attempted": 3, "successful": 3, "gate": "failed"}), encoding="utf-8")
+    with pytest.raises(ValueError, match="gate status"):
+        require_connectivity_gate(output)
+
+    real_gate.write_text(json.dumps({"attempted": 3, "successful": 3, "gate": "passed"}), encoding="utf-8")
     assert require_connectivity_gate(output)["successful"] == 3
+
+
+def test_connectivity_gate_uses_the_newest_summary(tmp_path, monkeypatch):
+    """A fresh acceptance run must supersede an older gate, not be ignored."""
+    import scripts.compare_2d_policies as module
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+    samples = tmp_path / "runs/samples"
+    samples.mkdir(parents=True)
+    (samples / "minimax_connectivity_20260919_summary.json").write_text(
+        json.dumps({"attempted": 3, "successful": 3, "gate": "passed"}), encoding="utf-8")
+    (samples / "minimax_connectivity_20260920_summary.json").write_text(
+        json.dumps({"attempted": 3, "successful": 2, "gate": "failed"}), encoding="utf-8")
+    assert module.connectivity_gate_path().name == "minimax_connectivity_20260920_summary.json"
+    with pytest.raises(ValueError, match="not passed"):
+        module.require_connectivity_gate()
+    # Removing the newer, failed gate falls back to the older passing one.
+    (samples / "minimax_connectivity_20260920_summary.json").unlink()
+    assert module.require_connectivity_gate()["successful"] == 3
 
 
 def test_audit_is_separate_and_rule_cannot_overspend(tmp_path):
@@ -74,8 +96,12 @@ def test_proposals_outside_shared_catalogue_rejected(tmp_path):
         "fragment_smiles": "Cl", "fragment_atom_index": 0}}, "rationale": "test", "expected_benefit": "test",
         "allowed_cost": "test", "expected_metric": "property_score", "expected_direction": "increase",
         "predictions": [{"metric": "property_score", "direction": "increase", "min_change": .01}]}] * 2
-    with pytest.raises(ValueError, match="frozen catalogue"):
+    with pytest.raises(ValueError, match="frozen catalogue") as exc:
         CatalogRegistry(manifest).preflight(state, action("propose_edits", parent_id="c1", options=options))
+    # The rejection must name what was rejected and what is allowed.
+    assert "unmatched=" in str(exc.value)
+    assert "allowed_catalogue_ids=" in str(exc.value)
+    assert exc.value.audit_event["type"] == "off_catalogue_edit_attempt"
 
 
 def test_new_positive_control_is_reachable_and_hides_scores(tmp_path):
@@ -109,6 +135,9 @@ def test_goal_not_met_requires_exhaustion_or_budget(tmp_path):
     except ValueError as exc:
         assert exc.audit_event["type"] == "invalid_early_stop_attempt"
         assert not exc.audit_event["facts"]["deterministic_stop_allowed"]
+        # The rejection must name what is left to do, not only that it is illegal.
+        assert exc.audit_event["unexplored_catalogue_ids"]
+        assert "unexplored_catalogue_ids=" in str(exc)
     state.evaluations_used = state.max_evaluations
     registry.preflight(state, action("finish", candidate_ids=["c1"], summary="budget exhausted"))
 

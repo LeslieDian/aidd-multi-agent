@@ -1,6 +1,255 @@
 # aidd-multi-agent
 
-## 模型传输修复与 v4 二维验收（2026-09-19，本轮最新）
+## 决策证据闭环与 v10 二维验收（2026-09-20，本轮最新）
+
+本轮的目标是把 v4 遗留的问题走完：**让智能体在真实连接下走完整条决策链**，并把途中暴露的每一个缺陷修掉、测掉、记录掉。全程遵守同一组约束：不新增分子工具、不扩展 3D、不跑 docking、不跑 n=20、不改 `property_score` 公式与 `+0.01` 阈值、不放宽 hERG 等既有约束、**不因结果差而重跑**。
+
+最终结果：**v10 是第一次完整成功的真实运行**，智能体自行找到合格分子并合法停止。
+
+### 1. 为什么这一轮必须做
+
+v4 的结论是「失败原因是 schema，不是网络」。这留下两个未解问题：
+
+1. v4 里智能体**一次编辑都没执行**，所以它的分子决策能力仍然无法评价。
+2. v4 结束后修复的两个缺陷只做了离线验证，**没有被真实验证过**。
+
+因此本轮要回答的问题是：**把传输与错误信息都修好之后，智能体到底能不能走完「评估母体 → 提出方案 → 筛选 → 选择 → 编辑 → 评估子代 → 父子比较 → 依据证据换策略 → 合法停止」这条链？**
+
+### 2. 本轮新增修复（10 个缺陷）
+
+每一版都只跑**一次**真实 agent 臂，暴露问题就修、就测，然后进入下一版。所有版本都保留，不做最好一次挑选。
+
+| 版本 | 暴露的缺陷 | 修复 |
+|---|---|---|
+| v4 | schema 错误不指名具体键 | `schema.validate_value` 输出 `missing`/`unexpected`/`allowed` |
+| v4 | 注入的 `LLMPolicy` 拿不到证据 sink（0 条记录） | Harness 为注入 policy 安装 recorder |
+| v5 | sink 只装一次：一个 policy 跨多个 Harness 时 12 次请求只落盘 1 条 | **每次 run 重新绑定**，并链式保留调用方自己的 sink |
+| v5 | `select_edit` 拒绝时不说需要哪个 evidence ID | 错误中直接给出所需 ID 与允许集合 |
+| v5 | 非法停止被归类为 `tool` 错误 | 带 `audit_event` 的拒绝归类为 `state_machine` |
+| v6 | 动作信封与参数拒绝不指名具体键 | 校验输出 `missing`/`unexpected`，并列出允许的工具 |
+| v7 | 改写措辞的非法 `finish` 绕过重复动作护栏，耗尽错误预算 | 重复护栏比较**语义参数**，忽略自由文本 |
+| v7 | 任务文本鼓励「可提前停止」，而冻结门槛禁止 | 任务文本明确写出必须穷尽的要求 |
+| v8 | 决策死循环被报告成 `execution_failure` | `repeated_action` 映射为独立的 `decision_loop` |
+| v9 | 策略与单跳约束拒绝不指名合法母体 | 错误给出 `required_parent_id` 与 `allowed_parent_ids` |
+
+**共同根因**：错误信息只说「不允许」，不说「应该是什么」。模型只能猜，猜三次就把错误预算用光，于是一次**状态机分歧**被误报成**执行失败**。这正是本任务要消灭的那类测量错误。
+
+### 3. 版本演进（每版一次真实运行）
+
+| 指标 | v4 | v5 | v6 | v7 | v8 | v9 | **v10** |
+|---|---|---|---|---|---|---|---|
+| 终止原因 | `consecutive_errors` | `consecutive_errors` | `consecutive_errors` | `consecutive_errors` | `repeated_action` | `consecutive_errors` | **`goal_met`** |
+| 网络重试 | 0 | 0 | 0 | 0 | 0 | 0 | **0** |
+| 网络失败 | 0 | 0 | 0 | 0 | 0 | 0 | **0** |
+| schema 错误 | 3 | 0 | 2 | 2 | 2 | 1 | **0** |
+| 实际编辑 | 0 | 1 | 1 | 2 | 2 | 2 | **2** |
+| 父子比较 | 0 | 1 | 1 | 2 | 2 | 2 | **2** |
+| 策略切换 | 0 | 1 | 0 | 2 | 2 | 1 | **1** |
+| 已落盘请求记录 | 0 | 1 | 11 | 20 | 16 | 15 | **14** |
+| 最佳合规增量 | — | 0.0002 | 0.0002 | 0.0082 | −0.0014 | **0.0139** | **0.0148** |
+
+**关键转折**：网络层从 v4 起就已彻底干净（0 重试、0 失败）。v5–v9 的每一次失败都是**错误信息质量**问题，而不是模型能力或网络问题。v9 首次越过 `+0.01` 阈值，v10 首次合法完成。
+
+### 4. v10 冻结设置
+
+| 项目 | 值 |
+|---|---|
+| 母体 | `Oc1ccccc1`（苯酚） |
+| 场景 | `phenol`（单跳局部修改） |
+| 目录动作数 | 24 |
+| 唯一可行产物 | 16 |
+| 可达合格产物 | 2（审计独立计算，对策略隐藏） |
+| 新结构评分预算 | 10（母体另计 1） |
+| `property_score` 最小提升 | 0.01 |
+| hERG 代理 | 不允许上升 |
+| 最大提交编辑数 | 3 |
+| docking / 3D | 关闭 |
+| provider / model | MiniMax / `MiniMax-M3` |
+| thinking | `disabled` |
+| SDK 重试 | 0（Harness 独占重试） |
+| 超时 / 重试上限 | 60 s / 3 次 |
+
+### 5. 连接验收门槛（先于任何真实实验）
+
+`scripts/check_minimax_connectivity.py` 先做 3 次顺序请求，写出的摘要必须 3/3 通过，agent 臂才允许启动（`require_connectivity_gate`）。本轮结果：
+
+| 项目 | 值 |
+|---|---|
+| attempted / successful | 3 / 3 |
+| schema_valid | 3 / 3 |
+| clients_created | 1 |
+| client_closed_explicitly | true |
+| retried_requests | 0 |
+| gate | **passed** |
+
+同时修正了一个门槛缺陷：门槛现在取**最新**的连接摘要（文件名内嵌 ISO 日期），因此一次新的验收会覆盖旧门槛，而不是被忽略。
+
+### 6. v10 双臂结果
+
+| 指标 | rule 臂 | **agent 臂** |
+|---|---|---|
+| 终止结果 | `budget_exhausted` | **`goal_met`** |
+| 新结构评估 | 10 | 8 |
+| 总计入评估 | 11 | 9 |
+| 合格产物数 | 0 | **2** |
+| 首次命中（批次末计） | — | 8 |
+| 最佳合规增量 | 0.000195 | **0.014776** |
+| 被接受的方案数 | 10 | 8 |
+| 结构通过率 | 1.0 | 1.0 |
+| 被拒动作 | 0 | 1 |
+| 网络重试 / 失败 | 0 / 0 | **0 / 0** |
+| schema / 状态机 / tool 错误 | 0 / 0 / 0 | **0 / 1 / 0** |
+| planner 尝试 / 成功响应 | 0 / 0 | **14 / 14** |
+| 执行的工具动作 | 12 | 13 |
+| **实际编辑** | 0 | **2** |
+| **父子比较** | 0 | **2** |
+| **策略切换** | 0 | **1** |
+| 步数 | 12 | 14 |
+| 停止证据合法 | true | **true** |
+| 请求证据记录 | 0 | **14** |
+
+agent 臂唯一一次被拒是 `select_edit` 缺少必需的 evidence ID，错误信息直接给出了 `h:planned_s1`，模型随即修正——这与 v5 的「猜三次然后死掉」形成直接对照。
+
+### 7. v10 合格分子
+
+| 项目 | 值 |
+|---|---|
+| candidate_id | `c3` |
+| SMILES | `CCCOc1ccccc1` |
+| 母体 | `c1` = `Oc1ccccc1` |
+| property_score | 0.942166 |
+| 相对母体增量 | **+0.014776**（阈值 +0.01） |
+| 判定 | `supported` |
+| 评估状态 | `screening_only` |
+
+### 8. v10 决策轨迹
+
+智能体实测的 8 个新结构（按顺序）：
+
+| # | SMILES | property_score | 判定 | 增量 |
+|---|---|---|---|---|
+| 1 | `Nc1ccccc1O` | 0.892431 | `tradeoff_exceeded` | −0.034958 |
+| 2 | `Oc1ccccc1O` | 0.913202 | `tradeoff_exceeded` | −0.014188 |
+| 3 | `Oc1ccccc1F` | 0.918610 | `inconclusive` | −0.008779 |
+| 4 | `COc1ccccc1` | 0.935598 | `inconclusive` | +0.008209 |
+| 5 | `CCOc1ccccc1` | 0.941292 | **`supported`** | **+0.013902** |
+| 6 | `CCCOc1ccccc1` | 0.942166 | **`supported`** | **+0.014776** |
+| 7 | `CC(C)Oc1ccccc1` | 0.936837 | `inconclusive` | +0.009447 |
+| 8 | `Oc1cccc(F)c1` | 0.916871 | `tradeoff_exceeded` | −0.010519 |
+
+假设与策略：
+
+| 项目 | 值 |
+|---|---|
+| `planned_s1` | `assessed` / `inconclusive` / 子代 `c2` |
+| `planned_s2` | `assessed` / `supported` / 子代 `c3` |
+| 策略选择 | `switch_strategy`，基于 `planned_s1`，回到母体 `c1` |
+
+**链完整性**：评估母体 → 提出方案 → 筛选 → 选择 → 执行编辑 → 评估子代 → 父子比较 → 依据负面证据换策略 → 找到合格产物 → 合法停止。全部为真。
+
+### 9. 与 v2/v3/v4 的对照
+
+| 维度 | v2 | v3 | v4 | **v10** |
+|---|---|---|---|---|
+| 网络重试 | — | 6 | 0 | **0** |
+| 最终网络失败 | — | 3 | 0 | **0** |
+| 终止原因 | 传输失败 | 传输失败 | schema | **`goal_met`** |
+| 实际编辑 | 0 | 0 | 0 | **2** |
+| 父子比较 | 0 | 0 | 0 | **2** |
+| 策略切换 | 0 | 0 | 0 | **1** |
+| 合格产物 | 0 | 0 | 0 | **2** |
+| 最佳合规增量 | — | — | 0.0002 | **0.014776** |
+
+### 10. 可以支持的结论
+
+1. 传输层已修复：连续多版均为 **0 网络重试、0 网络失败**，14/14 请求成功。
+2. 智能体**能够**走完完整决策链，并在真实运行中合法 `goal_met`。
+3. 智能体**能够**在负面证据后改变策略，而不是重复同一动作。
+4. 智能体**能够**在真实反馈下修正被拒动作（v10 唯一一次被拒后立即改正）。
+5. 智能体本轮表现**优于** rule 臂（最佳增量 0.014776 vs 0.000195，且少用 2 次评分）。
+6. 错误信息质量是决定性变量：v5–v9 的失败全部源于「错误不指名应填什么」，而非模型或网络。
+
+### 11. 不能支持的结论
+
+1. **单次运行不构成统计优越性**。不能声称智能体普遍强于规则策略。
+2. 不能声称模型学到了药物化学知识；合格分子由固定算术阈值判定。
+3. 目录是受限单跳空间，测的是**获取与选择**，不是无约束分子发明。
+4. 没有 docking、没有生物验证、没有调整阈值。
+5. 总分变化不能外推到单个性质改善。
+6. 可达性审计分数单独计算，从未传给任何策略。
+7. 8 个样本无法说明 SAR 规律。
+
+### 12. 复现步骤
+
+```powershell
+# 1. 连接验收（必须 3/3）
+python scripts/check_minimax_connectivity.py --output runs/samples/minimax_connectivity_20260920_summary.json
+
+# 2. 冻结清单 + 可达性审计（分数对策略隐藏）
+python scripts/compare_2d_policies.py prepare --output runs/diagnostic_2d_positive_v10_20260920 --scenario phenol
+python scripts/compare_2d_policies.py audit   --output runs/diagnostic_2d_positive_v10_20260920
+
+# 3. 双臂（agent 臂在门槛未过时会拒绝启动）
+python scripts/compare_2d_policies.py rule  --output runs/diagnostic_2d_positive_v10_20260920
+python scripts/compare_2d_policies.py agent --output runs/diagnostic_2d_positive_v10_20260920
+
+# 4. 报告
+python scripts/compare_2d_policies.py report --output runs/diagnostic_2d_positive_v10_20260920
+```
+
+`prepare` 会冻结 `manifest.json` 与其 SHA-256，并记录所有源文件哈希；任何源码改动都会让 `load_frozen` 拒绝混用版本。
+
+### 13. 离线测试
+
+| 项目 | 值 |
+|---|---|
+| 全量命令 | `python -m pytest -q` |
+| 结果 | **280 passed, 1 skipped** |
+| 本轮起点 | 267 passed, 1 skipped |
+| 净增 | +13 |
+| 新增测试文件 | `tests/test_reliability.py`、`tests/test_connectivity_check.py` |
+| 新增覆盖 | 证据 sink 重绑定、调用方 sink 链式保留、证据去重、必需 evidence ID 指名、非法停止分类、信封键指名、工具参数键指名、未知工具列举、策略父体指名、单跳约束指名、改写重复识别 |
+
+离线测试用 autouse fixture 阻断非回环 socket（"Network disabled in offline tests"），因此全部可离线复现。
+
+### 14. 数据与产物
+
+| 路径 | 内容 |
+|---|---|
+| `runs/samples/minimax_connectivity_20260920_summary.json` | 本轮 3/3 连接验收 |
+| `runs/samples/diagnostic_2d_positive_v10_20260920_summary.json` | v10 完整机读摘要 |
+| `runs/samples/diagnostic_2d_positive_v4_20260919_summary.json` | v4 摘要（保留） |
+| `runs/diagnostic_2d_positive_v{4..10}_2026*` | 各版本完整运行目录（本地、git 忽略） |
+
+完整运行目录、SQLite、缓存与原始日志**不进入 Git**；只提交小型摘要。
+
+### 15. 下一步
+
+1. 在 2–3 个母体上各重复 ≤3 次，检验稳定性，再谈更大结论。
+2. 每次真实 agent 臂都必须先过连接门槛。
+3. 暂不扩展到完整 3D、docking 或 n=20。
+
+### 16. 智能体决策链
+
+```mermaid
+flowchart LR
+    A[目标与约束] --> B[模型选择下一步动作]
+    B --> C{状态机校验}
+    C -->|拒绝并指名原因| B
+    C -->|通过| D[RDKit 执行确定性编辑]
+    D --> E[固定协议评估]
+    E --> F[父子结构比较]
+    F --> G[假设核对]
+    G -->|支持| H[继续]
+    G -->|不支持| I[回退]
+    G -->|换思路| J[切换策略]
+    G -->|穷尽或达标| K[停止]
+    H --> B
+    I --> B
+    J --> B
+```
+
+## 模型传输修复与 v4 二维验收（2026-09-19）
 
 本轮先修复模型客户端生命周期与网络可靠性，再做**唯一一次** v4 小型二维验收。不新增分子工具、不扩展 3D、不跑 docking、不跑 n=20、不改 `property_score` 公式与 `+0.01` 阈值、不放宽 hERG 等既有约束。
 

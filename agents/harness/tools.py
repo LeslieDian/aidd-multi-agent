@@ -33,16 +33,37 @@ class ToolRegistry:
 
     def validate(self, action):
         if not isinstance(action, dict) or set(action) != {"tool", "arguments", "reason"}:
+            if isinstance(action, dict):
+                missing = sorted({"tool", "arguments", "reason"} - set(action))
+                unexpected = sorted(set(action) - {"tool", "arguments", "reason"})
+                detail = []
+                if missing:
+                    detail.append(f"missing={missing}")
+                if unexpected:
+                    detail.append(f"unexpected={unexpected}")
+                raise ValueError(
+                    f"Action must contain tool, arguments, reason only ({'; '.join(detail)}); "
+                    "allowed=['arguments', 'reason', 'tool']")
             raise ValueError("Action must contain tool, arguments, reason only")
         if not isinstance(action["reason"], str) or not action["reason"].strip():
             raise ValueError("Action needs a short reason")
         name = action["tool"]
         if not isinstance(name, str) or name not in self.tools:
-            raise ValueError("Unknown tool")
+            raise ValueError(f"Unknown tool {name!r}; allowed={sorted(self.tools)}")
         args = action["arguments"]
         schema = self.tools[name].parameters
         if not isinstance(args, dict) or set(args) != set(schema):
-            raise ValueError(f"Expected arguments: {list(schema)}")
+            missing = sorted(set(schema) - set(args)) if isinstance(args, dict) else sorted(schema)
+            unexpected = sorted(set(args) - set(schema)) if isinstance(args, dict) else []
+            detail = []
+            if missing:
+                detail.append(f"missing={missing}")
+            if unexpected:
+                detail.append(f"unexpected={unexpected}")
+            # Name the exact keys: a bare allowed-list made a real planner repeat
+            # the same malformed call three times (observed in v5/v6, 2026-09-20).
+            raise ValueError(
+                f"{name}: invalid arguments ({'; '.join(detail)}); allowed={sorted(schema)}")
         from .schema import validate_value
         for key, spec in schema.items():
             validate_value(args[key], spec, key)
@@ -298,9 +319,14 @@ def _choose_strategy(state, args, directory):
     if choice not in {"continue", "rollback", "switch_strategy"}:
         raise ValueError("choice must be continue, rollback or switch_strategy")
     if choice == "continue" and (h["outcome"] != "supported" or args["parent_id"] != h["child_id"]):
-        raise ValueError("Continue requires supported evidence and the assessed child as parent")
+        raise ValueError(
+            "Continue requires supported evidence and the assessed child as parent; "
+            f"outcome={h['outcome']!r}; required_parent_id={h['child_id']!r}; "
+            f"allowed_parent_ids={sorted({h['parent_id'], h['child_id']})}")
     if choice == "rollback" and args["parent_id"] != h["parent_id"]:
-        raise ValueError("Rollback must return to the hypothesis source parent")
+        raise ValueError(
+            "Rollback must return to the hypothesis source parent; "
+            f"required_parent_id={h['parent_id']!r}; allowed_parent_ids={sorted({h['parent_id'], h['child_id']})}")
     parent = _select(state, [args["parent_id"]])[0]
     if parent.get("parent_id") and not parent.get("current_validation", {}).get("passed"):
         raise ValueError("Selected strategy parent violates current constraints")

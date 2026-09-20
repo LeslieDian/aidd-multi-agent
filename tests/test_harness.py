@@ -109,6 +109,22 @@ def test_repeated_action_pauses(tmp_path):
     assert len([e for e in state.events if e["type"] == "tool_result"]) == 2
 
 
+def test_reworded_repeat_is_still_a_repeat(tmp_path):
+    """Rewording a rejected action must not evade the repeat guard.
+
+    A planner that kept rephrasing an illegal ``finish`` summary retried the same
+    illegal stop until the consecutive-error budget tripped, reporting a
+    state-machine disagreement as an ``execution_failure`` (observed in v7).
+    """
+    store = create(tmp_path)
+    registry = ToolRegistry()
+    registry.register(Tool("noop", "test", {}, lambda *args: {}))
+    policy = Policy([{"tool": "noop", "arguments": {}, "reason": f"attempt {i}"} for i in range(3)])
+    state = Harness(store, policy, registry).run(4)
+    assert state.reason == "repeated_action"
+    assert len([e for e in state.events if e["type"] == "tool_result"]) == 2
+
+
 def test_unknown_candidate_rejected_without_tool_call(tmp_path):
     store = create(tmp_path)
     state = Harness(store, Policy([action("evaluate", candidate_ids=["missing"])])).run(1)
