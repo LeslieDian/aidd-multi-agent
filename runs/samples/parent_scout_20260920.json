@@ -1,0 +1,625 @@
+{
+  "schema_version": 1,
+  "experiment": "parent_scout_20260920",
+  "note": "Offline arithmetic only: no model calls, no docking, no experiment budget. Scores must never be shown to a policy.",
+  "created_utc": "2026-09-20T15:58:02.501589+00:00",
+  "protocol_id": "7664d61be778cc8f8d3b5f99cb7d355a0be5fb671c3c620a378e2c93ebd8c400",
+  "constraints": {
+    "require_option_screening": true,
+    "require_planned_edits": true,
+    "max_edits": 3,
+    "preserve_scaffold": true,
+    "protected_smarts": [],
+    "allowed_parent_atom_indices": [],
+    "max_heavy_atom_delta": 6,
+    "max_changed_atoms": 8,
+    "min_similarity": 0.25,
+    "require_verified_refinement": true,
+    "require_safety_gate": false,
+    "min_property_score": null,
+    "min_composite_score": null,
+    "max_vina_score": null,
+    "allow_generation": false,
+    "allow_refine": true,
+    "allow_freeform_refine": false,
+    "docking_allowed": false,
+    "require_meaningful_improvement": true,
+    "min_effects": {
+      "property_score": 0.01,
+      "composite_score": 0.01,
+      "vina": 0.5,
+      "herg_risk": 0.02
+    },
+    "max_regressions": {
+      "property_score": 0.01,
+      "herg_risk": 0.0
+    }
+  },
+  "fragment_set": [
+    "C",
+    "N",
+    "O",
+    "F",
+    "Cl",
+    "CCC",
+    "CCO",
+    "C(F)(F)F",
+    "C#N",
+    "C(=O)N"
+  ],
+  "catalogue_rule": "attach each fragment at every heavy atom of the parent",
+  "parents_screened": 15,
+  "parents_with_qualifying_products": 13,
+  "usable_parents": [
+    {
+      "name": "phenol",
+      "parent_smiles": "Oc1ccccc1",
+      "unique_valid_products": 40,
+      "qualifying_products": 3,
+      "best_delta": 0.01743536373854193
+    },
+    {
+      "name": "aniline",
+      "parent_smiles": "Nc1ccccc1",
+      "unique_valid_products": 40,
+      "qualifying_products": 2,
+      "best_delta": 0.024480834560823173
+    },
+    {
+      "name": "toluene",
+      "parent_smiles": "Cc1ccccc1",
+      "unique_valid_products": 40,
+      "qualifying_products": 6,
+      "best_delta": 0.018744708865016113
+    },
+    {
+      "name": "anisole",
+      "parent_smiles": "COc1ccccc1",
+      "unique_valid_products": 40,
+      "qualifying_products": 2,
+      "best_delta": 0.011673273405476858
+    },
+    {
+      "name": "catechol",
+      "parent_smiles": "Oc1ccccc1O",
+      "unique_valid_products": 30,
+      "qualifying_products": 5,
+      "best_delta": 0.029845910350255078
+    },
+    {
+      "name": "resorcinol",
+      "parent_smiles": "Oc1cccc(O)c1",
+      "unique_valid_products": 40,
+      "qualifying_products": 6,
+      "best_delta": 0.029615138502747662
+    },
+    {
+      "name": "hydroquinone",
+      "parent_smiles": "Oc1ccc(O)cc1",
+      "unique_valid_products": 20,
+      "qualifying_products": 4,
+      "best_delta": 0.03428478695751869
+    },
+    {
+      "name": "pyridine-3-ol",
+      "parent_smiles": "Oc1cccnc1",
+      "unique_valid_products": 50,
+      "qualifying_products": 1,
+      "best_delta": 0.02425035286321031
+    },
+    {
+      "name": "4-methylphenol",
+      "parent_smiles": "Cc1ccc(O)cc1",
+      "unique_valid_products": 40,
+      "qualifying_products": 4,
+      "best_delta": 0.01925229322866695
+    },
+    {
+      "name": "4-fluorophenol",
+      "parent_smiles": "Oc1ccc(F)cc1",
+      "unique_valid_products": 30,
+      "qualifying_products": 3,
+      "best_delta": 0.01989095239852945
+    },
+    {
+      "name": "benzamide",
+      "parent_smiles": "NC(=O)c1ccccc1",
+      "unique_valid_products": 40,
+      "qualifying_products": 2,
+      "best_delta": 0.017463947590605766
+    },
+    {
+      "name": "benzonitrile",
+      "parent_smiles": "N#Cc1ccccc1",
+      "unique_valid_products": 30,
+      "qualifying_products": 3,
+      "best_delta": 0.014129477281080272
+    },
+    {
+      "name": "naphthalen-2-ol",
+      "parent_smiles": "Oc1ccc2ccccc2c1",
+      "unique_valid_products": 80,
+      "qualifying_products": 9,
+      "best_delta": 0.023872934744997965
+    }
+  ],
+  "results": [
+    {
+      "name": "phenol",
+      "parent_smiles": "Oc1ccccc1",
+      "parent_property_score": 0.9273897240389409,
+      "catalogue_actions": 70,
+      "structurally_valid": 60,
+      "unique_valid_products": 40,
+      "qualifying_products": 3,
+      "qualifying_smiles": [
+        "CCCOc1ccccc1",
+        "CCCc1ccc(O)cc1",
+        "OCCOc1ccccc1"
+      ],
+      "best_delta": 0.01743536373854193,
+      "qualifying_deltas": [
+        {
+          "smiles": "OCCOc1ccccc1",
+          "delta": 0.01743536373854193
+        },
+        {
+          "smiles": "CCCOc1ccccc1",
+          "delta": 0.014776211749152113
+        },
+        {
+          "smiles": "CCCc1ccc(O)cc1",
+          "delta": 0.011757364287992567
+        }
+      ],
+      "best_product_smiles": "OCCOc1ccccc1"
+    },
+    {
+      "name": "phenetole",
+      "parent_smiles": "CCOc1ccccc1",
+      "parent_property_score": 0.941291921849878,
+      "catalogue_actions": 90,
+      "structurally_valid": 70,
+      "unique_valid_products": 50,
+      "qualifying_products": 0,
+      "qualifying_smiles": [],
+      "best_delta": 0.009965869692937779,
+      "qualifying_deltas": [],
+      "best_product_smiles": "CCOc1ccc(C(N)=O)cc1"
+    },
+    {
+      "name": "aniline",
+      "parent_smiles": "Nc1ccccc1",
+      "parent_property_score": 0.9197314586543256,
+      "catalogue_actions": 70,
+      "structurally_valid": 60,
+      "unique_valid_products": 40,
+      "qualifying_products": 2,
+      "qualifying_smiles": [
+        "NC(=O)Nc1ccccc1",
+        "OCCNc1ccccc1"
+      ],
+      "best_delta": 0.024480834560823173,
+      "qualifying_deltas": [
+        {
+          "smiles": "OCCNc1ccccc1",
+          "delta": 0.016984333234563165
+        },
+        {
+          "smiles": "NC(=O)Nc1ccccc1",
+          "delta": 0.014685671980300241
+        }
+      ],
+      "best_product_smiles": "CCCNc1ccccc1"
+    },
+    {
+      "name": "toluene",
+      "parent_smiles": "Cc1ccccc1",
+      "parent_property_score": 0.9255861000000001,
+      "catalogue_actions": 70,
+      "structurally_valid": 60,
+      "unique_valid_products": 40,
+      "qualifying_products": 6,
+      "qualifying_smiles": [
+        "CCCCc1ccccc1",
+        "Cc1ccc(C(N)=O)cc1",
+        "Cc1ccc(CCO)cc1",
+        "NC(=O)Cc1ccccc1",
+        "OCCCc1ccccc1",
+        "OCc1ccccc1"
+      ],
+      "best_delta": 0.018744708865016113,
+      "qualifying_deltas": [
+        {
+          "smiles": "OCCCc1ccccc1",
+          "delta": 0.018744708865016113
+        },
+        {
+          "smiles": "CCCCc1ccccc1",
+          "delta": 0.015328610456527891
+        },
+        {
+          "smiles": "Cc1ccc(CCO)cc1",
+          "delta": 0.013550122942318055
+        },
+        {
+          "smiles": "NC(=O)Cc1ccccc1",
+          "delta": 0.013079028436823514
+        },
+        {
+          "smiles": "Cc1ccc(C(N)=O)cc1",
+          "delta": 0.012884894615089681
+        },
+        {
+          "smiles": "OCc1ccccc1",
+          "delta": 0.010921212177908535
+        }
+      ],
+      "best_product_smiles": "OCCCc1ccccc1"
+    },
+    {
+      "name": "anisole",
+      "parent_smiles": "COc1ccccc1",
+      "parent_property_score": 0.9355983000000001,
+      "catalogue_actions": 80,
+      "structurally_valid": 60,
+      "unique_valid_products": 40,
+      "qualifying_products": 2,
+      "qualifying_smiles": [
+        "COc1ccc(C(N)=O)cc1",
+        "COc1ccc(CCO)cc1"
+      ],
+      "best_delta": 0.011673273405476858,
+      "qualifying_deltas": [
+        {
+          "smiles": "COc1ccc(C(N)=O)cc1",
+          "delta": 0.011673273405476858
+        },
+        {
+          "smiles": "COc1ccc(CCO)cc1",
+          "delta": 0.011133480725576295
+        }
+      ],
+      "best_product_smiles": "COc1ccc(C(N)=O)cc1"
+    },
+    {
+      "name": "catechol",
+      "parent_smiles": "Oc1ccccc1O",
+      "parent_property_score": 0.9132020717400855,
+      "catalogue_actions": 80,
+      "structurally_valid": 60,
+      "unique_valid_products": 30,
+      "qualifying_products": 5,
+      "qualifying_smiles": [
+        "CCCOc1ccccc1O",
+        "CCCc1ccc(O)c(O)c1",
+        "COc1ccccc1O",
+        "OCCOc1ccccc1O",
+        "Oc1ccccc1OC(F)(F)F"
+      ],
+      "best_delta": 0.029845910350255078,
+      "qualifying_deltas": [
+        {
+          "smiles": "CCCOc1ccccc1O",
+          "delta": 0.029845910350255078
+        },
+        {
+          "smiles": "COc1ccccc1O",
+          "delta": 0.022927503660088333
+        },
+        {
+          "smiles": "OCCOc1ccccc1O",
+          "delta": 0.019105755759684317
+        },
+        {
+          "smiles": "Oc1ccccc1OC(F)(F)F",
+          "delta": 0.018488539033499563
+        },
+        {
+          "smiles": "CCCc1ccc(O)c(O)c1",
+          "delta": 0.011172740126929925
+        }
+      ],
+      "best_product_smiles": "CCCOc1ccccc1O"
+    },
+    {
+      "name": "resorcinol",
+      "parent_smiles": "Oc1cccc(O)c1",
+      "parent_property_score": 0.9117462927191065,
+      "catalogue_actions": 80,
+      "structurally_valid": 60,
+      "unique_valid_products": 40,
+      "qualifying_products": 6,
+      "qualifying_smiles": [
+        "CCCOc1cccc(O)c1",
+        "CCCc1c(O)cccc1O",
+        "CCCc1ccc(O)cc1O",
+        "COc1cccc(O)c1",
+        "OCCOc1cccc(O)c1",
+        "Oc1cccc(OC(F)(F)F)c1"
+      ],
+      "best_delta": 0.029615138502747662,
+      "qualifying_deltas": [
+        {
+          "smiles": "CCCOc1cccc(O)c1",
+          "delta": 0.029615138502747662
+        },
+        {
+          "smiles": "COc1cccc(O)c1",
+          "delta": 0.020600144219528937
+        },
+        {
+          "smiles": "OCCOc1cccc(O)c1",
+          "delta": 0.018874983912177123
+        },
+        {
+          "smiles": "Oc1cccc(OC(F)(F)F)c1",
+          "delta": 0.0188157122852477
+        },
+        {
+          "smiles": "CCCc1ccc(O)cc1O",
+          "delta": 0.01401712299406288
+        },
+        {
+          "smiles": "CCCc1c(O)cccc1O",
+          "delta": 0.011859584532524337
+        }
+      ],
+      "best_product_smiles": "CCCOc1cccc(O)c1"
+    },
+    {
+      "name": "hydroquinone",
+      "parent_smiles": "Oc1ccc(O)cc1",
+      "parent_property_score": 0.912411582229596,
+      "catalogue_actions": 80,
+      "structurally_valid": 60,
+      "unique_valid_products": 20,
+      "qualifying_products": 4,
+      "qualifying_smiles": [
+        "CCCOc1ccc(O)cc1",
+        "COc1ccc(O)cc1",
+        "OCCOc1ccc(O)cc1",
+        "Oc1ccc(OC(F)(F)F)cc1"
+      ],
+      "best_delta": 0.03428478695751869,
+      "qualifying_deltas": [
+        {
+          "smiles": "CCCOc1ccc(O)cc1",
+          "delta": 0.03428478695751869
+        },
+        {
+          "smiles": "COc1ccc(O)cc1",
+          "delta": 0.026129623939808555
+        },
+        {
+          "smiles": "OCCOc1ccc(O)cc1",
+          "delta": 0.023544632366948037
+        },
+        {
+          "smiles": "Oc1ccc(OC(F)(F)F)cc1",
+          "delta": 0.0234719612362968
+        }
+      ],
+      "best_product_smiles": "CCCOc1ccc(O)cc1"
+    },
+    {
+      "name": "pyridine-3-ol",
+      "parent_smiles": "Oc1cccnc1",
+      "parent_property_score": 0.9026884932697103,
+      "catalogue_actions": 70,
+      "structurally_valid": 50,
+      "unique_valid_products": 50,
+      "qualifying_products": 1,
+      "qualifying_smiles": [
+        "OCCOc1cccnc1"
+      ],
+      "best_delta": 0.02425035286321031,
+      "qualifying_deltas": [
+        {
+          "smiles": "OCCOc1cccnc1",
+          "delta": 0.022829054852600117
+        }
+      ],
+      "best_product_smiles": "CCCOc1cccnc1"
+    },
+    {
+      "name": "4-methylphenol",
+      "parent_smiles": "Cc1ccc(O)cc1",
+      "parent_property_score": 0.9275850948170086,
+      "catalogue_actions": 80,
+      "structurally_valid": 60,
+      "unique_valid_products": 40,
+      "qualifying_products": 4,
+      "qualifying_smiles": [
+        "CCCCc1ccc(O)cc1",
+        "CCCOc1ccc(C)cc1",
+        "COc1ccc(C)cc1",
+        "Cc1ccc(OCCO)cc1"
+      ],
+      "best_delta": 0.01925229322866695,
+      "qualifying_deltas": [
+        {
+          "smiles": "Cc1ccc(OCCO)cc1",
+          "delta": 0.01925229322866695
+        },
+        {
+          "smiles": "CCCCc1ccc(O)cc1",
+          "delta": 0.017380505883753727
+        },
+        {
+          "smiles": "CCCOc1ccc(C)cc1",
+          "delta": 0.015089647819237606
+        },
+        {
+          "smiles": "COc1ccc(C)cc1",
+          "delta": 0.010652434429319069
+        }
+      ],
+      "best_product_smiles": "Cc1ccc(OCCO)cc1"
+    },
+    {
+      "name": "4-fluorophenol",
+      "parent_smiles": "Oc1ccc(F)cc1",
+      "parent_property_score": 0.9260143465652603,
+      "catalogue_actions": 80,
+      "structurally_valid": 50,
+      "unique_valid_products": 30,
+      "qualifying_products": 3,
+      "qualifying_smiles": [
+        "CCCOc1ccc(F)cc1",
+        "COc1ccc(F)cc1",
+        "OCCOc1ccc(F)cc1"
+      ],
+      "best_delta": 0.01989095239852945,
+      "qualifying_deltas": [
+        {
+          "smiles": "OCCOc1ccc(F)cc1",
+          "delta": 0.01989095239852945
+        },
+        {
+          "smiles": "CCCOc1ccc(F)cc1",
+          "delta": 0.016110556989100133
+        },
+        {
+          "smiles": "COc1ccc(F)cc1",
+          "delta": 0.011020994219528846
+        }
+      ],
+      "best_product_smiles": "OCCOc1ccc(F)cc1"
+    },
+    {
+      "name": "benzamide",
+      "parent_smiles": "NC(=O)c1ccccc1",
+      "parent_property_score": 0.9377589484770968,
+      "catalogue_actions": 90,
+      "structurally_valid": 60,
+      "unique_valid_products": 40,
+      "qualifying_products": 2,
+      "qualifying_smiles": [
+        "CCCNC(=O)c1ccccc1",
+        "CCCc1ccc(C(N)=O)cc1"
+      ],
+      "best_delta": 0.017463947590605766,
+      "qualifying_deltas": [
+        {
+          "smiles": "CCCNC(=O)c1ccccc1",
+          "delta": 0.017463947590605766
+        },
+        {
+          "smiles": "CCCc1ccc(C(N)=O)cc1",
+          "delta": 0.010315287471313384
+        }
+      ],
+      "best_product_smiles": "CCCNC(=O)c1ccccc1"
+    },
+    {
+      "name": "benzonitrile",
+      "parent_smiles": "N#Cc1ccccc1",
+      "parent_property_score": 0.9168708615090122,
+      "catalogue_actions": 80,
+      "structurally_valid": 50,
+      "unique_valid_products": 30,
+      "qualifying_products": 3,
+      "qualifying_smiles": [
+        "N#Cc1ccc(C(N)=O)cc1",
+        "N#Cc1ccc(CCO)cc1",
+        "N#Cc1cccc(CCO)c1"
+      ],
+      "best_delta": 0.014129477281080272,
+      "qualifying_deltas": [
+        {
+          "smiles": "N#Cc1ccc(CCO)cc1",
+          "delta": 0.014129477281080272
+        },
+        {
+          "smiles": "N#Cc1ccc(C(N)=O)cc1",
+          "delta": 0.011251961896464824
+        },
+        {
+          "smiles": "N#Cc1cccc(CCO)c1",
+          "delta": 0.010504613757506887
+        }
+      ],
+      "best_product_smiles": "N#Cc1ccc(CCO)cc1"
+    },
+    {
+      "name": "phenyl-acetic-acid",
+      "parent_smiles": "OC(=O)Cc1ccccc1",
+      "parent_property_score": 0.9469370256895708,
+      "catalogue_actions": 100,
+      "structurally_valid": 70,
+      "unique_valid_products": 50,
+      "qualifying_products": 0,
+      "qualifying_smiles": [],
+      "best_delta": 0.005145641617827379,
+      "qualifying_deltas": [],
+      "best_product_smiles": "CCCc1ccc(CC(=O)O)cc1"
+    },
+    {
+      "name": "naphthalen-2-ol",
+      "parent_smiles": "Oc1ccc2ccccc2c1",
+      "parent_property_score": 0.9310681503285538,
+      "catalogue_actions": 110,
+      "structurally_valid": 80,
+      "unique_valid_products": 80,
+      "qualifying_products": 9,
+      "qualifying_smiles": [
+        "CCCOc1ccc2ccccc2c1",
+        "CCCc1c(O)ccc2ccccc12",
+        "CCCc1cc2ccccc2cc1O",
+        "CCCc1ccc2cc(O)ccc2c1",
+        "CCCc1ccc2ccc(O)cc2c1",
+        "CCCc1cccc2cc(O)ccc12",
+        "CCCc1cccc2ccc(O)cc12",
+        "NC(=O)Oc1ccc2ccccc2c1",
+        "OCCOc1ccc2ccccc2c1"
+      ],
+      "best_delta": 0.023872934744997965,
+      "qualifying_deltas": [
+        {
+          "smiles": "OCCOc1ccc2ccccc2c1",
+          "delta": 0.023872934744997965
+        },
+        {
+          "smiles": "CCCOc1ccc2ccccc2c1",
+          "delta": 0.01524893699640506
+        },
+        {
+          "smiles": "CCCc1ccc2cc(O)ccc2c1",
+          "delta": 0.012504222456067193
+        },
+        {
+          "smiles": "CCCc1c(O)ccc2ccccc12",
+          "delta": 0.011493337840682738
+        },
+        {
+          "smiles": "CCCc1cc2ccccc2cc1O",
+          "delta": 0.011095607071451852
+        },
+        {
+          "smiles": "CCCc1cccc2cc(O)ccc12",
+          "delta": 0.01107806860991345
+        },
+        {
+          "smiles": "NC(=O)Oc1ccc2ccccc2c1",
+          "delta": 0.011053483994528879
+        },
+        {
+          "smiles": "CCCc1ccc2ccc(O)cc2c1",
+          "delta": 0.01092829937914419
+        },
+        {
+          "smiles": "CCCc1cccc2ccc(O)cc12",
+          "delta": 0.01049272245606736
+        }
+      ],
+      "best_product_smiles": "OCCOc1ccc2ccccc2c1"
+    }
+  ],
+  "interpretation_limits": [
+    "This is a screening scout, not an experiment: it says which parents have a reachable positive control.",
+    "It cannot show that the agent is better or worse than the rule arm.",
+    "A parent with qualifying products is a candidate for the stability study, not a result.",
+    "The full per-parent product table is not committed; re-run this script to reproduce it."
+  ]
+}

@@ -1,0 +1,307 @@
+{
+  "protocol_id": "diagnostic_2d_multi_parent_stability_20260920",
+  "purpose": "The README-stated next step was to repeat the 2D diagnostic on 2-3 parents to test stability. The first blocker was that the original 'phenetole' scenario has zero reachable qualifying products and every earlier diagnostic run used the same parent (phenol), so no second parent existed. An offline scout fixed that, then two real studies were run on the same three parents.",
+  "parent_selection": {
+    "method": "scripts/scout_parents.py, fully offline arithmetic (no model or docking calls, no budget)",
+    "selection_made_before_any_model_call": true,
+    "catalogue_rule": "every fragment in SCOUT_FRAGMENTS attached at every heavy atom of the parent",
+    "fragments": [
+      "C",
+      "N",
+      "O",
+      "F",
+      "Cl",
+      "CCC",
+      "CCO",
+      "C(F)(F)F",
+      "C#N",
+      "C(=O)N"
+    ],
+    "usable_parents": 13,
+    "total_scouted": 15,
+    "selected_for_study": [
+      {
+        "name": "phenol",
+        "parent_smiles": "Oc1ccccc1",
+        "reachable_qualifying_products": 3
+      },
+      {
+        "name": "aniline",
+        "parent_smiles": "Nc1ccccc1",
+        "reachable_qualifying_products": 2
+      },
+      {
+        "name": "toluene",
+        "parent_smiles": "Cc1ccccc1",
+        "reachable_qualifying_products": 6
+      }
+    ],
+    "not_usable_examples": [
+      {
+        "name": "phenetole",
+        "parent_smiles": "CCOc1ccccc1",
+        "reachable_qualifying_products": 0
+      },
+      {
+        "name": "phenyl-acetic-acid",
+        "parent_smiles": "OC(=O)Cc1ccccc1",
+        "reachable_qualifying_products": 0
+      }
+    ]
+  },
+  "connectivity_gate": {
+    "summary_file": "runs/samples/minimax_connectivity_20260920_summary.json",
+    "successful": 3,
+    "attempted": 3,
+    "gate": "passed",
+    "clients_created": 1,
+    "retried_requests": 0
+  },
+  "studies": [
+    {
+      "study": "pre_fix",
+      "rows_file": "runs/samples/diagnostic_2d_stability_20260920_rows.json",
+      "note": "Frozen version before the choose_strategy repeat fix. The aniline agent arm found two qualifying molecules (best delta 0.01698) but then re-issued choose_strategy for the already-selected planned_s2 and was stopped by the semantic repeat guard as decision_loop, leaving the qualifying candidates unfinalised. That is a real defect, not a scientific result.",
+      "arms": [
+        {
+          "parent": "phenol",
+          "parent_smiles": "Oc1ccccc1",
+          "arm": "rule",
+          "termination_outcome": "budget_exhausted",
+          "new_structure_evaluations": 10,
+          "qualifying": 0,
+          "best_delta": 0.003001450847997744,
+          "network_failures": 0,
+          "schema_errors": 0,
+          "state_machine_rejections": 0,
+          "actual_edits": 0,
+          "parent_child_comparisons": 0,
+          "strategy_changes": 0,
+          "model_requests_recorded": 0,
+          "stop_evidence_valid": true
+        },
+        {
+          "parent": "phenol",
+          "parent_smiles": "Oc1ccccc1",
+          "arm": "agent",
+          "termination_outcome": "evaluation_budget_exhausted",
+          "new_structure_evaluations": 8,
+          "qualifying": 0,
+          "best_delta": 0.008208575961059172,
+          "network_failures": 0,
+          "schema_errors": 1,
+          "state_machine_rejections": 3,
+          "actual_edits": 2,
+          "parent_child_comparisons": 2,
+          "strategy_changes": 4,
+          "model_requests_recorded": 24,
+          "stop_evidence_valid": false
+        },
+        {
+          "parent": "aniline",
+          "parent_smiles": "Nc1ccccc1",
+          "arm": "rule",
+          "termination_outcome": "budget_exhausted",
+          "new_structure_evaluations": 10,
+          "qualifying": 0,
+          "best_delta": null,
+          "network_failures": 0,
+          "schema_errors": 0,
+          "state_machine_rejections": 0,
+          "actual_edits": 0,
+          "parent_child_comparisons": 0,
+          "strategy_changes": 0,
+          "model_requests_recorded": 0,
+          "stop_evidence_valid": true
+        },
+        {
+          "parent": "aniline",
+          "parent_smiles": "Nc1ccccc1",
+          "arm": "agent",
+          "termination_outcome": "decision_loop",
+          "new_structure_evaluations": 6,
+          "qualifying": 2,
+          "best_delta": 0.016984333234563165,
+          "network_failures": 0,
+          "schema_errors": 0,
+          "state_machine_rejections": 1,
+          "actual_edits": 2,
+          "parent_child_comparisons": 2,
+          "strategy_changes": 3,
+          "model_requests_recorded": 16,
+          "stop_evidence_valid": false
+        },
+        {
+          "parent": "toluene",
+          "parent_smiles": "Cc1ccccc1",
+          "arm": "rule",
+          "termination_outcome": "budget_exhausted",
+          "new_structure_evaluations": 10,
+          "qualifying": 0,
+          "best_delta": 0.004741387474351155,
+          "network_failures": 0,
+          "schema_errors": 0,
+          "state_machine_rejections": 0,
+          "actual_edits": 0,
+          "parent_child_comparisons": 0,
+          "strategy_changes": 0,
+          "model_requests_recorded": 0,
+          "stop_evidence_valid": true
+        },
+        {
+          "parent": "toluene",
+          "parent_smiles": "Cc1ccccc1",
+          "arm": "agent",
+          "termination_outcome": "goal_met",
+          "new_structure_evaluations": 5,
+          "qualifying": 3,
+          "best_delta": 0.018744708865016113,
+          "network_failures": 0,
+          "schema_errors": 2,
+          "state_machine_rejections": 2,
+          "actual_edits": 2,
+          "parent_child_comparisons": 2,
+          "strategy_changes": 1,
+          "model_requests_recorded": 17,
+          "stop_evidence_valid": true
+        }
+      ]
+    },
+    {
+      "study": "fixed_version",
+      "rows_file": "runs/samples/diagnostic_2d_fixed_20260920_rows.json",
+      "note": "Same three parents after the fix. The aniline arm no longer loops; it now ends with a clean evaluation_budget_exhausted. In this single run aniline found no qualifying product (best delta -0.00369), which is reported as-is: the fix removed the defect, it did not make the search succeed.",
+      "arms": [
+        {
+          "parent": "phenol",
+          "parent_smiles": "Oc1ccccc1",
+          "arm": "rule",
+          "termination_outcome": "budget_exhausted",
+          "new_structure_evaluations": 10,
+          "qualifying": 0,
+          "best_delta": 0.003001450847997744,
+          "network_failures": 0,
+          "network_retries": 0,
+          "schema_errors": 0,
+          "state_machine_rejections": 0,
+          "actual_edits": 0,
+          "parent_child_comparisons": 0,
+          "strategy_changes": 0,
+          "model_requests_recorded": 0,
+          "stop_evidence_valid": true
+        },
+        {
+          "parent": "phenol",
+          "parent_smiles": "Oc1ccccc1",
+          "arm": "agent",
+          "termination_outcome": "evaluation_budget_exhausted",
+          "new_structure_evaluations": 9,
+          "qualifying": 0,
+          "best_delta": 0.008208575961059172,
+          "network_failures": 0,
+          "network_retries": 0,
+          "schema_errors": 1,
+          "state_machine_rejections": 1,
+          "actual_edits": 1,
+          "parent_child_comparisons": 1,
+          "strategy_changes": 1,
+          "model_requests_recorded": 15,
+          "stop_evidence_valid": false
+        },
+        {
+          "parent": "aniline",
+          "parent_smiles": "Nc1ccccc1",
+          "arm": "rule",
+          "termination_outcome": "budget_exhausted",
+          "new_structure_evaluations": 10,
+          "qualifying": 0,
+          "best_delta": null,
+          "network_failures": 0,
+          "network_retries": 0,
+          "schema_errors": 0,
+          "state_machine_rejections": 0,
+          "actual_edits": 0,
+          "parent_child_comparisons": 0,
+          "strategy_changes": 0,
+          "model_requests_recorded": 0,
+          "stop_evidence_valid": true
+        },
+        {
+          "parent": "aniline",
+          "parent_smiles": "Nc1ccccc1",
+          "arm": "agent",
+          "termination_outcome": "evaluation_budget_exhausted",
+          "new_structure_evaluations": 8,
+          "qualifying": 0,
+          "best_delta": -0.0036873042101760456,
+          "network_failures": 0,
+          "network_retries": 0,
+          "schema_errors": 3,
+          "state_machine_rejections": 0,
+          "actual_edits": 1,
+          "parent_child_comparisons": 1,
+          "strategy_changes": 1,
+          "model_requests_recorded": 14,
+          "stop_evidence_valid": false
+        },
+        {
+          "parent": "toluene",
+          "parent_smiles": "Cc1ccccc1",
+          "arm": "rule",
+          "termination_outcome": "budget_exhausted",
+          "new_structure_evaluations": 10,
+          "qualifying": 0,
+          "best_delta": 0.004741387474351155,
+          "network_failures": 0,
+          "network_retries": 0,
+          "schema_errors": 0,
+          "state_machine_rejections": 0,
+          "actual_edits": 0,
+          "parent_child_comparisons": 0,
+          "strategy_changes": 0,
+          "model_requests_recorded": 0,
+          "stop_evidence_valid": true
+        },
+        {
+          "parent": "toluene",
+          "parent_smiles": "Cc1ccccc1",
+          "arm": "agent",
+          "termination_outcome": "goal_met",
+          "new_structure_evaluations": 7,
+          "qualifying": 1,
+          "best_delta": 0.018744708865016113,
+          "network_failures": 0,
+          "network_retries": 1,
+          "schema_errors": 0,
+          "state_machine_rejections": 0,
+          "actual_edits": 2,
+          "parent_child_comparisons": 2,
+          "strategy_changes": 1,
+          "model_requests_recorded": 14,
+          "stop_evidence_valid": true
+        }
+      ]
+    }
+  ],
+  "defect_found_and_fixed": {
+    "symptom": "decision_loop after a qualifying candidate already existed",
+    "root_cause": "choose_strategy is one-shot per assessment, and the prompt said so, but the tool did not enforce it. Re-issuing it for a strategy whose status was already 'selected' changed nothing and was caught only later by the generic repeated-action guard, which stopped the task without calling finish.",
+    "fixes": [
+      "agents/harness/tools.py::_choose_strategy rejects a repeat decision for a hypothesis that already has a selected strategy and names the legal next actions.",
+      "agents/harness/tools.py::available_actions adds a 'qualifying_candidate_found' stage exposing finish as the next action once a supported child exists."
+    ],
+    "regression_tests": [
+      "tests/test_harness.py::test_repeated_strategy_decision_is_rejected_with_legal_next_actions",
+      "tests/test_harness.py::test_qualifying_candidate_exposes_finish_not_strategy_decision"
+    ]
+  },
+  "budget_and_size_caveat": "The parent-derived catalogue is larger than the original phenol catalogue: 70 actions and 40 unique valid products versus 24 actions and 16 products. Budgets were left unchanged (max_evaluations=11, max_edits=3, max_steps=45). The phenol arm therefore operates on a different feasible-space size than the earlier v10 run and cannot be compared to it on magnitude. Cross-parent comparison here is about mechanism and failure mode, not effect size.",
+  "honest_limitations": [
+    "One real run per parent per arm; no repetition, so no variance estimate.",
+    "The rule arm never found a qualifying product on any parent (0/3), so it is a weak baseline.",
+    "The agent found qualifying products on 1 of 3 parents in the fixed study; this is a single observation.",
+    "Reachability scores are computed separately and hidden from both policies.",
+    "No docking, no biological validation, and the 0.01 threshold is unchanged.",
+    "The pre-fix aniline result is a defect artifact and is not evidence about agent capability."
+  ]
+}

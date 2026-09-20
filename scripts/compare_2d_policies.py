@@ -32,10 +32,45 @@ def edit_key(edit):
     return json.dumps(edit, sort_keys=True)
 
 
-def catalogue(scenario="phenetole"):
+SCOUT_FRAGMENTS = ("C", "N", "O", "F", "Cl", "CCC", "CCO", "C(F)(F)F", "C#N", "C(=O)N")
+
+
+def catalogue_for_parent(parent_smiles):
+    """Build a one-hop catalogue for an arbitrary parent.
+
+    The catalogue rule is fixed and parent-independent: attach every fragment
+    in ``SCOUT_FRAGMENTS`` at every heavy atom of the parent. Sites therefore
+    come from the parent itself instead of hand-picked chemistry, which is what
+    makes several parents comparable under one protocol.
+
+    Fragments that fail RDKit's valence/feasibility check are kept in the
+    catalogue and rejected by precheck, so the structural pass rate stays a
+    meaningful, auditable quantity rather than being pre-filtered away.
+    """
+    from rdkit import Chem
+    molecule = Chem.MolFromSmiles(parent_smiles)
+    if molecule is None:
+        raise ValueError(f"Invalid parent SMILES: {parent_smiles}")
+    rows = []
+    for site in range(molecule.GetNumAtoms()):
+        for fragment in SCOUT_FRAGMENTS:
+            rows.append({"id": f"e{len(rows) + 1:02}",
+                         "edit": {"operation": "attach_fragment",
+                                  "arguments": {"atom_index": site,
+                                                "fragment_smiles": fragment,
+                                                "fragment_atom_index": 0}}})
+    return rows
+
+
+def catalogue(scenario="phenetole", parent_smiles=None):
     rows = []
     def add(operation, **arguments):
         rows.append({"id": f"e{len(rows)+1:02}", "edit": {"operation": operation, "arguments": arguments}})
+    if scenario == "parent":
+        # Multi-parent stability study: one shared catalogue rule, one parent.
+        if not parent_smiles:
+            raise ValueError("scenario 'parent' requires an explicit parent_smiles")
+        return catalogue_for_parent(parent_smiles)
     if scenario == "phenol":
         # A new, explicitly separate diagnostic. Indices refer to Oc1ccccc1:
         # hydroxyl O=0, substituted ring C=1, remaining ring atoms=2..6.
@@ -88,15 +123,31 @@ def source_hashes():
     return {str(p.relative_to(ROOT)).replace('\\', '/'): file_hash(p) for p in files}
 
 
-def prepare(output, scenario="phenetole"):
+def prepare(output, scenario="phenetole", parent_smiles=None):
     output = Path(output)
     output.mkdir(parents=True, exist_ok=False)
     config = yaml.safe_load((ROOT / "config.yaml").read_text(encoding="utf-8"))
     planner_name = config.get("harness", {}).get("planner") or config["llm"]["judge"]
     planner = config["llm"]["providers"][planner_name]
-    manifest = {"created_utc": datetime.now(timezone.utc).isoformat(), "output_dir": str(output.resolve()), "parent_smiles": "Oc1ccccc1" if scenario == "phenol" else "CCOc1ccccc1",
-        "scenario": scenario, "selection_rationale": "phenol chosen as a separate reachable positive-control task based on earlier parent-child evidence; not a blind generalization benchmark" if scenario == "phenol" else "original diagnostic",
-        "config": config, "versions": versions(), "source_hashes": source_hashes(), "catalogue": catalogue(scenario),
+    if scenario == "parent":
+        if not parent_smiles:
+            raise ValueError("scenario 'parent' requires an explicit parent_smiles")
+        resolved_parent = parent_smiles
+        rationale = ("Multi-parent stability study. The parent was selected from "
+                     "scripts/scout_parents.py output, which is offline arithmetic only and "
+                     "never passed to a policy; the catalogue rule is identical across parents.")
+    elif scenario == "phenol":
+        resolved_parent = "Oc1ccccc1"
+        rationale = ("phenol chosen as a separate reachable positive-control task based on "
+                     "earlier parent-child evidence; not a blind generalization benchmark")
+    else:
+        resolved_parent = "CCOc1ccccc1"
+        rationale = "original diagnostic"
+    manifest = {"created_utc": datetime.now(timezone.utc).isoformat(), "output_dir": str(output.resolve()),
+        "parent_smiles": resolved_parent,
+        "scenario": scenario, "selection_rationale": rationale,
+        "config": config, "versions": versions(), "source_hashes": source_hashes(),
+        "catalogue": catalogue(scenario, resolved_parent),
         "llm_transport": {"provider": planner_name, "base_url_host": urlparse(planner["base_url"]).hostname,
             "model": planner["model"], "timeout_seconds": config.get("harness", {}).get("request_timeout", 60),
             "max_sdk_retries": 0, "trust_env_proxy": config.get("llm", {}).get("trust_env_proxy", False),
@@ -366,7 +417,7 @@ def run_arm(output, arm):
     output = Path(output)
     manifest = load_frozen(output)
     reachability = output / "reachability.json"
-    if manifest.get("scenario") == "phenol" and (not reachability.exists() or json.loads(reachability.read_text(encoding="utf-8"))["qualifying_products"] == 0):
+    if manifest.get("scenario") in {"phenol", "parent"} and (not reachability.exists() or json.loads(reachability.read_text(encoding="utf-8"))["qualifying_products"] == 0):
         raise ValueError("New comparison requires completed reachability audit with a qualifying product")
     if arm == "agent":
         require_connectivity_gate(output)
@@ -451,11 +502,14 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("stage", choices=["prepare", "audit", "rule", "agent", "report"])
     parser.add_argument("--output", required=True)
-    parser.add_argument("--scenario", choices=["phenetole", "phenol"], default="phenetole")
+    parser.add_argument("--scenario", choices=["phenetole", "phenol", "parent"], default="phenetole")
+    parser.add_argument("--parent", default=None,
+                        help="Parent SMILES; required when --scenario parent")
     args = parser.parse_args()
     if args.stage == "prepare":
-        result = prepare(args.output, args.scenario)
-        result = {"prepared": True, "catalogue_actions": len(result["catalogue"])}
+        result = prepare(args.output, args.scenario, args.parent)
+        result = {"prepared": True, "catalogue_actions": len(result["catalogue"]),
+                  "parent_smiles": result["parent_smiles"], "scenario": result["scenario"]}
     elif args.stage == "audit":
         result = audit(args.output)
     elif args.stage in {"rule", "agent"}:

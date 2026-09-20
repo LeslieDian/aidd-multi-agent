@@ -210,6 +210,14 @@ def available_actions(state):
     if executed:
         return {"stage": "parent_child_comparison", "tools": ["compare_parent_child", "pause"],
                 "references": {"candidate_ids": [h["child_id"] for h in executed]}}
+    # A supported child means the goal is already met. Make that explicit so the
+    # planner stops instead of re-deciding strategies: the aniline run found two
+    # qualifying molecules and then looped on choose_strategy (2026-09-20).
+    qualifying = [cid for cid, c in state.candidates.items()
+                  if c.get("parent_id") and c.get("current_improvement", {}).get("outcome") == "supported"]
+    if qualifying:
+        return {"stage": "qualifying_candidate_found", "tools": ["finish", "pause"],
+                "references": {"candidate_ids": qualifying}}
     decided_hypotheses = {s.get("hypothesis_id") for s in state.strategies
                           if s.get("revision") == state.revision and s.get("status") == "selected"}
     assessed = [h for h in state.hypotheses.values()
@@ -314,6 +322,20 @@ def _choose_strategy(state, args, directory):
             "Propose a new batch or finish when no screened option meets the numerical threshold."
         )
     child = state.candidates[h["child_id"]]
+    already_decided = [s for s in state.strategies
+                       if s.get("hypothesis_id") == args["hypothesis_id"]
+                       and s.get("revision") == state.revision
+                       and s.get("status") == "selected"]
+    if already_decided:
+        # A strategy decision is one-shot per assessment. Re-issuing it for the
+        # same hypothesis changes nothing and is reported as a decision loop, so
+        # reject it here and name the actions that can actually make progress.
+        legal = available_actions(state)
+        raise ValueError(
+            f"hypothesis_id={args['hypothesis_id']!r} already has a selected strategy at "
+            f"revision {state.revision}; re-deciding it cannot change the outcome. "
+            f"legal_next_actions={sorted(legal['tools'])}; stage={legal['stage']!r}; "
+            f"references={legal['references']}")
     assess_hypothesis(state, child)
     choice = args["choice"]
     if choice not in {"continue", "rollback", "switch_strategy"}:

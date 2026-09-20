@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 import pytest
-from scripts.compare_2d_policies import prepare, audit, run_arm, new_state, load_frozen, catalogue, CatalogRegistry, action, require_connectivity_gate
+from scripts.compare_2d_policies import prepare, audit, run_arm, new_state, load_frozen, catalogue, CatalogRegistry, action, require_connectivity_gate, SCOUT_FRAGMENTS
 
 
 def test_frozen_catalogue_and_equal_budgets(tmp_path):
@@ -158,3 +158,64 @@ def test_goal_not_met_allowed_after_all_unique_products_are_explored(tmp_path):
     assert event["type"] == "diagnostic_stop_decision"
     assert event["facts"]["unexplored_unique_products"] == 0
     assert event["facts"]["deterministic_stop_allowed"]
+
+
+# ---------------------------------------------------------------------------
+# Multi-parent support (2026-09-20): the stability study needs parents beyond
+# phenol, because every run so far used the same one and the phenetole
+# scenario has zero reachable qualifying products.
+# ---------------------------------------------------------------------------
+
+def test_arbitrary_parent_catalogue_is_parent_derived_and_reproducible(tmp_path):
+    """One shared catalogue rule must apply to any parent."""
+    output = tmp_path / "multiparent"
+    manifest = prepare(output, scenario="parent", parent_smiles="Cc1ccccc1")
+    assert manifest["parent_smiles"] == "Cc1ccccc1"
+    assert manifest["scenario"] == "parent"
+    # Toluene has 7 heavy atoms x 10 fragments.
+    assert len(manifest["catalogue"]) == 70
+    assert all(row["edit"]["operation"] == "attach_fragment" for row in manifest["catalogue"])
+    sites = {row["edit"]["arguments"]["atom_index"] for row in manifest["catalogue"]}
+    assert sites == set(range(7))
+    fragments = {row["edit"]["arguments"]["fragment_smiles"] for row in manifest["catalogue"]}
+    assert fragments == set(SCOUT_FRAGMENTS)
+    # The same parent and code must give the same frozen catalogue.
+    other = tmp_path / "multiparent_repeat"
+    repeat = prepare(other, scenario="parent", parent_smiles="Cc1ccccc1")
+    assert repeat["catalogue"] == manifest["catalogue"]
+
+
+def test_parent_scenario_requires_an_explicit_parent(tmp_path):
+    with pytest.raises(ValueError, match="requires an explicit parent_smiles"):
+        prepare(tmp_path / "no_parent", scenario="parent")
+
+
+def test_invalid_parent_is_rejected_before_freezing(tmp_path):
+    with pytest.raises(ValueError, match="Invalid parent SMILES"):
+        prepare(tmp_path / "bad_parent", scenario="parent", parent_smiles="not-a-molecule")
+
+
+def test_multiparent_audit_qualifies_and_rule_arm_stays_in_budget(tmp_path):
+    """A scout-selected parent must be a usable positive control end to end."""
+    output = tmp_path / "toluene"
+    manifest = prepare(output, scenario="parent", parent_smiles="Cc1ccccc1")
+    reachable = audit(output)
+    assert reachable["qualifying_products"] > 0, "the scout promised this parent has a reachable target"
+    assert reachable["audit_only_not_arm_budget"]
+    assert reachable["scores_hidden_from_policies"]
+    rule = run_arm(output, "rule")
+    assert rule["total_charged_evaluations"] <= 11
+    assert rule["network_failures"] == 0
+    assert rule["stop_evidence_valid"]
+
+
+def test_multiparent_agent_arm_still_requires_the_connectivity_gate(tmp_path, monkeypatch):
+    """The gate must not be bypassable just because the parent changed."""
+    import scripts.compare_2d_policies as module
+    output = tmp_path / "gated"
+    prepare(output, scenario="parent", parent_smiles="Cc1ccccc1")
+    audit(output)
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+    (tmp_path / "runs/samples").mkdir(parents=True)
+    with pytest.raises(ValueError, match="connectivity gate summary is missing"):
+        module.require_connectivity_gate(output)

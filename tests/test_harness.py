@@ -296,6 +296,61 @@ def test_terminal_state_exposes_and_accepts_no_model_tools(tmp_path):
                                      enforce_state_machine=True)
 
 
+def test_repeated_strategy_decision_is_rejected_with_legal_next_actions(tmp_path):
+    """A selected strategy must not be re-decided: the aniline run found two
+    qualifying molecules and then looped on choose_strategy until the repeat
+    guard stopped it as decision_loop (2026-09-20). The already-executed first
+    strategy keeps the stage at strategy_decision, so the stage check alone does
+    not catch the repeat."""
+    from agents.harness.tools import default_registry
+    state = create(tmp_path).load()
+    state.constraints.update(require_planned_edits=True)
+    state.candidates = {
+        "c1": {"candidate_id": "c1", "smiles": "CCO", "evaluation_status": "screening_only"},
+        "c2": {"candidate_id": "c2", "smiles": "CCCO", "parent_id": "c1",
+               "evaluation_status": "screening_only"},
+        "c3": {"candidate_id": "c3", "smiles": "CCCCO", "parent_id": "c1",
+               "evaluation_status": "screening_only"},
+    }
+    state.hypotheses["planned_s1"] = {"hypothesis_id": "planned_s1", "parent_id": "c1",
+                                      "child_id": "c2", "status": "assessed", "outcome": "supported"}
+    state.hypotheses["planned_s2"] = {"hypothesis_id": "planned_s2", "parent_id": "c1",
+                                      "child_id": "c3", "status": "assessed", "outcome": "supported"}
+    state.strategies.append({"hypothesis_id": "planned_s1", "choice": "switch_strategy", "parent_id": "c1",
+                             "revision": state.revision, "status": "executed", "step": 1})
+    state.strategies.append({"hypothesis_id": "planned_s2", "choice": "switch_strategy", "parent_id": "c1",
+                             "revision": state.revision, "status": "selected", "step": 2})
+    with pytest.raises(ValueError) as exc:
+        default_registry().execute(state, action("choose_strategy", hypothesis_id="planned_s2",
+                                                 choice="switch_strategy", parent_id="c1",
+                                                 rationale="again"), None)
+    message = str(exc.value)
+    assert "already has a selected strategy" in message
+    assert "legal_next_actions=" in message
+    assert "stage=" in message
+
+
+def test_qualifying_candidate_exposes_finish_not_strategy_decision(tmp_path):
+    """Once a supported child exists the goal is met, so finish must be the
+    exposed action instead of another strategy decision."""
+    from agents.harness.tools import available_actions
+    state = create(tmp_path).load()
+    state.constraints.update(require_planned_edits=True)
+    state.candidates = {
+        "c1": {"candidate_id": "c1", "smiles": "CCO", "evaluation_status": "screening_only"},
+        "c2": {"candidate_id": "c2", "smiles": "CCCO", "parent_id": "c1",
+               "evaluation_status": "screening_only",
+               "current_improvement": {"outcome": "supported", "observed_delta": 0.02}},
+    }
+    state.hypotheses["h1"] = {"hypothesis_id": "h1", "parent_id": "c1",
+                              "child_id": "c2", "status": "assessed", "outcome": "supported"}
+    availability = available_actions(state)
+    assert availability["stage"] == "qualifying_candidate_found"
+    assert availability["tools"] == ["finish", "pause"]
+    assert availability["references"] == {"candidate_ids": ["c2"]}
+    assert "choose_strategy" not in availability["tools"]
+
+
 def test_transient_planner_retry_and_budget_accounted(tmp_path):
     store = create(tmp_path)
     calls = []

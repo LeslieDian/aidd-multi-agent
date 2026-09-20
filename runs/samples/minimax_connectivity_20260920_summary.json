@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "experiment": "minimax_connectivity_20260919",
-  "created_utc": "2026-09-20T14:03:34.400923+00:00",
+  "created_utc": "2026-09-20T15:31:01.053611+00:00",
   "purpose": "Verify model transport lifecycle before any v4 molecular run",
   "transport": {
     "provider": "MiniMax",
@@ -36,7 +36,7 @@
       "retried": false,
       "succeeded": true,
       "error_category": null,
-      "latency_ms": 2254.136,
+      "latency_ms": 1636.788,
       "schema_valid": true,
       "returned_sequence": 1
     },
@@ -46,7 +46,7 @@
       "retried": false,
       "succeeded": true,
       "error_category": null,
-      "latency_ms": 863.935,
+      "latency_ms": 847.065,
       "schema_valid": true,
       "returned_sequence": 2
     },
@@ -56,7 +56,7 @@
       "retried": false,
       "succeeded": true,
       "error_category": null,
-      "latency_ms": 933.084,
+      "latency_ms": 831.347,
       "schema_valid": true,
       "returned_sequence": 3
     }
