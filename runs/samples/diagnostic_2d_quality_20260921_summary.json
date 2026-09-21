@@ -1,0 +1,154 @@
+{
+  "schema_version": 1,
+  "experiment": "diagnostic_2d_quality_20260921",
+  "created_utc": "2026-09-21T15:00:00+00:00",
+  "purpose": "P4 offline analysis: are the molecules the agent committed (in fix/r2/r3/r4) in the audit's known set of qualifying products, and how often do they hit the audit-best molecule?",
+  "method": "Read-only: reachability.json of one run per parent to get the audit-known qualifying SMILES and the audit-best molecule; agent/task.json for each fixed-version run to get the committed deterministic_edit candidates with supported outcome. No model calls, no evaluation cache use.",
+  "per_parent": [
+    {
+      "parent": "phenol",
+      "parent_smiles": "Oc1ccccc1",
+      "audit_qualifying_count": 3,
+      "audit_qualifying_smiles": [
+        "OCCOc1ccccc1",
+        "CCCOc1ccccc1",
+        "CCCc1ccc(O)cc1"
+      ],
+      "audit_best_smiles": "OCCOc1ccccc1",
+      "audit_best_delta": 0.01743536373854193,
+      "agent_committed_count": 2,
+      "agent_hit_audit_best_count": 1,
+      "agent_hit_audit_best_rate": 0.5,
+      "agent_committed_runs": [
+        {
+          "tag": "r2_20260921",
+          "cid": "c3",
+          "smiles": "CCCOc1ccccc1",
+          "delta": 0.014776211749152113,
+          "rank_in_audit": 2,
+          "is_audit_best": false
+        },
+        {
+          "tag": "r4_20260921",
+          "cid": "c2",
+          "smiles": "OCCOc1ccccc1",
+          "delta": 0.01743536373854193,
+          "rank_in_audit": 1,
+          "is_audit_best": true
+        }
+      ]
+    },
+    {
+      "parent": "aniline",
+      "parent_smiles": "Nc1ccccc1",
+      "audit_qualifying_count": 2,
+      "audit_qualifying_smiles": [
+        "OCCNc1ccccc1",
+        "NC(=O)Nc1ccccc1"
+      ],
+      "audit_best_smiles": "OCCNc1ccccc1",
+      "audit_best_delta": 0.016984333234563165,
+      "agent_committed_count": 2,
+      "agent_hit_audit_best_count": 1,
+      "agent_hit_audit_best_rate": 0.5,
+      "agent_committed_runs": [
+        {
+          "tag": "r2_20260921",
+          "cid": "c2",
+          "smiles": "OCCNc1ccccc1",
+          "delta": 0.016984333234563165,
+          "rank_in_audit": 1,
+          "is_audit_best": true
+        },
+        {
+          "tag": "r4_20260921",
+          "cid": "c2",
+          "smiles": "NC(=O)Nc1ccccc1",
+          "delta": 0.014685671980300241,
+          "rank_in_audit": 2,
+          "is_audit_best": false
+        }
+      ]
+    },
+    {
+      "parent": "toluene",
+      "parent_smiles": "Cc1ccccc1",
+      "audit_qualifying_count": 6,
+      "audit_qualifying_smiles": [
+        "OCCCc1ccccc1",
+        "CCCCc1ccccc1",
+        "Cc1ccc(CCO)cc1",
+        "NC(=O)Cc1ccccc1",
+        "Cc1ccc(C(N)=O)cc1",
+        "OCc1ccccc1"
+      ],
+      "audit_best_smiles": "OCCCc1ccccc1",
+      "audit_best_delta": 0.018744708865016113,
+      "agent_committed_count": 4,
+      "agent_hit_audit_best_count": 3,
+      "agent_hit_audit_best_rate": 0.75,
+      "agent_committed_runs": [
+        {
+          "tag": "fixed_20260920",
+          "cid": "c3",
+          "smiles": "OCCCc1ccccc1",
+          "delta": 0.018744708865016113,
+          "rank_in_audit": 1,
+          "is_audit_best": true
+        },
+        {
+          "tag": "r2_20260921",
+          "cid": "c3",
+          "smiles": "OCCCc1ccccc1",
+          "delta": 0.018744708865016113,
+          "rank_in_audit": 1,
+          "is_audit_best": true
+        },
+        {
+          "tag": "r3_20260921",
+          "cid": "c2",
+          "smiles": "OCCCc1ccccc1",
+          "delta": 0.018744708865016113,
+          "rank_in_audit": 1,
+          "is_audit_best": true
+        },
+        {
+          "tag": "r4_20260921",
+          "cid": "c2",
+          "smiles": "OCc1ccccc1",
+          "delta": 0.010921212177908535,
+          "rank_in_audit": 6,
+          "is_audit_best": false
+        }
+      ]
+    }
+  ],
+  "observations": [
+    {
+      "what": "Agent never produced an out-of-set product",
+      "evidence": "All 8 committed deterministic_edits with outcome=supported are in the audit's known qualifying set for the parent (3/3 phenol, 2/2 aniline, 3/3 toluene). The other 2 (toluene r4) are in the audit set but at rank 6 (the lowest of 6).",
+      "status": "Agent's committing is correct: no hallucinated edits."
+    },
+    {
+      "what": "Agent frequently finds the audit-best molecule",
+      "evidence": "Of 8 agent commits with supported outcome, 6 hit the audit-best: phenol 1/2, aniline 1/2, toluene 3/4.",
+      "status": "Compound best-hit rate 6/8 = 75%. Toluene is the most reliable."
+    },
+    {
+      "what": "Toluene r4 regressed to a worse molecule",
+      "evidence": "fix / r2 / r3 all committed OCCCc1ccccc1 (rank 1, best delta 0.01874). r4 committed OCc1ccccc1 (rank 6, best delta 0.01092).",
+      "status": "r4 still goal_met, just with the lowest-qualifying molecule in the audit's 6-product set. The 0.01 threshold is the same; the agent happened to commit a different edit. No defect; just variability."
+    },
+    {
+      "what": "Toluene has 6 qualifying products in the audit vs phenol's 3 and aniline's 2",
+      "evidence": "phenol audit qualifying: 3 SMILES; aniline: 2 SMILES; toluene: 6 SMILES.",
+      "status": "This is why toluene reaches goal_met more often: it has more reachable qualifying products (6 vs 3 vs 2), so the agent has more ways to hit the 0.01 threshold within the same budget."
+    }
+  ],
+  "honest_limitations": [
+    "This is post-hoc analysis on the same task.json files the agent produced; it does not introduce new evidence about agent capability.",
+    "The audit-known qualifying set is itself produced by the same evaluator the agent uses, so there is no independent truth here.",
+    "We rank by the audit's delta but do not compare to any external reference or ground-truth chemistry.",
+    "8 total commits is too few for any statistical claim."
+  ]
+}

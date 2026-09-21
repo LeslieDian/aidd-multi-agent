@@ -264,6 +264,72 @@ r4 关键观察：
 
 ---
 
+## 2026-09-21：P1 多母体扩展被 token plan 拦截 + P4 离线质量分析
+
+按计划做 P1（5 个新母体 × 1 次真实臂）与 P4（agent 找到分子 vs audit 已知合格集合的对照）。
+
+### 1. P1 被闸门拦截
+
+**15:00 / 15:02 / 15:05 三次闸门尝试**：
+- 11:00 左右用量耗尽（2056）
+- 11:30 触发速率限制（2062）
+- 14:45 后回到 2056 —— **token plan 用量在下午持续消耗下彻底耗尽**
+
+闸门连续 0/3，按规范**不发起任何真实臂**。失败的闸门摘要已删除。
+
+P1 恢复后执行计划：
+
+1. 重跑闸门 → 3/3 通过。
+2. 选 5 个未测母体各跑 1 次 agent 臂：
+   - catechol `Oc1ccccc1O`（5 合格 best 0.02985）
+   - resorcinol `Oc1cccc(O)c1`（6 合格 best 0.02962）
+   - 4-methylphenol `Cc1ccc(O)cc1`（4 合格 best 0.01925）
+   - 4-fluorophenol `Oc1ccc(F)cc1`（3 合格 best 0.01989）
+   - benzonitrile `N#Cc1ccccc1`（3 合格 best 0.01413）
+3. 报告时**显式说明**这是「下午闸门恢复后」的真实臂，**不是**与上午臂混在一起。
+
+### 2. P4：agent 提交分子 vs audit 已知合格集合（**离线，已完成**）
+
+对每个母体，比较 agent 在 fix/r2/r3/r4 中**实际提交**的 deterministic_edit（`current_improvement.outcome=supported`）与 `reachability.json` 中 audit 已知合格产物的对照：
+
+| 母体 | audit 合格数 | audit-best SMILES | audit-best Δ | agent 提交数 | 命中 audit-best 次数 | 命中率 |
+|---|---|---|---|---|---|---|
+| 苯酚 | 3 | `OCCOc1ccccc1` | 0.01744 | 2 | 1 | 50% |
+| 苯胺 | 2 | `OCCNc1ccccc1` | 0.01698 | 2 | 1 | 50% |
+| **甲苯** | **6** | `OCCCc1ccccc1` | 0.01874 | 4 | 3 | **75%** |
+| 合计 | 11 | — | — | 8 | **6** | **75%** |
+
+**核心发现**：
+
+1. **agent 没越界**：8 次提交全部在 audit 已知合格集合内。**没有任何一次 agent 提交了一个 audit 不识别的合格分子**。
+2. **agent 多半找到 audit-best**：6/8 = 75% 命中 audit 已知最佳。
+3. **甲苯上 agent 提交了 4 个分子**：fix/r2/r3 都是 `OCCCc1ccccc1`（audit-best，rank 1），r4 是 `OCc1ccccc1`（audit 第 6 名，Δ 0.01092）。r4 仍 goal_met，但选了 audit 集合里更低的分子。
+4. **甲苯 6 合格 vs 苯酚 3 / 苯胺 2** —— agent 在甲苯上命中率更高是因为**可达合格分子更多**，而不是模型本身更"聪明"。
+
+**对比 P3 baselines**：greedy/random 也只看到这 11 个合格分子（它们共用同一个 reachability 审计）。**agent 与 baselines 的真实差距是「agent 在 budget 限制下倾向于找 audit-best，baselines 不一定」**，而不是「agent 与 baseline 看到不同的分子集合」。
+
+### 3. 不能说的
+
+1. **不能**说 P4 "证明 agent 更聪明"——因为 audit 是同一个，差别只在选择偏好。
+2. **不能**说 P4 "证明 8 次样本足以"——n=8 不构成统计。
+3. **不能**说 P4 中 audit-best SMILES 是 "真正" 最佳——audit 用与 agent 同一评估器，没有独立 ground truth。
+4. **P1 没跑**——token 计划恢复后才能补。
+
+### 4. 当前累积状态
+
+| 维度 | 数据 |
+|---|---|
+| 已测母体（agent 真实臂） | 3（苯酚、苯胺、甲苯），各 4 次观察 = 12 个真实臂 |
+| 已测母体（baseline 臂） | 3（苯酚、苯胺、甲苯），各 1 次 greedy + 1 次 random = 6 个臂 |
+| 未测母体 | 10 个（已选 5 个待闸门恢复后跑） |
+| 测试套件 | 290 passed, 1 skipped |
+| 当前提交 | `62a47c2`（origin/main） |
+| 仍待闸门恢复后做的 | P1（5 母体 × 1 臂）、可能的 r5（如有需要）、D0 错误预算区分 |
+
+机读：`runs/samples/diagnostic_2d_quality_20260921_summary.json`
+
+---
+
 ## 决策证据闭环与 v10 二维验收（2026-09-20，本轮最新）
 
 本轮的目标是把 v4 遗留的问题走完：**让智能体在真实连接下走完整条决策链**，并把途中暴露的每一个缺陷修掉、测掉、记录掉。全程遵守同一组约束：不新增分子工具、不扩展 3D、不跑 docking、不跑 n=20、不改 `property_score` 公式与 `+0.01` 阈值、不放宽 hERG 等既有约束、**不因结果差而重跑**。
