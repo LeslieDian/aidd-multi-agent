@@ -219,3 +219,53 @@ def test_multiparent_agent_arm_still_requires_the_connectivity_gate(tmp_path, mo
     (tmp_path / "runs/samples").mkdir(parents=True)
     with pytest.raises(ValueError, match="connectivity gate summary is missing"):
         module.require_connectivity_gate(output)
+
+
+def test_greedy_baseline_drives_loop_without_harness(tmp_path):
+    """Greedy baseline evaluates catalogue products in order, picks best
+    qualifying, and produces a metrics-compatible state. It must not depend
+    on the agent harness loop or any HTTP client."""
+    from scripts.compare_2d_policies import prepare, audit, run_arm, BaselinePolicy
+    output = tmp_path / "baseline_greedy"
+    prepare(output, scenario="parent", parent_smiles="Cc1ccccc1")
+    audit(output)
+    metrics = run_arm(output, "greedy")
+    assert metrics["arm"] == "greedy"
+    # Greedy ran offline with no model_calls_used at all.
+    assert metrics["planner_attempts"] == 0
+    assert metrics["model_requests_recorded"] == 0
+    # It did evaluate products within budget.
+    assert metrics["new_structure_evaluations"] >= 1
+    # Termination outcome is one of the valid budget/goal outcomes.
+    assert metrics["termination_outcome"] in {
+        "goal_met", "budget_exhausted", "goal_not_met_after_valid_exhaustion",
+    }
+    # best_compliant_delta is None when nothing qualifies; otherwise a number.
+    assert metrics["best_compliant_delta"] is None or isinstance(metrics["best_compliant_delta"], float)
+
+
+def test_random_baseline_uses_deterministic_seed(tmp_path):
+    """Random baseline must produce the same result on repeated runs at the
+    same seed (deterministic shuffle, deterministic evaluation cache)."""
+    from scripts.compare_2d_policies import prepare, audit, run_arm
+    out1 = tmp_path / "baseline_random_a"
+    prepare(out1, scenario="parent", parent_smiles="Nc1ccccc1")
+    audit(out1)
+    metrics_a = run_arm(out1, "random")
+    out2 = tmp_path / "baseline_random_b"
+    prepare(out2, scenario="parent", parent_smiles="Nc1ccccc1")
+    audit(out2)
+    metrics_b = run_arm(out2, "random")
+    assert metrics_a["best_compliant_delta"] == metrics_b["best_compliant_delta"]
+    assert metrics_a["successful_screened_products"] == metrics_b["successful_screened_products"]
+
+
+def test_baseline_arm_is_refused_without_audit(tmp_path):
+    """Baselines must refuse to run if reachability audit is missing or
+    showed zero qualifying products (same rule as rule/agent arms)."""
+    from scripts.compare_2d_policies import prepare
+    import pytest
+    output = tmp_path / "no_audit"
+    prepare(output, scenario="parent", parent_smiles="Cc1ccccc1")
+    with pytest.raises(ValueError, match="completed reachability audit"):
+        run_arm(output, "greedy")

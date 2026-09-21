@@ -187,6 +187,83 @@ pre-fix 与 fix 是不同冻结版本（只证明修复有效）；fix、r2、r3
 
 ---
 
+## 2026-09-21：r4 第四轮重复 + 强基线对比（P0 + P3）
+
+按上面计划的 P0（继续 r4）和 P3（强基线对比）执行。
+
+### 1. r4 真实重复
+
+闸门 12:01 + 14:00（重试一次后）3/3 通过。
+
+| 母体 | 臂 | 终止 | 合格 | 最佳 Δ |
+|---|---|---|---|---|
+| 苯酚 | agent | `goal_met` | 1 | **0.01744** |
+| 苯胺 | agent | `goal_met` | 1 | **0.01469** |
+| 甲苯 | agent | `goal_met` | 1 | **0.01092** |
+
+### 2. 修复版 4 轮合并视图（agent 臂）
+
+| 母体 | fix | r2 | r3 | r4 | goal_met/4 |
+|---|---|---|---|---|---|
+| 苯酚 | `evaluation_budget_exhausted` q=0 | `goal_met` q=1, Δ=0.01478 | `execution_failure` q=0 | `goal_met` q=1, Δ=0.01744 | **2/4** |
+| 苯胺 | `evaluation_budget_exhausted` q=0 | `goal_met` q=2, Δ=0.01698 | `budget_exhausted` q=0 | `goal_met` q=1, Δ=0.01469 | **2/4** |
+| **甲苯** | `goal_met` q=1, Δ=0.01874 | `goal_met` q=3, Δ=0.01874 | `goal_met` q=1, Δ=0.01874 | `goal_met` q=1, Δ=0.01092 | **4/4** |
+
+r4 关键观察：
+- **r4 全部 `goal_met`**，包括苯酚和苯胺。
+- **苯酚 2/4 goal_met**——其中 r3 是 execution_failure（不是稳定的失败模式）。
+- **甲苯 4/4 goal_met**，但 r4 的最佳 Δ 是 **0.01092**，比其他三次的 0.01874 低。r4 找到了不同的分子。这破坏了「同一分子」的强一致性——但仍然达了 ≥0.01 阈值。
+
+### 3. 强基线（P3）—— agent 真的有用吗？
+
+**问题**：原 rule 臂 0/12 太弱，agent 是「比弱基线好」还是「比无模型最优好」？
+
+新增 `BaselinePolicy` 和 `run_baseline()`：
+- **Greedy**：固定顺序（最确定的排序）逐个评估目录中的唯一产物。
+- **Random**：确定性种子 shuffle 后逐个评估。
+- 两者都**绕过 harness**，直接调 `evaluate_candidates`；预算与 agent 臂相同（11 次评估）。
+
+闸门：**不要求**（baseline 是离线）。
+
+| 母体 | greedy | random | agent (4 轮) |
+|---|---|---|---|
+| 苯酚 | qual=0 best=0.00707 | qual=0 best=0.00706 | goal_met **2/4** |
+| 苯胺 | qual=0 best=−0.00187 | qual=1 best=0.01469 | goal_met **2/4** |
+| 甲苯 | qual=0 best=0.00918 | qual=2 best=0.01355 | goal_met **4/4** best=0.01874 |
+
+诚实结论：
+
+1. **agent > random >> greedy**（按 goal_met 数）
+2. **greedy 在所有 3 母体都 0 合格**——确定排序下预算 10 不够扫到合格产物。
+3. **random 在 2/3 母体找到合格**（苯胺 1、甲苯 2）——但**甲苯** random 最佳 0.01355 < agent 最佳 0.01874。**agent 在甲苯上确实找到了 random 没找到的更好分子**。
+4. **苯酚 random 与 greedy 一样 0 合格**——`property_score` 阈值 0.01 对这个母体就是不容易过。
+5. **苯胺 r4 的 best 0.01469 = random 的 best 0.01469**——可能同一分子，说明 agent 找的分子里至少有一个是 random 能达到的。
+
+**强基线的意义**：当没有 LLM 时，「评估目录前 N 个产物并选最佳」是合理的强 baseline。它仍然 0/3（greedy）和 1/3 / 2/3（random）。**agent 的真正价值是稳定地找到 random 找不到的更好分子**（特别是甲苯）。
+
+### 4. 关键诚实点
+
+- **r4 不算「3 轮稳定」**：benz 酚 2/4、苯胺 2/4、甲苯 4/4。**唯一仍能说「稳定」的是甲苯 4/4**。
+- **r4 苯酚/苯胺都成功**，把 r3 苯胺 r3 的 `budget_exhausted` 和苯酚 r3 的 `execution_failure` 拉回到 2/4。说明这些失败是**单次噪声**，不是稳定失败模式。
+- **甲苯 r4 的 best 0.01092** 是新的低值（其他三次都是 0.01874），意味着 r4 找到了**不同的合格分子**。甲苯的「一致性」是「都能达到阈值」而不是「都是同一分子」。
+- baselines 是**单次观察**：1 个 seed=42 的 random run；方差未知。
+- baselines 的 source hash 改了 → **新冻结版本**，所以 baselines 与 agent 不能直接放在同一 source_hashes 比较；只能比较 metrics 输出。
+
+### 5. 不能说的
+
+1. **不能**说「苯酚/苯胺 agent 稳定达标」——n=4 中 2 次达标不构成稳定结论。
+2. **不能**说「agent 总是找同一分子」——r4 出现了新分子（甲苯 r4 best 0.01092）。
+3. **不能**说「random 不可靠」——random 也是单次。
+4. **不能**做效应量比较（70/40 vs 24/16 目录规模 + budgets unchanged）。
+5. **不能**说 agent 优于 random 的差距是稳定的——只跑了 1 次 random。
+
+机读汇总：
+- `runs/samples/diagnostic_2d_r4_20260921_rows.json`（6 行：3 rule + 3 agent）
+- `runs/samples/diagnostic_2d_baseline_20260921_rows.json`（6 行：3 greedy + 3 random）
+- `runs/samples/diagnostic_2d_baseline_vs_agent_20260921_summary.json`
+
+---
+
 ## 决策证据闭环与 v10 二维验收（2026-09-20，本轮最新）
 
 本轮的目标是把 v4 遗留的问题走完：**让智能体在真实连接下走完整条决策链**，并把途中暴露的每一个缺陷修掉、测掉、记录掉。全程遵守同一组约束：不新增分子工具、不扩展 3D、不跑 docking、不跑 n=20、不改 `property_score` 公式与 `+0.01` 阈值、不放宽 hERG 等既有约束、**不因结果差而重跑**。

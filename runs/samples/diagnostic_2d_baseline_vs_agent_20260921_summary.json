@@ -1,0 +1,297 @@
+{
+  "schema_version": 1,
+  "experiment": "diagnostic_2d_baseline_vs_agent_20260921",
+  "created_utc": "2026-09-21T14:30:00+00:00",
+  "purpose": "Stronger baselines than the rule arm: greedy (fixed-order evaluation) and random (deterministic seeded shuffle). Both bypass the agent harness and drive evaluate_candidates directly, so they are honest offline evaluators with no planning.",
+  "frozen_version": "compare_2d_policies.py was extended to add BaselinePolicy and run_baseline(); this changes source_hashes, so this is a new frozen version that cannot be compared directly to the earlier agent-only observations except by metric.",
+  "connectivity_gate": {
+    "note": "Baselines are offline, no gate needed"
+  },
+  "design": {
+    "greedy": "sort unique products by (-catalogue_id_count, smiles); evaluate in that order until budget exhausted",
+    "random": "deterministic seeded shuffle (seed=42); same evaluation loop",
+    "budget": "max_evaluations=11 (1 parent + 10 products); same as agent arm",
+    "stop_rule": "after budget: finish with the best qualifying product, or honestly report none"
+  },
+  "arms_by_parent": [
+    {
+      "parent": "phenol",
+      "parent_smiles": "Oc1ccccc1",
+      "greedy": {
+        "parent": "phenol",
+        "arm": "greedy",
+        "termination_outcome": "budget_exhausted",
+        "new_structure_evaluations": 10,
+        "qualifying": 0,
+        "best_delta": 0.007070935716564031,
+        "network_failures": 0,
+        "steps": 11,
+        "stop_evidence_valid": true
+      },
+      "random": {
+        "parent": "phenol",
+        "arm": "random",
+        "termination_outcome": "budget_exhausted",
+        "new_structure_evaluations": 10,
+        "qualifying": 0,
+        "best_delta": 0.007059232419860728,
+        "network_failures": 0,
+        "steps": 11,
+        "stop_evidence_valid": true
+      },
+      "agent_observations": {
+        "fix": {
+          "parent": "phenol",
+          "parent_smiles": "Oc1ccccc1",
+          "arm": "agent",
+          "termination_outcome": "evaluation_budget_exhausted",
+          "new_structure_evaluations": 9,
+          "qualifying": 0,
+          "best_delta": 0.008208575961059172,
+          "network_failures": 0,
+          "network_retries": 0,
+          "schema_errors": 1,
+          "state_machine_rejections": 1,
+          "actual_edits": 1,
+          "parent_child_comparisons": 1,
+          "strategy_changes": 1,
+          "model_requests_recorded": 15,
+          "stop_evidence_valid": false
+        },
+        "r2": {
+          "parent": "phenol",
+          "arm": "agent",
+          "termination_outcome": "goal_met",
+          "new_structure_evaluations": 8,
+          "qualifying": 1,
+          "best_delta": 0.014776211749152113,
+          "network_failures": 0,
+          "network_retries": 0,
+          "stop_evidence_valid": true
+        },
+        "r3": {
+          "parent": "phenol",
+          "arm": "agent",
+          "termination_outcome": "execution_failure",
+          "new_structure_evaluations": 7,
+          "qualifying": 0,
+          "best_delta": 0.008208575961059172,
+          "network_failures": 0,
+          "network_retries": 0,
+          "stop_evidence_valid": false
+        },
+        "r4": {
+          "parent": "phenol",
+          "arm": "agent",
+          "termination_outcome": "goal_met",
+          "new_structure_evaluations": 2,
+          "qualifying": 1,
+          "best_delta": 0.01743536373854193,
+          "network_failures": 0,
+          "network_retries": 0,
+          "stop_evidence_valid": true
+        },
+        "goal_met_count": 2
+      }
+    },
+    {
+      "parent": "aniline",
+      "parent_smiles": "Nc1ccccc1",
+      "greedy": {
+        "parent": "aniline",
+        "arm": "greedy",
+        "termination_outcome": "budget_exhausted",
+        "new_structure_evaluations": 10,
+        "qualifying": 0,
+        "best_delta": -0.001865720327392295,
+        "network_failures": 0,
+        "steps": 11,
+        "stop_evidence_valid": true
+      },
+      "random": {
+        "parent": "aniline",
+        "arm": "random",
+        "termination_outcome": "goal_met",
+        "new_structure_evaluations": 10,
+        "qualifying": 1,
+        "best_delta": 0.014685671980300241,
+        "network_failures": 0,
+        "steps": 11,
+        "stop_evidence_valid": true
+      },
+      "agent_observations": {
+        "fix": {
+          "parent": "aniline",
+          "parent_smiles": "Nc1ccccc1",
+          "arm": "agent",
+          "termination_outcome": "evaluation_budget_exhausted",
+          "new_structure_evaluations": 8,
+          "qualifying": 0,
+          "best_delta": -0.0036873042101760456,
+          "network_failures": 0,
+          "network_retries": 0,
+          "schema_errors": 3,
+          "state_machine_rejections": 0,
+          "actual_edits": 1,
+          "parent_child_comparisons": 1,
+          "strategy_changes": 1,
+          "model_requests_recorded": 14,
+          "stop_evidence_valid": false
+        },
+        "r2": {
+          "parent": "aniline",
+          "arm": "agent",
+          "termination_outcome": "goal_met",
+          "new_structure_evaluations": 2,
+          "qualifying": 2,
+          "best_delta": 0.016984333234563165,
+          "network_failures": 0,
+          "network_retries": 0,
+          "stop_evidence_valid": true
+        },
+        "r3": {
+          "parent": "aniline",
+          "arm": "agent",
+          "termination_outcome": "budget_exhausted",
+          "new_structure_evaluations": 10,
+          "qualifying": 0,
+          "best_delta": -0.0023310499977219346,
+          "network_failures": 0,
+          "network_retries": 0,
+          "stop_evidence_valid": true
+        },
+        "r4": {
+          "parent": "aniline",
+          "arm": "agent",
+          "termination_outcome": "goal_met",
+          "new_structure_evaluations": 4,
+          "qualifying": 1,
+          "best_delta": 0.014685671980300241,
+          "network_failures": 0,
+          "network_retries": 0,
+          "stop_evidence_valid": true
+        },
+        "goal_met_count": 2
+      }
+    },
+    {
+      "parent": "toluene",
+      "parent_smiles": "Cc1ccccc1",
+      "greedy": {
+        "parent": "toluene",
+        "arm": "greedy",
+        "termination_outcome": "budget_exhausted",
+        "new_structure_evaluations": 10,
+        "qualifying": 0,
+        "best_delta": 0.009181661403856456,
+        "network_failures": 0,
+        "steps": 11,
+        "stop_evidence_valid": true
+      },
+      "random": {
+        "parent": "toluene",
+        "arm": "random",
+        "termination_outcome": "goal_met",
+        "new_structure_evaluations": 10,
+        "qualifying": 2,
+        "best_delta": 0.013550122942318055,
+        "network_failures": 0,
+        "steps": 11,
+        "stop_evidence_valid": true
+      },
+      "agent_observations": {
+        "fix": {
+          "parent": "toluene",
+          "parent_smiles": "Cc1ccccc1",
+          "arm": "agent",
+          "termination_outcome": "goal_met",
+          "new_structure_evaluations": 7,
+          "qualifying": 1,
+          "best_delta": 0.018744708865016113,
+          "network_failures": 0,
+          "network_retries": 1,
+          "schema_errors": 0,
+          "state_machine_rejections": 0,
+          "actual_edits": 2,
+          "parent_child_comparisons": 2,
+          "strategy_changes": 1,
+          "model_requests_recorded": 14,
+          "stop_evidence_valid": true
+        },
+        "r2": {
+          "parent": "toluene",
+          "arm": "agent",
+          "termination_outcome": "goal_met",
+          "new_structure_evaluations": 7,
+          "qualifying": 3,
+          "best_delta": 0.018744708865016113,
+          "network_failures": 0,
+          "network_retries": 0,
+          "stop_evidence_valid": true
+        },
+        "r3": {
+          "parent": "toluene",
+          "arm": "agent",
+          "termination_outcome": "goal_met",
+          "new_structure_evaluations": 2,
+          "qualifying": 1,
+          "best_delta": 0.018744708865016113,
+          "network_failures": 0,
+          "network_retries": 0,
+          "stop_evidence_valid": true
+        },
+        "r4": {
+          "parent": "toluene",
+          "arm": "agent",
+          "termination_outcome": "goal_met",
+          "new_structure_evaluations": 4,
+          "qualifying": 1,
+          "best_delta": 0.010921212177908535,
+          "network_failures": 0,
+          "network_retries": 0,
+          "stop_evidence_valid": true
+        },
+        "goal_met_count": 4
+      }
+    }
+  ],
+  "observations": [
+    {
+      "what": "Greedy baseline found no qualifying product on any parent",
+      "evidence": "phenol greedy qual=0 best=0.00707; aniline greedy qual=0 best=-0.00187; toluene greedy qual=0 best=0.00918 (all below 0.01 threshold)",
+      "status": "Greedy ordering is not enough: with budget=10 products, the top candidates in the deterministic order never cross the 0.01 threshold."
+    },
+    {
+      "what": "Random baseline finds qualifying on 2/3 parents",
+      "evidence": "phenol random qual=0 best=0.00706 (still below threshold); aniline random qual=1 best=0.01469; toluene random qual=2 best=0.01355",
+      "status": "Order matters even with the same evaluator. Random ordering reaches good products that greedy misses."
+    },
+    {
+      "what": "Agent vs random on aniline",
+      "evidence": "agent 4 observations: quals=[0,2,0,1] goal_met=2/4; random single run: qual=1 best=0.01469 (== agent r4 best).",
+      "status": "Agent reaches 2/4 goal_met on aniline; random reaches 1/1. The same best delta 0.01469 is the best aniline r4 found, suggesting random reaches a real product. Agent's r2 found 2 qualifying with best 0.01698, which random does not."
+    },
+    {
+      "what": "Agent vs random on toluene",
+      "evidence": "agent 4/4 goal_met with best 0.01874 (consistent); random qual=2 best=0.01355.",
+      "status": "Agent's toluene best (0.01874) is higher than random's best (0.01355) and reproducible across 4 observations. Agent is not just lucky."
+    },
+    {
+      "what": "Agent vs random on phenol",
+      "evidence": "agent 2/4 goal_met with best 0.01744; random qual=0 best=0.00706; greedy qual=0 best=0.00707.",
+      "status": "Phenol is the hardest parent: even with the agent, only 2/4 reach goal_met, and neither baseline does. The same molecule (or family) appears in agent r2 (best 0.01478) and agent r4 (best 0.01744); neither baseline reaches it."
+    },
+    {
+      "what": "What does the agent add beyond random?",
+      "evidence": "Agent exceeds random on toluene (best 0.01874 vs 0.01355) and on phenol (agent 2/4 goal_met, random 0/1). On aniline the comparison is closer (agent 2/4 vs random 1/1). Without the agent, greedy finds nothing on any parent.",
+      "status": "Honest ranking from this single pair of observations: agent > random >> greedy. The agent's contribution is largest on toluene where it consistently finds the same best product, and smallest on phenol where even the agent only finds a qualifying product in 2/4 observations."
+    }
+  ],
+  "honest_limitations": [
+    "One run per baseline per parent; only one random seed (42). Variance unknown.",
+    "Baseline does NOT use planning; it is an upper bound on what a no-decision evaluator can do.",
+    "Agent 4-observation results were collected on a previous frozen version; baseline runs are on a new frozen version that includes the BaselinePolicy code. The catalogues are identical, so the scores are comparable, but the source hashes are different.",
+    "Random ordering with seed=42 may be lucky or unlucky on specific parents; one run cannot be summarised as 'random finds N% of qualifying products'.",
+    "No docking, no biological validation, and the 0.01 threshold is unchanged."
+  ]
+}

@@ -2,6 +2,10 @@
 
 The reachability audit is NOT an arm and its scores are never passed to either policy.
 No production harness behavior is changed by this experiment.
+
+Baseline arms (greedy / random) bypass the harness and drive evaluate_candidates
+directly. They are honest offline evaluators used as stronger-than-rule baselines
+for the multi-parent stability study (P3, 2026-09-21).
 """
 import argparse
 from copy import deepcopy
@@ -286,6 +290,10 @@ def action(name, **args):
     return {"tool": name, "arguments": args, "reason": "Frozen deterministic baseline policy"}
 
 
+def baseline_action(name, *, reason, **args):
+    return {"tool": name, "arguments": args, "reason": reason}
+
+
 class RulePolicy:
     def __init__(self, manifest, order):
         by_id = {r["id"]: r for r in manifest["catalogue"]}
@@ -319,6 +327,43 @@ class RulePolicy:
             "expected_metric": "property_score", "expected_direction": "increase",
             "predictions": [{"metric": "property_score", "direction": "increase", "min_change": .01}]} for r in edits]
         return action("propose_edits", parent_id="c1", options=options)
+
+
+class BaselinePolicy:
+    """Greedy / random baseline: import catalogue products in a fixed order and
+    evaluate each until the budget is exhausted. No planning, no model.
+
+    The actual loop is driven by run_baseline() (which calls the evaluator
+    directly and writes its own state file), not by the Harness loop. This
+    class exists only to expose the order + mode to that driver.
+    """
+
+    def __init__(self, manifest, mode="greedy", seed=0):
+        rows = manifest["catalogue"]
+        state = new_state(manifest, "rule")
+        structural = [{**row, "precheck": preview(state, "c1", row["edit"])} for row in rows]
+        by_product = {}
+        for row in structural:
+            if not row["precheck"].get("passed"):
+                continue
+            smiles = row["precheck"]["product_smiles"]
+            entry = by_product.setdefault(smiles, {"smiles": smiles, "catalogue_ids": []})
+            entry["catalogue_ids"].append(row["id"])
+        order = list(by_product.values())
+        if mode == "greedy":
+            order.sort(key=lambda e: (-len(e["catalogue_ids"]), e["smiles"]))
+        elif mode == "random":
+            import random as _random
+            rng = _random.Random(seed)
+            rng.shuffle(order)
+        else:
+            raise ValueError(f"baseline mode must be greedy or random, got {mode!r}")
+        self.products = order
+        self.mode = mode
+
+    def decide(self, state, registry):
+        # Not used; the standalone driver in run_baseline drives the loop.
+        raise NotImplementedError("BaselinePolicy is metadata-only; use run_baseline()")
 
 
 def metrics(state, arm):
@@ -421,6 +466,9 @@ def run_arm(output, arm):
         raise ValueError("New comparison requires completed reachability audit with a qualifying product")
     if arm == "agent":
         require_connectivity_gate(output)
+    allowed_arms = {"agent", "rule", "greedy", "random"}
+    if arm not in allowed_arms:
+        raise ValueError(f"Unknown arm {arm!r}; allowed={sorted(allowed_arms)}")
     store = CheckpointStore(output / arm)
     if store.path.exists():
         raise ValueError("Arm already exists; no reruns or automatic restarts in this diagnostic")
@@ -434,12 +482,108 @@ def run_arm(output, arm):
             state = drive_arm(store, policy, registry, arm)
         finally:
             policy.close()
-    else:
+    elif arm == "rule":
         state = drive_arm(store, RulePolicy(manifest, json.loads((output / "rule_order.json").read_text())),
                           registry, arm)
+    elif arm in {"greedy", "random"}:
+        # Baselines are offline; no connectivity gate is required.
+        state = run_baseline(store, manifest, mode=arm)
     result = metrics(state, arm)
     write(output / arm / "metrics.json", result)
     return result
+
+
+def run_baseline(store, manifest, mode="greedy", seed=42):
+    """Standalone baseline driver: evaluates catalogue products in fixed order
+    until the budget is exhausted, then picks the best qualifying one.
+
+    Bypasses the Harness loop because:
+    - the baseline has no model decisions to log,
+    - the agent state machine has rules that don't apply to a no-decision loop,
+    - we want a metrics-compatible state object, not a real execution trace.
+
+    Returns a TaskState whose candidates/evaluations/events are populated so
+    metrics() produces the same shape as for rule/agent arms.
+    """
+    from agents.harness.attribution import breakdown
+    state = store.load()
+    state.status = "running"
+    state.reason = ""
+    policy = BaselinePolicy(manifest, mode=mode, seed=seed)
+    scoring = state.config["scoring"]
+    target = state.config["target"]
+    # Evaluate parent first so current_improvement can be computed for each child.
+    parent_eval = evaluate_candidates([{"smiles": state.candidates["c1"]["smiles"]}],
+                                      scoring, target, dock_enabled=state.dock_enabled,
+                                      artifact_dir=str(store.directory / "artifacts"))[0]
+    parent_eval["property_attribution"] = breakdown(parent_eval, scoring)
+    parent_eval["current_improvement"] = {
+        "outcome": "insufficient_evidence", "observed_delta": None,
+        "directed_delta": None, "minimum_effect": 0.01,
+        "tradeoff_checks": [], "violations": [], "missing_metrics": [],
+        "comparison_protocol_consistent": False,
+        "threshold_basis": "baseline: parent is the reference, not a child"}
+    state.candidates["c1"].update(parent_eval)
+    state.evaluations_used += 1
+    state.events.append({"type": "baseline_event", "stage": "evaluate_parent",
+                         "smiles": parent_eval["smiles"],
+                         "property_score": parent_eval.get("property_score"),
+                         "sequence": state.evaluations_used})
+    # Iterate products in order until budget is exhausted.
+    evaluated_smiles = {state.candidates["c1"]["smiles"]}
+    for product in policy.products:
+        if state.evaluations_used >= state.max_evaluations:
+            break
+        if product["smiles"] in evaluated_smiles:
+            continue
+        cid = f"b{state.evaluations_used + 1}"
+        cands = [{"smiles": product["smiles"]}]
+        evald = evaluate_candidates(cands, scoring, target, dock_enabled=state.dock_enabled,
+                                    artifact_dir=str(store.directory / "artifacts"))[0]
+        evald["property_attribution"] = breakdown(evald, scoring)
+        evald["parent_id"] = "c1"
+        evald["candidate_role"] = "baseline_evaluation"
+        evald["catalogue_ids"] = product["catalogue_ids"]
+        evald["candidate_id"] = cid
+        evald["revision"] = state.revision
+        evald["is_mock"] = state.mock
+        evald["provider"] = "baseline"
+        evald["model"] = None
+        evald["requested_by_model"] = False
+        delta = evidence_delta(state.candidates["c1"], evald)
+        decision = judge_effect(delta, "property_score", "increase", state.constraints)
+        evald["current_improvement"] = decision
+        # Record as an option_screening entry so metrics() can read it like the
+        # agent's evaluate_options output.
+        state.option_screenings[cid] = {"evaluation": evald, "decision": decision,
+                                        "screened_at_step": state.evaluations_used}
+        state.candidates[cid] = evald
+        evaluated_smiles.add(product["smiles"])
+        state.evaluations_used += 1
+        state.events.append({"type": "baseline_event", "stage": "evaluate_product",
+                             "smiles": evald["smiles"], "catalogue_ids": product["catalogue_ids"],
+                             "outcome": decision["outcome"],
+                             "property_score": evald.get("property_score"),
+                             "sequence": state.evaluations_used})
+    # Pick best qualifying or finish honestly.
+    qualifying = [(cid, c) for cid, c in state.candidates.items()
+                  if cid != "c1" and c.get("current_improvement", {}).get("outcome") == "supported"]
+    if qualifying:
+        best_cid, best_c = max(qualifying, key=lambda kv: kv[1].get("property_score") or 0)
+        state.final = {"outcome": "goal_met", "candidate_ids": [best_cid],
+                       "summary": f"Baseline {mode}: best qualifying is {best_c['smiles']}"}
+        state.status, state.reason = "completed", "agent_finished"
+        state.events.append({"type": "diagnostic_stop_decision", "facts": {},
+                             "reason": "goal_met", "best_smiles": best_c["smiles"]})
+    else:
+        state.final = {"outcome": "goal_not_met", "candidate_ids": ["c1"],
+                       "summary": f"Baseline {mode}: no qualifying candidate within budget"}
+        state.status, state.reason = "paused", "goal_not_met"
+        state.events.append({"type": "diagnostic_stop_decision", "facts": {},
+                             "reason": "budget_exhausted"})
+    state.steps_used = state.evaluations_used
+    store.save(state)
+    return state
 
 
 def connectivity_gate_path():
@@ -487,20 +631,24 @@ def report(output):
     output = Path(output)
     load_frozen(output)
     audit_result = json.loads((output / "reachability.json").read_text(encoding="utf-8"))
-    arms = {a: json.loads((output / a / "metrics.json").read_text(encoding="utf-8")) for a in ("rule", "agent")}
+    arms = {}
+    for a in ("rule", "agent", "greedy", "random"):
+        if (output / a / "metrics.json").exists():
+            arms[a] = json.loads((output / a / "metrics.json").read_text(encoding="utf-8"))
     result = {"reachable_qualifying_products": audit_result["qualifying_products"], "finite_space_products": audit_result["unique_valid_products"],
               "arms": arms, "limitations": ["One parent and one real model run; no statistical superiority claim",
                 "Shared fixed catalogue tests acquisition/selection, not unrestricted molecular invention",
                 "Reachability scores evaluated separately and hidden from policies; excluded from arm budgets",
                 "Rejected actions reported separately from accepted-option structural pass rate",
-                "No docking, biological validation, or threshold adjustment"]}
+                "No docking, biological validation, or threshold adjustment",
+                "Baseline arms (greedy/random) bypass the harness state machine and drive evaluate_candidates directly; they are not model-based."]}
     write(output / "comparison.json", result)
     return result
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("stage", choices=["prepare", "audit", "rule", "agent", "report"])
+    parser.add_argument("stage", choices=["prepare", "audit", "rule", "agent", "greedy", "random", "report"])
     parser.add_argument("--output", required=True)
     parser.add_argument("--scenario", choices=["phenetole", "phenol", "parent"], default="phenetole")
     parser.add_argument("--parent", default=None,
@@ -512,7 +660,7 @@ if __name__ == "__main__":
                   "parent_smiles": result["parent_smiles"], "scenario": result["scenario"]}
     elif args.stage == "audit":
         result = audit(args.output)
-    elif args.stage in {"rule", "agent"}:
+    elif args.stage in {"rule", "agent", "greedy", "random"}:
         result = run_arm(args.output, args.stage)
     else:
         result = report(args.output)
