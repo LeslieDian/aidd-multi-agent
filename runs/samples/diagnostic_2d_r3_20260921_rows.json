@@ -1,0 +1,68 @@
+[
+  {
+    "parent": "phenol",
+    "arm": "rule",
+    "termination_outcome": "budget_exhausted",
+    "new_structure_evaluations": 10,
+    "qualifying": 0,
+    "best_delta": 0.003001450847997744,
+    "network_failures": 0,
+    "network_retries": 0,
+    "stop_evidence_valid": true
+  },
+  {
+    "parent": "phenol",
+    "arm": "agent",
+    "termination_outcome": "execution_failure",
+    "new_structure_evaluations": 7,
+    "qualifying": 0,
+    "best_delta": 0.008208575961059172,
+    "network_failures": 0,
+    "network_retries": 0,
+    "stop_evidence_valid": false
+  },
+  {
+    "parent": "aniline",
+    "arm": "rule",
+    "termination_outcome": "budget_exhausted",
+    "new_structure_evaluations": 10,
+    "qualifying": 0,
+    "best_delta": null,
+    "network_failures": 0,
+    "network_retries": 0,
+    "stop_evidence_valid": true
+  },
+  {
+    "parent": "aniline",
+    "arm": "agent",
+    "termination_outcome": "budget_exhausted",
+    "new_structure_evaluations": 10,
+    "qualifying": 0,
+    "best_delta": -0.0023310499977219346,
+    "network_failures": 0,
+    "network_retries": 0,
+    "stop_evidence_valid": true
+  },
+  {
+    "parent": "toluene",
+    "arm": "rule",
+    "termination_outcome": "budget_exhausted",
+    "new_structure_evaluations": 10,
+    "qualifying": 0,
+    "best_delta": 0.004741387474351155,
+    "network_failures": 0,
+    "network_retries": 0,
+    "stop_evidence_valid": true
+  },
+  {
+    "parent": "toluene",
+    "arm": "agent",
+    "termination_outcome": "goal_met",
+    "new_structure_evaluations": 2,
+    "qualifying": 1,
+    "best_delta": 0.018744708865016113,
+    "network_failures": 0,
+    "network_retries": 0,
+    "stop_evidence_valid": true
+  }
+]

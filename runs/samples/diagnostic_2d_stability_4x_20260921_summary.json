@@ -1,0 +1,298 @@
+{
+  "schema_version": 1,
+  "experiment": "diagnostic_2d_multi_parent_stability_4x",
+  "created_utc": "2026-09-21T12:50:00+00:00",
+  "protocol_id": "diagnostic_2d_multi_parent_stability_20260920",
+  "purpose": "Four observations per parent per arm. pre_fix and fix are different frozen versions (proof the fix worked); fix, r2 and r3 are the same frozen version (proof of stability on the fixed version).",
+  "parent_selection": {
+    "method": "scripts/scout_parents.py, fully offline arithmetic",
+    "selection_made_before_any_model_call": true,
+    "fragments": [
+      "C",
+      "N",
+      "O",
+      "F",
+      "Cl",
+      "CCC",
+      "CCO",
+      "C(F)(F)F",
+      "C#N",
+      "C(=O)N"
+    ],
+    "catalogue_rule": "every fragment in SCOUT_FRAGMENTS attached at every heavy atom of the parent",
+    "usable_parents": 13,
+    "total_scouted": 15,
+    "selected": [
+      {
+        "name": "phenol",
+        "parent_smiles": "Oc1ccccc1",
+        "reachable_qualifying_products": 3
+      },
+      {
+        "name": "aniline",
+        "parent_smiles": "Nc1ccccc1",
+        "reachable_qualifying_products": 2
+      },
+      {
+        "name": "toluene",
+        "parent_smiles": "Cc1ccccc1",
+        "reachable_qualifying_products": 6
+      }
+    ]
+  },
+  "frozen_versions": {
+    "pre_fix": {
+      "rows_file": "runs/samples/diagnostic_2d_stability_20260920_rows.json",
+      "description": "Frozen version before the choose_strategy repeat fix."
+    },
+    "fix": {
+      "rows_file": "runs/samples/diagnostic_2d_fixed_20260920_rows.json",
+      "description": "Frozen version after the fix; first verification run."
+    },
+    "r2": {
+      "rows_file": "runs/samples/diagnostic_2d_r2_20260921_rows.json",
+      "description": "Second repetition of the fixed frozen version."
+    },
+    "r3": {
+      "rows_file": "runs/samples/diagnostic_2d_r3_20260921_rows.json",
+      "description": "Third repetition of the fixed frozen version; completes the '≤3 times' target."
+    }
+  },
+  "connectivity_gate_for_r3": {
+    "summary_file": "runs/samples/minimax_connectivity_20260921_v3_summary.json",
+    "gate": "passed",
+    "successful": 3,
+    "attempted": 3,
+    "clients_created": 1,
+    "retried_requests": 0
+  },
+  "agent_arm_four_observations": [
+    {
+      "parent": "phenol",
+      "parent_smiles": "Oc1ccccc1",
+      "pre_fix": {
+        "parent": "phenol",
+        "parent_smiles": "Oc1ccccc1",
+        "arm": "agent",
+        "termination_outcome": "evaluation_budget_exhausted",
+        "new_structure_evaluations": 8,
+        "qualifying": 0,
+        "best_delta": 0.008208575961059172,
+        "network_failures": 0,
+        "schema_errors": 1,
+        "state_machine_rejections": 3,
+        "actual_edits": 2,
+        "parent_child_comparisons": 2,
+        "strategy_changes": 4,
+        "model_requests_recorded": 24,
+        "stop_evidence_valid": false
+      },
+      "fix": {
+        "parent": "phenol",
+        "parent_smiles": "Oc1ccccc1",
+        "arm": "agent",
+        "termination_outcome": "evaluation_budget_exhausted",
+        "new_structure_evaluations": 9,
+        "qualifying": 0,
+        "best_delta": 0.008208575961059172,
+        "network_failures": 0,
+        "network_retries": 0,
+        "schema_errors": 1,
+        "state_machine_rejections": 1,
+        "actual_edits": 1,
+        "parent_child_comparisons": 1,
+        "strategy_changes": 1,
+        "model_requests_recorded": 15,
+        "stop_evidence_valid": false
+      },
+      "r2": {
+        "parent": "phenol",
+        "arm": "agent",
+        "termination_outcome": "goal_met",
+        "new_structure_evaluations": 8,
+        "qualifying": 1,
+        "best_delta": 0.014776211749152113,
+        "network_failures": 0,
+        "network_retries": 0,
+        "stop_evidence_valid": true
+      },
+      "r3": {
+        "parent": "phenol",
+        "arm": "agent",
+        "termination_outcome": "execution_failure",
+        "new_structure_evaluations": 7,
+        "qualifying": 0,
+        "best_delta": 0.008208575961059172,
+        "network_failures": 0,
+        "network_retries": 0,
+        "stop_evidence_valid": false
+      }
+    },
+    {
+      "parent": "aniline",
+      "parent_smiles": "Nc1ccccc1",
+      "pre_fix": {
+        "parent": "aniline",
+        "parent_smiles": "Nc1ccccc1",
+        "arm": "agent",
+        "termination_outcome": "decision_loop",
+        "new_structure_evaluations": 6,
+        "qualifying": 2,
+        "best_delta": 0.016984333234563165,
+        "network_failures": 0,
+        "schema_errors": 0,
+        "state_machine_rejections": 1,
+        "actual_edits": 2,
+        "parent_child_comparisons": 2,
+        "strategy_changes": 3,
+        "model_requests_recorded": 16,
+        "stop_evidence_valid": false
+      },
+      "fix": {
+        "parent": "aniline",
+        "parent_smiles": "Nc1ccccc1",
+        "arm": "agent",
+        "termination_outcome": "evaluation_budget_exhausted",
+        "new_structure_evaluations": 8,
+        "qualifying": 0,
+        "best_delta": -0.0036873042101760456,
+        "network_failures": 0,
+        "network_retries": 0,
+        "schema_errors": 3,
+        "state_machine_rejections": 0,
+        "actual_edits": 1,
+        "parent_child_comparisons": 1,
+        "strategy_changes": 1,
+        "model_requests_recorded": 14,
+        "stop_evidence_valid": false
+      },
+      "r2": {
+        "parent": "aniline",
+        "arm": "agent",
+        "termination_outcome": "goal_met",
+        "new_structure_evaluations": 2,
+        "qualifying": 2,
+        "best_delta": 0.016984333234563165,
+        "network_failures": 0,
+        "network_retries": 0,
+        "stop_evidence_valid": true
+      },
+      "r3": {
+        "parent": "aniline",
+        "arm": "agent",
+        "termination_outcome": "budget_exhausted",
+        "new_structure_evaluations": 10,
+        "qualifying": 0,
+        "best_delta": -0.0023310499977219346,
+        "network_failures": 0,
+        "network_retries": 0,
+        "stop_evidence_valid": true
+      }
+    },
+    {
+      "parent": "toluene",
+      "parent_smiles": "Cc1ccccc1",
+      "pre_fix": {
+        "parent": "toluene",
+        "parent_smiles": "Cc1ccccc1",
+        "arm": "agent",
+        "termination_outcome": "goal_met",
+        "new_structure_evaluations": 5,
+        "qualifying": 3,
+        "best_delta": 0.018744708865016113,
+        "network_failures": 0,
+        "schema_errors": 2,
+        "state_machine_rejections": 2,
+        "actual_edits": 2,
+        "parent_child_comparisons": 2,
+        "strategy_changes": 1,
+        "model_requests_recorded": 17,
+        "stop_evidence_valid": true
+      },
+      "fix": {
+        "parent": "toluene",
+        "parent_smiles": "Cc1ccccc1",
+        "arm": "agent",
+        "termination_outcome": "goal_met",
+        "new_structure_evaluations": 7,
+        "qualifying": 1,
+        "best_delta": 0.018744708865016113,
+        "network_failures": 0,
+        "network_retries": 1,
+        "schema_errors": 0,
+        "state_machine_rejections": 0,
+        "actual_edits": 2,
+        "parent_child_comparisons": 2,
+        "strategy_changes": 1,
+        "model_requests_recorded": 14,
+        "stop_evidence_valid": true
+      },
+      "r2": {
+        "parent": "toluene",
+        "arm": "agent",
+        "termination_outcome": "goal_met",
+        "new_structure_evaluations": 7,
+        "qualifying": 3,
+        "best_delta": 0.018744708865016113,
+        "network_failures": 0,
+        "network_retries": 0,
+        "stop_evidence_valid": true
+      },
+      "r3": {
+        "parent": "toluene",
+        "arm": "agent",
+        "termination_outcome": "goal_met",
+        "new_structure_evaluations": 2,
+        "qualifying": 1,
+        "best_delta": 0.018744708865016113,
+        "network_failures": 0,
+        "network_retries": 0,
+        "stop_evidence_valid": true
+      }
+    }
+  ],
+  "observations": [
+    {
+      "what": "Decision loop after finding qualifying candidates",
+      "evidence": "aniline pre_fix terminated as decision_loop with 2 qualifying molecules unfinalised; aniline fix, r2 and r3 all terminated cleanly with no decision_loop.",
+      "status": "Defect eliminated across three independent post-fix observations."
+    },
+    {
+      "what": "Toluene reaches goal_met on the fixed version",
+      "evidence": "toluene fix q=1 best=0.01874; r2 q=3 best=0.01874; r3 q=1 best=0.01874. Same best delta (0.01874) and same molecule across three repetitions.",
+      "status": "Stable on toluene: 3/3 goal_met with identical best delta 0.01874."
+    },
+    {
+      "what": "Phenol variability on the fixed version",
+      "evidence": "fix q=0; r2 q=1 best=0.01478; r3 q=0. Two of three fixed-version runs did not find a qualifying product.",
+      "status": "1/3 goal_met. Phenol needs more than one attempt to reliably reach the 0.01 threshold."
+    },
+    {
+      "what": "Aniline variability on the fixed version",
+      "evidence": "fix q=0 best=-0.00369; r2 q=2 best=0.01698; r3 q=0 best=-0.00233.",
+      "status": "1/3 goal_met. Two of three runs returned early negative results. Aniline has higher variance than toluene."
+    },
+    {
+      "what": "Rule arm never finds qualifying on any parent",
+      "evidence": "0 qualifying across 12 rule-arm runs (3 parents x 4 versions).",
+      "status": "Weak baseline, consistent."
+    },
+    {
+      "what": "Phenol r3 had its own distinct failure mode",
+      "evidence": "termination_outcome=execution_failure with reason=consecutive_errors after 19 steps. The model emitted three rejected actions in a row: a select_edit with an unrecorded task-experience ID, a repeated choose_strategy on an already-selected hypothesis (rejected by the new fix), and a choose_strategy that placed the free-text reason inside arguments. Network: 0 failures, 0 retries.",
+      "status": "Single observation. Not a defect of the fix (the second rejection was correct and the fix did its job); the issue is that the consecutive_errors budget was exhausted before the model could recover from one well-formed rejection. The protocol's error budget of 3 is unchanged and not adjusted here."
+    },
+    {
+      "what": "Transport remains stable",
+      "evidence": "12 agent-arm runs in this summary, 0 network failures, 0 network retries.",
+      "status": "Stable."
+    }
+  ],
+  "honest_limitations": [
+    "Three observations per parent on the fixed version is the '≤3' ceiling, not a statistical sample.",
+    "Toluene 3/3 vs phenol 1/3 vs aniline 1/3 is real but explained: toluene has 6 reachable qualifying products in the catalogue, aniline 2, phenol 3, so toluene has more headroom for the agent to hit the threshold.",
+    "The parent-derived catalogue is larger than the original phenol catalogue, so cross-version comparison is about mechanism, not effect size.",
+    "Rule arm found 0/12; it is a weak baseline and cannot be used to claim the agent is better.",
+    "No docking, no biological validation, and the 0.01 threshold is unchanged."
+  ]
+}
