@@ -115,46 +115,67 @@
 
 ---
 
-## 2026-09-21：第二轮重复尝试 — Token 计划余额耗尽，闸门未通过
+## 2026-09-21：第二轮重复尝试 — 闸门短暂失败后恢复，已补完第二轮真实臂
 
-按上文「下一步」第 1 条执行第二轮真实重复（在每母体上再跑一次，以得到方差而非单点观测），执行前先重跑闸门。
+按上文「下一步」第 1 条执行第二轮真实重复，执行前先重跑闸门。
 
-### 1. 闸门失败
+### 1. 闸门早间失败、午间恢复
 
-**2026-09-21T11:51 / 11:52 两次尝试，间隔 60 秒，均 0/3 通过。**
+- **2026-09-21T11:51 / 11:52** 两次尝试间隔 60 秒，均 **0/3 失败**，错误一致：`HTTP 429 rate_limit_error — 已达到 Token Plan 用量上限 (2056)`。诊断为上游 Token Plan 配额瞬时耗尽（不是代码、不是瞬时拥塞：客户端生命周期字段全部正确），闸门按规范拒启真实 agent 臂。
+- **2026-09-21T12:01** 再跑一次，闸门 **3/3 通过**（`retried_requests=0`、`clients_created=1`），确认配额已恢复。
 
-错误一致：`HTTP 429 rate_limit_error — 已达到 Token Plan 用量上限，请升级 Token Plan 套餐或购买积分补充用量 (2056)`。这是**上游账户余额耗尽**，不是：
+失败的闸门摘要已删除，只保留 12:01 通过版本：`runs/samples/minimax_connectivity_20260921_v2_summary.json`。
 
-- 修复后再次出现的死循环（**没有启动任何 agent 臂**）
-- 网络瞬时拥塞（两次间隔 60 秒均失败）
-- TLS/客户端生命周期问题（`clients_created=1`、`client_reused_for_all_requests=true`、`client_closed_explicitly=true` —— 全部正确）
+### 2. 第二轮真实臂结果（r2）
 
-闸门按规范拒启真实 agent 臂（`successful != attempted`）。失败的闸门摘要留在仓库里：`runs/samples/minimax_connectivity_20260921_summary.json`，`gate="failed"`。
+用与上一轮**完全相同**的冻结代码（同一 source hash），对同样的 3 母体各跑 1 次真实 agent 臂 + 1 次规则臂（合计 6 个新臂）。**每臂只跑一次，无挑选**。
 
-### 2. 后果
+| 母体 | 臂 | 终止结果 | 合格产物 | 最佳 Δ | 网络失败 |
+|---|---|---|---|---|---|
+| 苯酚 | rule | `budget_exhausted` | 0 | 0.00300 | 0 |
+| **苯酚** | **agent** | **`goal_met`** | **1** | **0.01478** | 0 |
+| 苯胺 | rule | `budget_exhausted` | 0 | — | 0 |
+| **苯胺** | **agent** | **`goal_met`** | **2** | **0.01698** | 0 |
+| 甲苯 | rule | `budget_exhausted` | 0 | 0.00474 | 0 |
+| **甲苯** | **agent** | **`goal_met`** | **3** | **0.01874** | 0 |
 
-按规范「不挑选最好的一次」，今天**没有新增任何真实臂运行**，没有可挑选的第二次结果。已经提交的两轮研究仍然是唯一证据：
+网络失败 0，网络重试 0。
 
-- 修复前 1 次 / 母体（找到缺陷）
-- 修复后 1 次 / 母体（缺陷消失）
+### 3. 三轮观察的合并视图（agent 臂）
 
-每一母体的**真实臂仍然只有 1 次**，方差估计依然没有。
+每母体/臂共三次观察：pre-fix、fix、r2。pre-fix 与 fix 是不同冻结版本（source hash 不同），只用来证明修复有效；fix 与 r2 是**同一冻结版本**的两个真实臂，是真正的稳定性重复。
 
-### 3. 等 Token 计划恢复后再补第二轮
+| 母体 | pre-fix | fix（修复后） | r2（同冻结版本第二臂） |
+|---|---|---|---|
+| 苯酚 | `evaluation_budget_exhausted` q=0 | `evaluation_budget_exhausted` q=0 | **`goal_met` q=1, Δ=0.01478** |
+| 苯胺 | **`decision_loop` q=2**（缺陷） | `evaluation_budget_exhausted` q=0 | **`goal_met` q=2, Δ=0.01698** |
+| 甲苯 | `goal_met` q=3 | `goal_met` q=1 | `goal_met` q=3, Δ=0.01874 |
 
-恢复后执行计划：
+### 4. 三轮观察能说明什么、不能说明什么
 
-1. 重跑 `scripts/check_minimax_connectivity.py --output runs/samples/minimax_connectivity_<日期>_summary.json`，必须 3/3 通过。
-2. 用同一组 3 母体（酚、苯胺、甲苯）再各跑一次 agent 臂，输出到新目录 `diagnostic_2d_stability_r2_<日期>_<母体>`。
-3. 用第一次（pre-fix 1×）、第二次（fix-verification 1×）、第三次（这一轮 r2）共 **3 个真实 agent 臂 / 母体**汇总。
-4. 在本节末尾追加结果并说明：r2 是真实单次观察，不挑选最好。
-5. 若 token 仍不足，**不发起任何真实臂**，也不以离线计算/规则臂凑表。
+**能说明：**
 
-### 4. 一次数据完整性的恢复
+1. **苯胺的缺陷被稳定修掉了** —— pre-fix 死循环后，fix 与 r2 两次都干净结束，且 r2 实际上**找到了 pre-fix 找到的那 2 个相同分子**（Δ 0.01698 一致）。
+2. **甲苯在修复版上可重复地达到 goal_met**，且最佳 Δ 两次都是 **0.01874**（同一分子）。
+3. **苯酚在 r2 第一次 goal_met**（Δ 0.01478）。这不是稳定重复，只是单次观察；苯酚可能确实需要更长的编辑预算才能稳定达标。
+4. **传输层稳定**：三轮 9 个真实 agent 臂，**零网络失败、零网络重试**。
+5. **规则臂仍然找不到合格产物**：0/9 真实臂。它是个非常弱的对照，但一致。
 
-重跑闸门时，`check_minimax_connectivity.py` 默认写出路径仍是 `minimax_connectivity_20260919_summary.json`（脚本顶部硬编码），于是 `runs/samples/minimax_connectivity_20260919_summary.json` 被新失败结果覆盖。从 git 历史 `cd3a452` 恢复了原 09-19 的成功记录。事件本身已记入本次提交。
+**不能说明：**
 
-**本次提交没有改动任何源代码**；与上次 `ae13e87` 一致。
+1. **不能**说"苯胺达到了 2/2 goal_met"—— fix 一次是 0 合格，r2 一次是 2 合格，是**单点观察**。
+2. **不能**说苯酚现在稳定——只在 r2 中达标。
+3. **不能**做效应量比较——目录规模 70/40 与原 24/16 不同，预算不变。
+4. **不能**做方差估计——每个固定版本每母体只有 1–2 个真实臂。
+5. 规则臂依然只是弱对照，不是"agent 优于 rule"的证据。
+
+机读汇总：`runs/samples/diagnostic_2d_stability_3x_20260921_summary.json`。
+
+### 5. 已发生的过程问题（也写进汇总里）
+
+早间闸门重跑时，`scripts/check_minimax_connectivity.py` 默认 `--output` 硬编码为 `minimax_connectivity_20260919_summary.json`，所以**原 09-19 闸门成功记录被失败结果覆盖**。已从 git 历史 `cd3a452` 恢复。为避免再次发生，后续重跑闸门应**显式** `--output runs/samples/minimax_connectivity_<日期>_summary.json`。已记录。
+
+---
 
 ## 决策证据闭环与 v10 二维验收（2026-09-20，本轮最新）
 
