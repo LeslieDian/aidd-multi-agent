@@ -113,6 +113,49 @@
 2. 每次真实 agent 臂都必须先过连接门槛（本轮 3/3）。
 3. 暂不扩展到完整 3D、docking 或 n=20。
 
+---
+
+## 2026-09-21：第二轮重复尝试 — Token 计划余额耗尽，闸门未通过
+
+按上文「下一步」第 1 条执行第二轮真实重复（在每母体上再跑一次，以得到方差而非单点观测），执行前先重跑闸门。
+
+### 1. 闸门失败
+
+**2026-09-21T11:51 / 11:52 两次尝试，间隔 60 秒，均 0/3 通过。**
+
+错误一致：`HTTP 429 rate_limit_error — 已达到 Token Plan 用量上限，请升级 Token Plan 套餐或购买积分补充用量 (2056)`。这是**上游账户余额耗尽**，不是：
+
+- 修复后再次出现的死循环（**没有启动任何 agent 臂**）
+- 网络瞬时拥塞（两次间隔 60 秒均失败）
+- TLS/客户端生命周期问题（`clients_created=1`、`client_reused_for_all_requests=true`、`client_closed_explicitly=true` —— 全部正确）
+
+闸门按规范拒启真实 agent 臂（`successful != attempted`）。失败的闸门摘要留在仓库里：`runs/samples/minimax_connectivity_20260921_summary.json`，`gate="failed"`。
+
+### 2. 后果
+
+按规范「不挑选最好的一次」，今天**没有新增任何真实臂运行**，没有可挑选的第二次结果。已经提交的两轮研究仍然是唯一证据：
+
+- 修复前 1 次 / 母体（找到缺陷）
+- 修复后 1 次 / 母体（缺陷消失）
+
+每一母体的**真实臂仍然只有 1 次**，方差估计依然没有。
+
+### 3. 等 Token 计划恢复后再补第二轮
+
+恢复后执行计划：
+
+1. 重跑 `scripts/check_minimax_connectivity.py --output runs/samples/minimax_connectivity_<日期>_summary.json`，必须 3/3 通过。
+2. 用同一组 3 母体（酚、苯胺、甲苯）再各跑一次 agent 臂，输出到新目录 `diagnostic_2d_stability_r2_<日期>_<母体>`。
+3. 用第一次（pre-fix 1×）、第二次（fix-verification 1×）、第三次（这一轮 r2）共 **3 个真实 agent 臂 / 母体**汇总。
+4. 在本节末尾追加结果并说明：r2 是真实单次观察，不挑选最好。
+5. 若 token 仍不足，**不发起任何真实臂**，也不以离线计算/规则臂凑表。
+
+### 4. 一次数据完整性的恢复
+
+重跑闸门时，`check_minimax_connectivity.py` 默认写出路径仍是 `minimax_connectivity_20260919_summary.json`（脚本顶部硬编码），于是 `runs/samples/minimax_connectivity_20260919_summary.json` 被新失败结果覆盖。从 git 历史 `cd3a452` 恢复了原 09-19 的成功记录。事件本身已记入本次提交。
+
+**本次提交没有改动任何源代码**；与上次 `ae13e87` 一致。
+
 ## 决策证据闭环与 v10 二维验收（2026-09-20，本轮最新）
 
 本轮的目标是把 v4 遗留的问题走完：**让智能体在真实连接下走完整条决策链**，并把途中暴露的每一个缺陷修掉、测掉、记录掉。全程遵守同一组约束：不新增分子工具、不扩展 3D、不跑 docking、不跑 n=20、不改 `property_score` 公式与 `+0.01` 阈值、不放宽 hERG 等既有约束、**不因结果差而重跑**。
