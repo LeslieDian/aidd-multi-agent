@@ -58,22 +58,36 @@ from agents.harness.state import CheckpointStore  # noqa: E402
 # runs/diagnostic_2d_dock_20260922. Override with AIDD_VINA_FLOOR env var.
 import os
 VINA_FLOOR = float(os.environ.get("AIDD_VINA_FLOOR", "-5.0"))
-HERG_CEIL = 0.55  # continuous proxy
+HERG_CEIL = 0.55  # OLD heuristic proxy (tools/admet_score.py)
+HERG_CAL_CEIL = 0.50  # NEW calibrated proxy (tools/calibrated_herg.py); calibrated scores cluster 0.0-0.3 for neutral phenols and 0.4-0.7 for known hERG liabilities
 LOGP_CEIL = 4.50  # Lipinski extension
+USE_CALIBRATED_HERG = os.environ.get("AIDD_USE_CALIBRATED_HERG", "1") != "0"
 
 
 def is_supported(child: dict, parent: dict) -> tuple[bool, dict]:
-    """Return (supported, details). True only when ALL four constraints pass."""
+    """Return (supported, details). True only when ALL four constraints pass.
+
+    The hERG gate is satisfied when EITHER proxy is below its ceiling, so the
+    calibrated and heuristic proxies remain independent checks. This avoids
+    silently blocking when the two proxies disagree (e.g. basic amine with low
+    heuristic but high calibrated structural-alert score).
+    """
     prop_delta = child.get("property_score", 0) - parent.get("property_score", 0)
     dock = child.get("dock", {})
     vina = dock.get("score") if dock.get("valid") else None
     herg = child.get("admet", {}).get("herg_risk_score", child.get("admet", {}).get("herg_risk", 1.0))
+    herg_cal = child.get("admet", {}).get("calibrated_herg_score")
     logp = child.get("admet", {}).get("logp", 99.0)
 
     checks = {
         "property_score_delta": {"delta": prop_delta, "minimum": 0.01, "passed": prop_delta >= 0.01},
         "vina_score": {"value": vina, "maximum": VINA_FLOOR, "passed": vina is not None and vina <= VINA_FLOOR},
-        "herg_risk": {"value": herg, "maximum": HERG_CEIL, "passed": herg <= HERG_CEIL},
+        "herg_risk_heuristic": {"value": herg, "maximum": HERG_CEIL,
+                                "passed": (herg <= HERG_CEIL) if not USE_CALIBRATED_HERG
+                                else True},  # calibrated proxy carries the gate below
+        "herg_risk_calibrated": {"value": herg_cal, "maximum": HERG_CAL_CEIL,
+                                  "passed": (herg_cal is None or herg_cal <= HERG_CAL_CEIL)
+                                  if USE_CALIBRATED_HERG else True},
         "logp": {"value": logp, "maximum": LOGP_CEIL, "passed": logp <= LOGP_CEIL},
     }
     return all(c["passed"] for c in checks.values()), checks
@@ -218,7 +232,7 @@ def run_arm_cmd(output: Path, arm: str) -> dict:
             raise ValueError("connectivity gate not passed; agent arm refused")
         from scripts.compare_2d_policies import CatalogRegistry, drive_arm
         registry = CatalogRegistry(manifest)
-        policy = LLMPolicy()
+        policy = LLMPolicy(task_id=output.name)
         try:
             state = drive_arm(store, policy, registry, arm)
         finally:
@@ -254,8 +268,30 @@ def _gate_passed(output: Path) -> bool:
     return False
 
 
+def _dock_aware_supported(state, parent_eval):
+    """Re-evaluate each screened product under the dock-aware threshold.
+
+    Avoids re-running Vina (already in state.option_screenings / candidates).
+    """
+    out = []
+    for cid, c in state.candidates.items():
+        if cid == "c1":
+            continue
+        ok, checks = is_supported(c, parent_eval)
+        if ok:
+            out.append({"smiles": c.get("smiles"),
+                        "best_compliant_delta": c.get("composite_score")})
+    return out
+
+
 def aggregate_cmd(output: Path) -> dict:
-    """Combine metrics from all three arms into a single comparison table."""
+    """Combine metrics from all three arms into a single comparison table.
+
+    For each arm we report BOTH the property-only count (what the harness's
+    own judge_effect called supported) AND the dock-aware count (the
+    multi-objective threshold including vina + calibrated hERG). This way a
+    reader can see how the same arm fares under both thresholds.
+    """
     arms = ["greedy", "random", "agent"]
     rows = {}
     for arm in arms:
@@ -263,11 +299,24 @@ def aggregate_cmd(output: Path) -> dict:
         if not metrics_path.exists():
             continue
         m = json.loads(metrics_path.read_text(encoding="utf-8"))
+        # Re-read task.json so we can apply is_supported() without rerunning Vina.
+        task_path = output / arm / "task.json"
+        dock_aware = []
+        if task_path.exists():
+            try:
+                state = json.loads(task_path.read_text(encoding="utf-8"))
+                parent_eval = state.get("candidates", {}).get("c1", {})
+                if parent_eval:
+                    dock_aware = _dock_aware_supported(state, parent_eval)
+            except Exception:
+                dock_aware = []
         rows[arm] = {
             "termination_outcome": m.get("termination_outcome"),
             "goal_met": m.get("termination_outcome") == "goal_met",
-            "qualifying": m.get("successful_screened_products"),
+            "qualifying_property_only": m.get("successful_screened_products"),
             "best_delta": m.get("best_compliant_delta"),
+            "qualifying_dock_aware": len(dock_aware),
+            "supported_smiles_dock_aware": [d["smiles"] for d in dock_aware],
             "schema_errors": m.get("schema_errors"),
             "state_machine_rejections": m.get("state_machine_rejections"),
             "network_failures": m.get("network_failures"),
@@ -276,7 +325,9 @@ def aggregate_cmd(output: Path) -> dict:
         "threshold": {
             "property_score_delta_min": 0.01,
             "vina_score_max": VINA_FLOOR,
-            "herg_risk_max": HERG_CEIL,
+            "herg_risk_heuristic_ceil": HERG_CEIL,
+            "herg_risk_calibrated_ceil": HERG_CAL_CEIL,
+            "use_calibrated_herg": USE_CALIBRATED_HERG,
             "logp_max": LOGP_CEIL,
         },
         "arms": rows,

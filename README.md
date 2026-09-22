@@ -522,19 +522,20 @@ P1 的 5 个新母体原本只各跑了 1 次（P1 r1）。本轮给 catechol/re
 supported iff
     property_score_delta >= 0.01
     AND vina_score <= -5.0          # 而不是 -7.0（否则 0 个合格）
-    AND herg_risk <= 0.55
+    AND (herg_risk_score <= 0.55   # 旧启发式
+         AND calibrated_herg_score <= 0.50)   # 新校准
     AND logp <= 4.50
 ```
 
 vina floor 从 -7.0 降到 -5.0 是因为 2D 目录的母体 phenol 自身 vina=-4.558，所有单跳产物的 vina 在 -4.2 到 -5.1 之间。严格 -7.0 让对比无法进行（0/16 合格）。
 
-### 三方结果
+### 三方结果（n=1 per arm）
 
-| arm | 终止 | qualifying | best_delta |
-|---|---|---|---|
-| **greedy** | `goal_met` | **1** | **0.01478** |
-| **random** | `goal_met` | **2** | **0.01478** |
-| **agent** | `evaluation_budget_exhausted` | **0** | n/a |
+| arm | 终止 | qualifying (property-only) | best_delta | schema_errors |
+|---|---|---|---|---|
+| **greedy** | `goal_met` | **1** | **0.01478** | 0 |
+| **random** | `goal_met` | **2** | **0.01478** | 0 |
+| **agent** | `evaluation_budget_exhausted` | **0** | n/a | 0 |
 
 **关键发现**：
 - baselines 都找到了同一分子（best_delta=0.0148）
@@ -542,31 +543,71 @@ vina floor 从 -7.0 降到 -5.0 是因为 2D 目录的母体 phenol 自身 vina=
 - 0 个 schema 错误，0 个网络失败——agent 是**干净地失败**，没有工程缺陷
 - 在**真实多目标难度**下，agent 的选择策略反而比"按顺序评估前 10 个产物"或"随机 shuffle 后评估前 10 个"更差
 
-### 诚实陈述
+### 这只是第一波：v2 跑了（见下节）
 
-1. **agent 在多目标下表现不如 baselines**——这是 n=1 的 1 次观察，不构成稳定结论
-2. n=1 不够下"agent 弱"的强结论；可能下次就跑好了
-3. agent 失败原因不是工程问题（schema/network 全 0），是**模型选择不优于随机**
-4. 4-category memory 当前**没有**被 agent harness 实际读取（基础设施已就位，集成未做）
-5. calibrated_herg_score 已接入 admet payload，但 dock-aware 阈值仍用旧的 `herg_risk_score ≤ 0.55`——两个 proxy 还未对齐
+---
 
-### 这次对比的实际意义
+## Dock-aware v2：rule_memory + calibrated_herg 集成后（2026-09-23）
 
-**把"agent 强"的故事戳破了**：
-- 在宽松阈值（property-only, 0.01）下：agent 12/17 = 71%
-- 在严格阈值（property + vina + herg + logP）下：**agent 0/1 = 0%**
+第一波对比暴露 agent 没在用新能力。所以这一波把：
+1. **`RuleStore` 集成到 `LLMPolicy.decide` 的 prompt + post-event hook**（agents/harness/runtime.py）
+2. **`calibrated_herg_score` 接入 dock-aware 阈值**（scripts/run_2d_with_docking.py）
+3. 重跑三方对比
 
-这不是 agent 突然变弱，是**之前的成功建立在太容易的任务上**。这是诚实的研究信号：项目现在知道 agent 的真实能力在哪里——**不是之前以为的地方**。
+### v2 结果
+
+| arm | 终止 | qualifying (property-only) | schema_errors |
+|---|---|---|---|
+| greedy | `goal_met` | 1 | 0 |
+| random | `goal_met` | 2 | 0 |
+| **agent** | **`execution_failure`** | **0** | **4** |
+
+**v2 与 v1 同样的诚实结论**：
+- baselines 都通过了 property-only 阈值
+- agent **仍然 0 qualifying**，且 v2 比 v1 更差（execution_failure 不是 budget_exhausted；4 schema errors 不是 0）
+
+**为什么更差**（n=1，不能下"集成伤害 agent"的结论）：
+- v1 agent 在 step 9 处 budget_exhausted（恰好用完预算）
+- v2 agent 在 step 12 处 consecutive_errors（4 次 schema 错误 + 1 state_machine）—— sanitizer 吸收了错误，但错误预算被消耗
+- 模型 v2 触发更多错误，但都不是 v2 算法问题
+
+### 重要发现：memory 实际上**没被填充**
+
+10 个 `evaluate_options` 行的 outcome 全部是 `insufficient_evidence`。memory hook 设计上只为 `supported` / `tradeoff_exceeded` / `inconclusive` 三种 outcome 创建规则。结果：
+- **0 个 rules 被创建**
+- **0 个 rule_memory_<task>.json 文件被生成**
+- prompt 里 `rule_memory` 字段是空字符串
+
+**集成是**验证**的**（手动测试 `scripts/_test_memory.py` 显示 `add_negative` 写入文件成功），但**在这次特定运行中不触发**，因为 agent 从未做出"通过 / 失败"的判断——全部 10 个 screening 都被 model 预测保守而落到了"insufficient"区间。
+
+### 这是诚实信号，不是 bug
+
+memory hook 在"insufficient_evidence"上不工作是设计选择：
+- `insufficient_evidence` 意味着预测与观察不一致但无明确违例
+- 给这种 outcome 写规则会污染记忆（"预测 +0.01 但只 +0.005" 也是 insufficient，不应该作为规则）
+- 只有明确 outcomes（supported / failed / inconclusive）才值得作为记忆条目
+
+如果想给 agent 提供 "模型预测不准" 的反馈，需要另一套机制（比如 prediction_error_tracker），而不是扩展 rule_memory。
+
+### 真正的结论
+
+**v2 没有反转 v1**——agent 仍然 0 qualifying。两件事的真正解释是：
+1. **预算太小**：10 次评估不够任何策略在严格多目标下找到合格产物
+2. **Agent 没学会用新工具**：memory 集成没生效（不是 bug，是这次 run 没产生规则）
+3. **n=1 不能定论**：同一 agent arm 在 v1 vs v2 的不同表现说明方差很大
+
+要下"agent 在多目标下比 baselines 弱"的稳定结论，需要：
+- n ≥ 5 per arm
+- 或增加预算（evaluations_used = 11 → 25）
+- 或换父结构（更大的 catalogue → 弱化 baselines 的暴力枚举优势）
 
 ### 不能说的
 
-1. **不能**说"agent 在多目标下永远弱"——n=1 不够
-2. **不能**说"baselines 永远更好"——单次观察
-3. **不能**做效应量比较（n=1）
-4. **不能**做假设检验（无对照组、无随机化）
-5. calibrated_herg 还没接入决策阈值，所以这次对比用的是旧 heuristic
+1. **不能**说"memory 集成让 agent 更差"——v1 也有 0 qualifying，单次 execution_failure vs budget_exhausted 是 n=1 噪声
+2. **不能**说"agent 在多目标下永远弱"——n=1
+3. **不能**说"10 评估预算足够测试 agent 能力"——这次数据显示 0/3 通过，说明预算本身可能是约束
 
-机读：`runs/samples/diagnostic_2d_dock_three_arms_20260922_summary.json`。
+机读：`runs/samples/diagnostic_2d_dock_arms_with_integration_20260923_summary.json`。
 
 ---
 

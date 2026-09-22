@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "target": "diagnostic_2d_dock_20260922",
+  "saved_utc": "2026-09-22T16:39:01.045925+00:00",
+  "rules": {
+    "neg::Cc1ccc(O)cc1": {
+      "rule_id": "neg::Cc1ccc(O)cc1",
+      "category": "negative_constraint",
+      "description": "Avoid SMILES Cc1ccc(O)cc1: test",
+      "pattern": {
+        "smiles": "Cc1ccc(O)cc1"
+      },
+      "applicable_context": [],
+      "evidence_strength": 1.0,
+      "observations": 1,
+      "successes": 1,
+      "failures": 0,
+      "created_utc": "2026-09-22T16:39:01.045802+00:00",
+      "last_updated_utc": "2026-09-22T16:39:01.045802+00:00",
+      "source_round": null,
+      "source_smiles": null,
+      "parent_smiles": null
+    }
+  }
+}

@@ -7,6 +7,17 @@ calls still opens exactly one HTTP client per provider. ``Harness`` closes the
 scope when the caller leaves its context manager (or calls ``close()``), and
 the close is idempotent. The scope is never written into ``TaskState``: the
 state object only ever contains JSON-serializable data.
+
+Memory integration (2026-09-22)
+--------------------------------
+LLMPolicy owns a ``RuleStore`` (agents/rule_memory.py) so the agent can read
+and write the four-category memory (negative constraints / positive
+transformations / applicable context / evidence strength). The store is
+persisted across calls within one task via ``rule_persist_path`` (defaults to
+``runs/samples/rule_memory_<task_id>.json``). On every tool_result that ends
+a screening or supports a candidate, the policy adds the corresponding
+rule (or updates its evidence) and includes a formatted memory block in the
+next prompt.
 """
 from copy import deepcopy
 import json
@@ -18,15 +29,30 @@ from .reliability import (
     BudgetExceeded, ClientScope, RetryPolicy, client_config, error_category, reserve, transient,
 )
 from agents.redaction import sanitize
+from agents.rule_memory import RuleStore
 
 
 class LLMPolicy:
     """Real planner: one model client per provider, reused for the whole task."""
 
-    def __init__(self, evidence=None, scope=None):
+    def __init__(self, evidence=None, scope=None, rule_store=None, rule_persist_path=None,
+                 task_id=None):
         self.scope = scope if scope is not None else ClientScope()
         self.evidence = evidence
         self._secrets = ()
+        # 2026-09-22: per-task 4-category rule memory.
+        # If the caller doesn't supply a RuleStore, create one backed by disk
+        # so the agent can persist rules across calls within one task.
+        if rule_store is not None:
+            self.rule_store = rule_store
+        else:
+            path = rule_persist_path
+            if path is None and task_id:
+                from pathlib import Path
+                samples = Path("runs") / "samples"
+                samples.mkdir(parents=True, exist_ok=True)
+                path = samples / f"rule_memory_{task_id}.json"
+            self.rule_store = RuleStore(persist_path=path, target=task_id)
 
     @property
     def client_scope(self):
@@ -40,6 +66,82 @@ class LLMPolicy:
         installed with. A policy constructed standalone simply has no sink.
         """
         return self.evidence
+
+    def update_memory_from_events(self, events: list, state) -> None:
+        """Translate new tool_result events into 4-category memory entries.
+
+        Called by Harness after each step so the next decide() prompt sees an
+        up-to-date rule store.
+        """
+        if not self.rule_store:
+            return
+        for event in events:
+            if event.get("type") != "tool_result":
+                continue
+            action = event.get("action", {})
+            result = event.get("result", {})
+            tool = action.get("tool")
+            if tool == "evaluate_options":
+                # screening results -> add negative / positive rules per outcome.
+                # The screening_comparison.rows list carries per-option outcomes.
+                screening = result.get("screening_comparison", {})
+                rows = screening.get("rows", [])
+                # Options live in action.arguments.options, NOT in
+                # screening_comparison (which only carries scoring rows).
+                options = action.get("arguments", {}).get("options", [])
+                parent_id = action.get("arguments", {}).get("parent_id", "c1")
+                parent = state.candidates.get(parent_id, {})
+                parent_smiles = parent.get("smiles", "?")
+                # Build option-index -> option-edit map (for supported rows).
+                opts_by_index = {o.get("option_index"): o for o in options
+                                  if o.get("option_index") is not None}
+                for row in rows:
+                    opt_index = row.get("option_index")
+                    effect = row.get("effect", {})
+                    outcome = effect.get("outcome", "")
+                    if outcome not in ("supported", "tradeoff_exceeded", "inconclusive"):
+                        continue
+                    # The smiles comes from the option's precheck or the row itself.
+                    opt = opts_by_index.get(opt_index, {})
+                    smi = (opt.get("precheck", {}).get("product_smiles")
+                           or row.get("smiles"))
+                    if not smi:
+                        continue
+                    delta = effect.get("observed_delta")
+                    scaffold = parent.get("scaffold", "?")
+                    if outcome == "supported":
+                        edit = opt.get("edit", {})
+                        self.rule_store.add_positive_transformation(
+                            edit=edit,
+                            parent_smiles=parent_smiles,
+                            child_smiles=smi,
+                            property_delta=float(delta) if delta is not None else 0.0,
+                            context_scaffolds=[scaffold],
+                            source_round=state.total_rounds if hasattr(state, "total_rounds") else None,
+                        )
+                    elif outcome in ("tradeoff_exceeded", "inconclusive"):
+                        self.rule_store.add_negative(
+                            smi,
+                            reason=f"screening_{outcome}",
+                            context_scaffolds=[scaffold],
+                        )
+            elif tool == "compare_parent_child":
+                # A successful compare -> negative rule for child (if it lost) or
+                # positive reinforcement for the underlying edit.
+                comp = result.get("comparisons", [])
+                for row in comp:
+                    assessment = row.get("goal_assessment", {})
+                    if assessment.get("passed"):
+                        child_smi = row.get("child_smiles")
+                        parent_smi = row.get("parent_smiles")
+                        # Increment the corresponding positive rule's evidence
+                        for r in self.rule_store.by_category("positive_transformation"):
+                            if r.source_smiles == child_smi and r.parent_smiles == parent_smi:
+                                r.update_evidence(success=True)
+                                break
+            elif tool == "finish":
+                # The task ended -> no-op (memory already captured by previous events)
+                pass
 
     def close(self) -> None:
         """Close the owned HTTP clients. Idempotent."""
@@ -153,7 +255,15 @@ class LLMPolicy:
                         "evaluations_remaining": state.max_evaluations - state.evaluations_used,
                         "dock_enabled": state.dock_enabled, "candidates": candidates,
                         "available_actions": availability,
-                        "recent_events": state.events[-8:], "tools": offered_tools}, ensure_ascii=False))
+                        "recent_events": state.events[-8:],
+                        "rule_memory": self.rule_store.format_for_prompt(
+                            context={"parent_smiles": next(
+                                (c.get("smiles") for c in candidates if c.get("candidate_id") == "c1"),
+                                None),
+                                "scaffold_class": candidates[0].get("scaffold") if candidates else None},
+                            max_chars=2000,
+                        ) if self.rule_store and self.rule_store.rules else "",
+                        "tools": offered_tools}, ensure_ascii=False))
 
 
 class MockPolicy:
@@ -548,6 +658,13 @@ class Harness:
                                  "revision": state.revision, "action": action, "result": result}
                         working.events.append(event)
                         working.pending = None
+                        # 2026-09-22: feed the new event into the 4-category rule
+                        # store before the next decide() reads the prompt.
+                        try:
+                            if hasattr(policy, "update_memory_from_events"):
+                                policy.update_memory_from_events([event], working)
+                        except Exception:
+                            pass
                         working.consecutive_errors = 0
                         working.idle_actions = 0 if (working.candidates != state.candidates
                             or working.hypotheses != state.hypotheses or working.strategies != state.strategies
