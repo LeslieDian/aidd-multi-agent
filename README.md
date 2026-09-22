@@ -371,20 +371,50 @@ r4 关键观察：
 |---|---|
 | 已测母体（agent 真实臂） | **8**（苯酚、苯胺、甲苯 + catechol、resorcinol、4-methylphenol、4-fluorophenol、benzonitrile） |
 | 已跑真实臂 | 17 个（原 3 母体 × 4 次 + P1 5 母体 × 1 次） |
-| 已测母体（baseline 臂） | 3（苯酚、苯胺、甲苯），各 1 次 greedy + 1 次 random = 6 个臂 |
+| 已测母体（baseline 臂） | **8**（苯酚、苯胺、甲苯 + P1 5 母体），各 1 次 greedy + 1 次 random = 16 个臂 |
 | `execution_failure` 出现 | 2 次 / 17 = **12%**（苯酚 r3、benzonitrile P1） |
 | `goal_met` 总计 | 12 / 17 = **71%**（其中 resorcinol P1 首次命中 audit-best） |
 | 测试套件 | **293 passed, 1 skipped** |
-| 当前提交 | `??`（待推送） |
+| 当前提交 | `cc32cb0`（P1 多母体扩展 + 双 key fallback）|
 
-### 5. 不能说的
+### 5. P1 多母体 baseline 扩展（2026-09-22，本轮）
+
+把 P3 baseline 对照从原 3 母体扩展到 P1 的 5 母体上：`compare_2d_policies.py greedy|random --scenario parent --parent <SMILES>`。**离线，零 token 成本**，复用 P1 已冻结的 manifest 目录。每个 P1 母体各 1 次 greedy + 1 次 random = 10 个新 baseline 臂。
+
+| 母体 | 场景 | greedy qual / best | random qual / best | agent obs / gm / qual / best |
+|---|---|---|---|---|
+| 苯酚 | phenol (24/16) | 0 / 0.00707 | 0 / 0.00706 | 4 / 1 / 1 / 0.01478 |
+| 苯胺 | phenol (24/16) | 0 / −0.00187 | 1 / 0.01469 | 4 / 1 / 4 / 0.01698 |
+| 甲苯 | phenol (24/16) | 0 / 0.00918 | 2 / 0.01355 | 4 / **4** / 8 / **0.01874** |
+| catechol | parent (70/40) | **3** / **0.02985** | 2 / 0.02985 | 1 / 1 / 1 / 0.01911 |
+| resorcinol | parent (70/40) | **3** / **0.02962** | 0 / 0.00995 | 1 / 1 / 2 / **0.02962** |
+| 4-methylphenol | parent (70/40) | 0 / 0.00552 | **2** / **0.01925** | 1 / 1 / 1 / 0.01065 |
+| 4-fluorophenol | parent (70/40) | 0 / 0.00630 | **2** / **0.01989** | 1 / 1 / 1 / 0.01102 |
+| benzonitrile | parent (70/40) | 1 / 0.01050 | **1** / **0.01413** | 1 / 0 / 0 / 0.00774 |
+
+**这一表把"agent > random >> greedy"改写为"分场景"**：
+
+1. **原 3 母体（小目录，phenol 24/16）**：agent 有明显优势。greedy 0/3（固定顺序下预算不够扫到合格），random 3/9，agent 6/12 goal_met，**只有甲苯 4/4 稳定达标**。这是 README 历史"agent > random >> greedy"结论的来源。
+2. **P1 5 母体（大目录，parent 70/40）**：baseline 反超。greedy 7 个合格分子覆盖 3/5 母体（catechol、resorcinol、benzonitrile）；random 7 个合格分子覆盖 4/5 母体。**greedy 与 random 都在多个 P1 母体上找到了 audit-best 分子**（catechol Δ 0.02985、resorcinol Δ 0.02962、4-methylphenol Δ 0.01925、4-fluorophenol Δ 0.01989、benzonitrile Δ 0.01413）。
+3. **agent 在 P1 上 n=1**：不足以与有 1 次观察的 baseline 直接比较。
+
+**诚实陈述**：
+
+1. **没有"agent 普遍优于 baseline"的稳定证据**。在原 3 母体（24/16 小目录）成立；在 P1（70/40 大目录）不成立，因为固定顺序 greedy 已经能扫到 audit-best。
+2. **agent 与 baselines 在大目录上看到了同一个 audit 已知合格集合**（reachability.json），差别只在选择偏好，不在可见空间。
+3. **唯一仍是"agent 优势"的强信号是甲苯 4/4 goal_met、8 个合格分子、最佳 Δ 0.01874**——这是 4 次重复下的稳定结论。
+4. **agent 的 n=1 P1 观察不能成为"agent 优于 baseline"的依据**，必须把 P1 每个母体重复 ≥3 次再谈。
+
+机读汇总：`runs/samples/diagnostic_2d_baseline_vs_agent_8parents_20260922_summary.json`。完整原始 baseline 数据在每个 P1 母体的 `greedy/metrics.json` 与 `random/metrics.json`（本地、git 忽略）。
+
+### 6. 不能说的
 
 1. **不能**说"agent 在新母体上也稳定达标"——每个新母体只跑了 1 次。
 2. **不能**说"execution_failure 是稳定失败模式"——2/17 = 12% 仍是单次观察级。
 3. **不能**说"双 key 配置解决了 token plan 耗尽"——本次 primary key 已恢复，fallback 未触发，是预防性配置。
-4. **不能**说"agent 找到的分子比 random 好"——P1 5 个新母体上没跑 random baseline。
+4. **不能**说"agent 找到的分子比 random 好"——P1 5 个新母体上 agent n=1，random n=1，二者样本量相同，不能下"agent 更好"的结论。
 5. **不能**做效应量比较（70/40 vs 24/16 目录规模）。
-6. **不能**做假设检验（n=17 arms）。
+6. **不能**做假设检验（n=17 arms；P1 每个母体 n=1）。
 
 ---
 

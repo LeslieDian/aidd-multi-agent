@@ -1,0 +1,355 @@
+{
+  "schema_version": 3,
+  "experiment": "diagnostic_2d_baseline_vs_agent_8parents_20260922",
+  "created_utc": "2026-09-22T22:15:00+00:00",
+  "purpose": "Extend the P3 baseline comparison (greedy + random) from the original 3 parents to all 8 parents tested by the agent. Baselines bypass the LLM harness and drive evaluate_candidates directly; offline, zero token cost.",
+  "frozen_version": "Baselines are reproducible by re-running greedy/random on the frozen manifest directories. Each agent observation lives in its own run directory.",
+  "connectivity_gate": {
+    "note": "Baselines are offline, no gate needed. Gate applies only to agent arms."
+  },
+  "design": {
+    "greedy": "sort unique products by (-catalogue_id_count, smiles); evaluate in that order until budget exhausted",
+    "random": "deterministic seeded shuffle (seed=42); same evaluation loop",
+    "budget": "max_evaluations=11 (1 parent + 10 products); same as agent arm",
+    "stop_rule": "after budget: finish with the best qualifying product, or honestly report none"
+  },
+  "arms_by_parent": [
+    {
+      "parent": "phenol",
+      "parent_smiles": "Oc1ccccc1",
+      "scenario": "phenol",
+      "run_dir": "diagnostic_2d_baseline_20260921_phenol",
+      "source_set": "original_3_parents_2026_09_21",
+      "greedy": {
+        "qualifying": 0,
+        "best_delta": 0.007070935716564031,
+        "termination": "budget_exhausted"
+      },
+      "random": {
+        "qualifying": 0,
+        "best_delta": 0.007059232419860728,
+        "termination": "budget_exhausted"
+      },
+      "agent": {
+        "observations": [
+          {
+            "arm": "agent",
+            "termination_outcome": "evaluation_budget_exhausted",
+            "qualifying": 0,
+            "best_delta": 0.008208575961059172
+          },
+          {
+            "arm": "agent",
+            "termination_outcome": "evaluation_budget_exhausted",
+            "qualifying": 0,
+            "best_delta": 0.008208575961059172
+          },
+          {
+            "arm": "agent",
+            "termination_outcome": "goal_met",
+            "qualifying": 1,
+            "best_delta": 0.014776211749152113
+          },
+          {
+            "arm": "agent",
+            "termination_outcome": "execution_failure",
+            "qualifying": 0,
+            "best_delta": 0.008208575961059172
+          }
+        ],
+        "n_observations": 4,
+        "goal_met_count": 1,
+        "execution_failure_count": 1,
+        "qualifying_total": 1,
+        "best_delta_max": 0.014776211749152113
+      }
+    },
+    {
+      "parent": "aniline",
+      "parent_smiles": "Nc1ccccc1",
+      "scenario": "phenol",
+      "run_dir": "diagnostic_2d_baseline_20260921_aniline",
+      "source_set": "original_3_parents_2026_09_21",
+      "greedy": {
+        "qualifying": 0,
+        "best_delta": -0.001865720327392295,
+        "termination": "budget_exhausted"
+      },
+      "random": {
+        "qualifying": 1,
+        "best_delta": 0.014685671980300241,
+        "termination": "goal_met"
+      },
+      "agent": {
+        "observations": [
+          {
+            "arm": "agent",
+            "termination_outcome": "decision_loop",
+            "qualifying": 2,
+            "best_delta": 0.016984333234563165
+          },
+          {
+            "arm": "agent",
+            "termination_outcome": "evaluation_budget_exhausted",
+            "qualifying": 0,
+            "best_delta": -0.0036873042101760456
+          },
+          {
+            "arm": "agent",
+            "termination_outcome": "goal_met",
+            "qualifying": 2,
+            "best_delta": 0.016984333234563165
+          },
+          {
+            "arm": "agent",
+            "termination_outcome": "budget_exhausted",
+            "qualifying": 0,
+            "best_delta": -0.0023310499977219346
+          }
+        ],
+        "n_observations": 4,
+        "goal_met_count": 1,
+        "execution_failure_count": 0,
+        "qualifying_total": 4,
+        "best_delta_max": 0.016984333234563165
+      }
+    },
+    {
+      "parent": "toluene",
+      "parent_smiles": "Cc1ccccc1",
+      "scenario": "phenol",
+      "run_dir": "diagnostic_2d_baseline_20260921_toluene",
+      "source_set": "original_3_parents_2026_09_21",
+      "greedy": {
+        "qualifying": 0,
+        "best_delta": 0.009181661403856456,
+        "termination": "budget_exhausted"
+      },
+      "random": {
+        "qualifying": 2,
+        "best_delta": 0.013550122942318055,
+        "termination": "goal_met"
+      },
+      "agent": {
+        "observations": [
+          {
+            "arm": "agent",
+            "termination_outcome": "goal_met",
+            "qualifying": 3,
+            "best_delta": 0.018744708865016113
+          },
+          {
+            "arm": "agent",
+            "termination_outcome": "goal_met",
+            "qualifying": 1,
+            "best_delta": 0.018744708865016113
+          },
+          {
+            "arm": "agent",
+            "termination_outcome": "goal_met",
+            "qualifying": 3,
+            "best_delta": 0.018744708865016113
+          },
+          {
+            "arm": "agent",
+            "termination_outcome": "goal_met",
+            "qualifying": 1,
+            "best_delta": 0.018744708865016113
+          }
+        ],
+        "n_observations": 4,
+        "goal_met_count": 4,
+        "execution_failure_count": 0,
+        "qualifying_total": 8,
+        "best_delta_max": 0.018744708865016113
+      }
+    },
+    {
+      "parent": "catechol",
+      "parent_smiles": "Oc1ccccc1O",
+      "scenario": "parent",
+      "run_dir": "diagnostic_2d_p1_20260921_catechol",
+      "source_set": "P1_multi_parent_2026_09_22",
+      "greedy": {
+        "qualifying": 3,
+        "best_delta": 0.029845910350255078,
+        "termination": "goal_met"
+      },
+      "random": {
+        "qualifying": 2,
+        "best_delta": 0.029845910350255078,
+        "termination": "goal_met"
+      },
+      "agent": {
+        "observations": [
+          {
+            "arm": "agent",
+            "termination_outcome": "goal_met",
+            "qualifying": 1,
+            "best_delta": 0.019105755759684317,
+            "schema_errors": 1,
+            "state_machine_rejections": 0
+          }
+        ],
+        "n_observations": 1,
+        "goal_met_count": 1,
+        "execution_failure_count": 0,
+        "qualifying_total": 1,
+        "best_delta_max": 0.019105755759684317
+      }
+    },
+    {
+      "parent": "resorcinol",
+      "parent_smiles": "Oc1cccc(O)c1",
+      "scenario": "parent",
+      "run_dir": "diagnostic_2d_p1_20260921_resorcinol",
+      "source_set": "P1_multi_parent_2026_09_22",
+      "greedy": {
+        "qualifying": 3,
+        "best_delta": 0.029615138502747662,
+        "termination": "goal_met"
+      },
+      "random": {
+        "qualifying": 0,
+        "best_delta": 0.0099481999171398,
+        "termination": "budget_exhausted"
+      },
+      "agent": {
+        "observations": [
+          {
+            "arm": "agent",
+            "termination_outcome": "goal_met",
+            "qualifying": 2,
+            "best_delta": 0.029615138502747662,
+            "schema_errors": 0,
+            "state_machine_rejections": 0
+          }
+        ],
+        "n_observations": 1,
+        "goal_met_count": 1,
+        "execution_failure_count": 0,
+        "qualifying_total": 2,
+        "best_delta_max": 0.029615138502747662
+      }
+    },
+    {
+      "parent": "4-methylphenol",
+      "parent_smiles": "Cc1ccc(O)cc1",
+      "scenario": "parent",
+      "run_dir": "diagnostic_2d_p1_20260921_4-methylphenol",
+      "source_set": "P1_multi_parent_2026_09_22",
+      "greedy": {
+        "qualifying": 0,
+        "best_delta": 0.005520109357699199,
+        "termination": "budget_exhausted"
+      },
+      "random": {
+        "qualifying": 2,
+        "best_delta": 0.01925229322866695,
+        "termination": "goal_met"
+      },
+      "agent": {
+        "observations": [
+          {
+            "arm": "agent",
+            "termination_outcome": "goal_met",
+            "qualifying": 1,
+            "best_delta": 0.010652434429319069,
+            "schema_errors": 1,
+            "state_machine_rejections": 0
+          }
+        ],
+        "n_observations": 1,
+        "goal_met_count": 1,
+        "execution_failure_count": 0,
+        "qualifying_total": 1,
+        "best_delta_max": 0.010652434429319069
+      }
+    },
+    {
+      "parent": "4-fluorophenol",
+      "parent_smiles": "Oc1ccc(F)cc1",
+      "scenario": "parent",
+      "run_dir": "diagnostic_2d_p1_20260921_4-fluorophenol",
+      "source_set": "P1_multi_parent_2026_09_22",
+      "greedy": {
+        "qualifying": 0,
+        "best_delta": 0.006299899917139862,
+        "termination": "budget_exhausted"
+      },
+      "random": {
+        "qualifying": 2,
+        "best_delta": 0.01989095239852945,
+        "termination": "goal_met"
+      },
+      "agent": {
+        "observations": [
+          {
+            "arm": "agent",
+            "termination_outcome": "goal_met",
+            "qualifying": 1,
+            "best_delta": 0.011020994219528846,
+            "schema_errors": 0,
+            "state_machine_rejections": 0
+          }
+        ],
+        "n_observations": 1,
+        "goal_met_count": 1,
+        "execution_failure_count": 0,
+        "qualifying_total": 1,
+        "best_delta_max": 0.011020994219528846
+      }
+    },
+    {
+      "parent": "benzonitrile",
+      "parent_smiles": "N#Cc1ccccc1",
+      "scenario": "parent",
+      "run_dir": "diagnostic_2d_p1_20260921_benzonitrile",
+      "source_set": "P1_multi_parent_2026_09_22",
+      "greedy": {
+        "qualifying": 1,
+        "best_delta": 0.010504613757506887,
+        "termination": "goal_met"
+      },
+      "random": {
+        "qualifying": 1,
+        "best_delta": 0.014129477281080272,
+        "termination": "goal_met"
+      },
+      "agent": {
+        "observations": [
+          {
+            "arm": "agent",
+            "termination_outcome": "execution_failure",
+            "qualifying": 0,
+            "best_delta": 0.007738115742618623,
+            "schema_errors": 5,
+            "state_machine_rejections": 1
+          }
+        ],
+        "n_observations": 1,
+        "goal_met_count": 0,
+        "execution_failure_count": 1,
+        "qualifying_total": 0,
+        "best_delta_max": 0.007738115742618623
+      }
+    }
+  ],
+  "tally_by_arm": {
+    "greedy_qualifying_total_8p": 7,
+    "random_qualifying_total_8p": 10,
+    "P1_5p": {
+      "greedy_qualifying_total": 7,
+      "random_qualifying_total": 7,
+      "greedy_parents_with_at_least_one_qualifying": 3,
+      "random_parents_with_at_least_one_qualifying": 4
+    },
+    "original_3p": {
+      "greedy_qualifying_total": 0,
+      "random_qualifying_total": 3,
+      "agent_goal_met_total": 6
+    }
+  },
+  "headline_finding": "On the original 3 parents (phenol scenario, 24 actions / 16 products), the agent had a clear advantage: greedy 0/3, random 3/9 qualifying products, agent 7/12 goal_met observations (toluene 4/4). On the 5 P1 parents (parent scenario, 70 actions / 40 products), the picture inverts: greedy 7 qualifying products across 3/5 parents (catechol, resorcinol, benzonitrile), random 7 across 4/5 parents (4-methylphenol, 4-fluorophenol, benzonitrile, catechol). The agent has only n=1 per P1 parent, so a single observation cannot establish a stable advantage; the earlier 'agent > random >> greedy' claim is true ONLY for the original 3 parents, not the extended 8-parent set.",
+  "intent_check": "Same 0.01 property_score threshold, same hERG proxy, same evaluator as the agent arm. Baselines do not call the LLM. Free-text chemical claims require separate manual audit."
+}
