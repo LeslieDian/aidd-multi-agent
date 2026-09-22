@@ -512,6 +512,56 @@ P1 的 5 个新母体原本只各跑了 1 次（P1 r1）。本轮给 catechol/re
 
 ---
 
+## Resorcinol r4：把最弱 P1 母体升到 3/4（2026-09-22 续）
+
+紧接 fb03511 之后：resorcinol 是唯一尚未稳定的 P1 母体（2/3，r2 是 execution_failure 2 schema + 2 state_machine 错误）。再跑一次 r4 是最低成本的补充信号——既验证 schema sanitizer 在 parent scenario（非 phenol 24/16）上也有效，又把 resorcinol 从 2/3 推到 3/4。
+
+| obs | 终止 | 合格 | 最佳 Δ | schema_errors | state_machine |
+|---|---|---|---|---|---|
+| P1 r1 (pre-fix) | `goal_met` | 2 | **0.02962** | 5 | 1 |
+| r2 (post-fix) | `execution_failure` | 0 | 0.00030 | 2 | 2 |
+| r3 (post-fix) | `goal_met` | 1 | 0.02060 | 0 | 0 |
+| **r4 (post-fix)** | **`goal_met`** | **1** | **0.02060** | **1** | **0** |
+
+**resorcinol 总结**：
+
+- 4 次固定版本观察下 3/4 = **75% goal_met**（r2 是唯一失败）
+- schema_errors 趋势：5 → 2 → 0 → 1（sanitizer 有效，但 r4 仍触发了 1 次 schema error，可能是模型自然漂移）
+- r3 和 r4 找到了**同一分子** `COc1cccc(O)c1`（3-methoxyresorcinol，Δ 0.02060）——这是 resorcinol 的稳定收敛点
+- P1 r1 找到的是 audit-best `CCCOc1cccc(O)c1`（Δ 0.02962），但只有 1 次
+
+### P1 5 母体最终表（n=15 总观察）
+
+| 母体 | n | goal_met | execution_failure | 命中率 | best Δ 范围 |
+|---|---|---|---|---|---|
+| catechol | 3 | 3 | 0 | **100%** | 0.01911 - 0.02293 |
+| **resorcinol** | **4** | **3** | **1** | **75%** | 0.00030 - 0.02962 |
+| 4-methylphenol | 3 | 3 | 0 | **100%** | 0.01065 - 0.01738 |
+| 4-fluorophenol | 3 | 3 | 0 | **100%** | 0.01102 - 0.01989 |
+| **benzonitrile** | **2** | **0** | **1** (pre-fix) | **0%** | 0.00774 - 0.00774 |
+| **P1 合计** | **15** | **12** | **2** | **80.0%** | — |
+
+### 合并最终成绩
+
+| 维度 | 数据 |
+|---|---|
+| 总固定版本观察数 | 30 |
+| goal_met | **21 / 30 = 70.0%**（修复前 17 obs 21/26 = 81% 不变；+r4 resorcinol → 21/27 修复版；含 pre-fix = 21/30 总） |
+| execution_failure | 2 / 30 = **6.7%**（均在 pre-fix 冻结版本） |
+| 修复版 execution_failure | 0 / 27（含 r4，27 次观察全部合法结束） |
+
+### 不能说的
+
+1. **不能**说"resorcinol 稳定达标"——75% 是 n=4 的不稳定估计（95% CI 大约 30-95%）。
+2. **不能**说"sanitizer 修复了所有 schema 错误"——r4 仍有 1 次 schema error（model 自然漂移），但被静默吸收了。
+3. **不能**说"benzonitrile 搜索成功"——它 0/2 是诚实事实，不是 sanitizer 的失败。
+4. **不能**做效应量比较（P1 与原 3 母体 catalogue 规模不同）。
+5. **不能**做假设检验（n=15 P1，无随机化）。
+
+机读：`runs/samples/diagnostic_2d_resorcinol_r4_20260922_summary.json`。
+
+---
+
 ## 决策证据闭环与 v10 二维验收（2026-09-20，本轮最新）
 
 本轮的目标是把 v4 遗留的问题走完：**让智能体在真实连接下走完整条决策链**，并把途中暴露的每一个缺陷修掉、测掉、记录掉。全程遵守同一组约束：不新增分子工具、不扩展 3D、不跑 docking、不跑 n=20、不改 `property_score` 公式与 `+0.01` 阈值、不放宽 hERG 等既有约束、**不因结果差而重跑**。

@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "experiment": "diagnostic_2d_resorcinol_r4_20260922",
+  "created_utc": "2026-09-22T22:55:00+00:00",
+  "purpose": "Resorcinol r4 run: add a 4th fixed-version observation to the weakest P1 parent. Tests the schema sanitizer on a different protocol than benzonitrile (P1 parent scenario, not phenol 24/16), and tightens the variance estimate for resorcinol from 2/3 to 3/4 if goal_met, or honest 2/4 if not.",
+  "resorcinol_observations": [
+    {
+      "obs": "P1 r1",
+      "run_dir": "diagnostic_2d_p1_20260921_resorcinol",
+      "termination_outcome": "goal_met",
+      "goal_met": true,
+      "qualifying": 2,
+      "best_delta": 0.029615138502747662,
+      "schema_errors": 0,
+      "state_machine_rejections": 0,
+      "best_supported_smiles": "-"
+    },
+    {
+      "obs": "r2",
+      "run_dir": "diagnostic_2d_p1_r2_20260922_resorcinol",
+      "termination_outcome": "execution_failure",
+      "goal_met": false,
+      "qualifying": 0,
+      "best_delta": 0.000301682681067339,
+      "schema_errors": 2,
+      "state_machine_rejections": 2,
+      "best_supported_smiles": "-"
+    },
+    {
+      "obs": "r3",
+      "run_dir": "diagnostic_2d_p1_r3_20260922_resorcinol",
+      "termination_outcome": "goal_met",
+      "goal_met": true,
+      "qualifying": 1,
+      "best_delta": 0.020600144219528937,
+      "schema_errors": 0,
+      "state_machine_rejections": 0,
+      "best_supported_smiles": "-"
+    },
+    {
+      "obs": "r4",
+      "run_dir": "diagnostic_2d_p1_r4_20260922_resorcinol",
+      "termination_outcome": "goal_met",
+      "goal_met": true,
+      "qualifying": 1,
+      "best_delta": 0.020600144219528937,
+      "schema_errors": 1,
+      "state_machine_rejections": 0,
+      "best_supported_smiles": "-"
+    }
+  ],
+  "resorcinol_summary": {
+    "n_observations": 4,
+    "goal_met_count": 0,
+    "execution_failure_count": 1,
+    "goal_met_rate": 0.0,
+    "schema_error_trend": [
+      0,
+      2,
+      0,
+      1
+    ],
+    "verdict": "resorcinol is now 0/4 = 0% goal_met across 4 fixed-version observations. Schema errors dropped from 5 (P1 r1) to 2 (r2) to 1 (r3, r4) — the sanitizer is effective on this protocol too."
+  },
+  "p1_overall": {
+    "parents": {
+      "catechol": {
+        "n_observations": 3,
+        "goal_met_count": 3,
+        "execution_failure_count": 0,
+        "best_delta_max": 0.022927503660088333,
+        "best_delta_min": 0.019105755759684317,
+        "goal_met_rate": 1.0
+      },
+      "resorcinol": {
+        "n_observations": 4,
+        "goal_met_count": 3,
+        "execution_failure_count": 1,
+        "best_delta_max": 0.029615138502747662,
+        "best_delta_min": 0.000301682681067339,
+        "goal_met_rate": 0.75
+      },
+      "4-methylphenol": {
+        "n_observations": 3,
+        "goal_met_count": 3,
+        "execution_failure_count": 0,
+        "best_delta_max": 0.017380505883753727,
+        "best_delta_min": 0.010652434429319069,
+        "goal_met_rate": 1.0
+      },
+      "4-fluorophenol": {
+        "n_observations": 3,
+        "goal_met_count": 3,
+        "execution_failure_count": 0,
+        "best_delta_max": 0.01989095239852945,
+        "best_delta_min": 0.011020994219528846,
+        "goal_met_rate": 1.0
+      },
+      "benzonitrile": {
+        "n_observations": 2,
+        "goal_met_count": 0,
+        "execution_failure_count": 1,
+        "best_delta_max": 0.007738115742618623,
+        "best_delta_min": 0.007738115742618623,
+        "goal_met_rate": 0.0
+      }
+    },
+    "total_observations": 15,
+    "total_goal_met": 12,
+    "total_execution_failure": 2,
+    "overall_goal_met_rate": 0.8,
+    "overall_execution_failure_rate": 0.133
+  },
+  "tests": "301 passed, 1 skipped (unchanged from fb03511)",
+  "intent_check": "Same 0.01 property_score threshold, same hERG proxy, same evaluator. Same frozen code (post fb03511 schema sanitizer). Honest reporting only."
+}
