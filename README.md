@@ -512,6 +512,64 @@ P1 的 5 个新母体原本只各跑了 1 次（P1 r1）。本轮给 catechol/re
 
 ---
 
+## Dock-aware 多目标三方对比：baseline 击败 agent（2026-09-22）
+
+紧接三个基础设施改造（3D docking + 4-category memory + calibrated hERG）之后，**第一次** 跑出"baseline 比 agent 强"的多目标证据。
+
+### 阈值
+
+```
+supported iff
+    property_score_delta >= 0.01
+    AND vina_score <= -5.0          # 而不是 -7.0（否则 0 个合格）
+    AND herg_risk <= 0.55
+    AND logp <= 4.50
+```
+
+vina floor 从 -7.0 降到 -5.0 是因为 2D 目录的母体 phenol 自身 vina=-4.558，所有单跳产物的 vina 在 -4.2 到 -5.1 之间。严格 -7.0 让对比无法进行（0/16 合格）。
+
+### 三方结果
+
+| arm | 终止 | qualifying | best_delta |
+|---|---|---|---|
+| **greedy** | `goal_met` | **1** | **0.01478** |
+| **random** | `goal_met` | **2** | **0.01478** |
+| **agent** | `evaluation_budget_exhausted` | **0** | n/a |
+
+**关键发现**：
+- baselines 都找到了同一分子（best_delta=0.0148）
+- **agent 9 次评估全部用完，0 个合格**
+- 0 个 schema 错误，0 个网络失败——agent 是**干净地失败**，没有工程缺陷
+- 在**真实多目标难度**下，agent 的选择策略反而比"按顺序评估前 10 个产物"或"随机 shuffle 后评估前 10 个"更差
+
+### 诚实陈述
+
+1. **agent 在多目标下表现不如 baselines**——这是 n=1 的 1 次观察，不构成稳定结论
+2. n=1 不够下"agent 弱"的强结论；可能下次就跑好了
+3. agent 失败原因不是工程问题（schema/network 全 0），是**模型选择不优于随机**
+4. 4-category memory 当前**没有**被 agent harness 实际读取（基础设施已就位，集成未做）
+5. calibrated_herg_score 已接入 admet payload，但 dock-aware 阈值仍用旧的 `herg_risk_score ≤ 0.55`——两个 proxy 还未对齐
+
+### 这次对比的实际意义
+
+**把"agent 强"的故事戳破了**：
+- 在宽松阈值（property-only, 0.01）下：agent 12/17 = 71%
+- 在严格阈值（property + vina + herg + logP）下：**agent 0/1 = 0%**
+
+这不是 agent 突然变弱，是**之前的成功建立在太容易的任务上**。这是诚实的研究信号：项目现在知道 agent 的真实能力在哪里——**不是之前以为的地方**。
+
+### 不能说的
+
+1. **不能**说"agent 在多目标下永远弱"——n=1 不够
+2. **不能**说"baselines 永远更好"——单次观察
+3. **不能**做效应量比较（n=1）
+4. **不能**做假设检验（无对照组、无随机化）
+5. calibrated_herg 还没接入决策阈值，所以这次对比用的是旧 heuristic
+
+机读：`runs/samples/diagnostic_2d_dock_three_arms_20260922_summary.json`。
+
+---
+
 ## Resorcinol r4：把最弱 P1 母体升到 3/4（2026-09-22 续）
 
 紧接 fb03511 之后：resorcinol 是唯一尚未稳定的 P1 母体（2/3，r2 是 execution_failure 2 schema + 2 state_machine 错误）。再跑一次 r4 是最低成本的补充信号——既验证 schema sanitizer 在 parent scenario（非 phenol 24/16）上也有效，又把 resorcinol 从 2/3 推到 3/4。

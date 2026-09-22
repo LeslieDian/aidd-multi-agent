@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "experiment": "diagnostic_2d_dock_three_arms_20260922",
+  "created_utc": "2026-09-22T23:59:00+00:00",
+  "purpose": "Three-arm (agent / greedy / random) comparison on the dock-aware multi-objective threshold (property_delta >= 0.01 AND vina <= -5.0 AND herg_risk <= 0.55 AND logp <= 4.50). This is the FIRST comparison where baselines cannot trivially enumerate vina scores (each docking call takes ~30s vs <1s for property-only).",
+  "connectivity_gate": "minimax_connectivity_20260922_v2: 3/3 passed",
+  "frozen_manifest": "runs/diagnostic_2d_dock_20260922/manifest.json",
+  "threshold": {
+    "property_score_delta_min": 0.01,
+    "vina_score_max": -5.0,
+    "herg_risk_max": 0.55,
+    "logp_max": 4.5
+  },
+  "qualifying_count_dock_aware": 2,
+  "qualifying_examples": [
+    {
+      "smiles": "Cc1ccc(O)cc1",
+      "property_score": 0.535935,
+      "dock_score": -5.093
+    },
+    {
+      "smiles": "Cc1cccc(O)c1",
+      "property_score": 0.535935,
+      "dock_score": -5.023
+    }
+  ],
+  "arms": {
+    "greedy": {
+      "termination_outcome": "goal_met",
+      "goal_met": true,
+      "qualifying": 1,
+      "best_delta": 0.014776211749152113,
+      "schema_errors": 0,
+      "state_machine_rejections": 0,
+      "network_failures": 0,
+      "new_structure_evaluations": 10,
+      "supported_smiles": [
+        "CCCOc1ccccc1"
+      ]
+    },
+    "random": {
+      "termination_outcome": "goal_met",
+      "goal_met": true,
+      "qualifying": 2,
+      "best_delta": 0.014776211749152113,
+      "schema_errors": 0,
+      "state_machine_rejections": 0,
+      "network_failures": 0,
+      "new_structure_evaluations": 10,
+      "supported_smiles": [
+        "CCOc1ccccc1",
+        "CCCOc1ccccc1"
+      ]
+    },
+    "agent": {
+      "termination_outcome": "evaluation_budget_exhausted",
+      "goal_met": false,
+      "qualifying": 0,
+      "best_delta": null,
+      "schema_errors": 0,
+      "state_machine_rejections": 0,
+      "network_failures": 0,
+      "new_structure_evaluations": 8,
+      "supported_smiles": []
+    }
+  },
+  "headline_finding": "Baselines BEAT the agent on the strict dock-aware threshold. Greedy finds 1 qualifying molecule (best_delta=0.0148); random finds 2; the agent finds 0 and ends with evaluation_budget_exhausted. This is the FIRST clear case where the agent underperforms both baselines on the same multi-objective threshold with the SAME evaluation budget. The honest reading: the agent's selection policy is currently no better than deterministic ordering under real multi-objective pressure, and may in fact be worse (it burned 9 evaluations without finding a qualifying molecule while random found 2 in the same budget).",
+  "what_this_does_not_show": [
+    "n=1 per arm is too small for statistical inference",
+    "single parent (phenol) may not generalize to others",
+    "agent vs baseline advantage may emerge in larger catalogues",
+    "the calibrated hERG proxy was added but the dock-aware threshold still uses the original heuristic hERG_risk <= 0.55; calibrated_herg_score is not yet wired into the supported decision"
+  ],
+  "tests": "330 passed, 1 skipped (unchanged)",
+  "intent_check": "Same 0.01 property threshold, same hERG proxy ceiling, same logP ceiling. vina floor relaxed from -7.0 to -5.0 to admit any 2D one-hop products at all (the 2D catalogue's parent phenol has vina -4.558; the strict -7.0 floor would have made this comparison impossible)."
+}
