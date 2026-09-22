@@ -6,6 +6,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import json
+
+import httpx
+import pytest
 import yaml
 
 from agents import get_client, MockLLMClient, LLMClient
@@ -268,6 +272,176 @@ def test_schema_parse_failure_is_not_a_network_error():
     assert records[1]["schema_valid"] is False
     assert records[1]["exception_category"] == "schema"
     assert records[0]["token_usage_status"] == "unavailable"
+
+
+def test_key_swap_on_429_uses_first_fallback_and_records_event():
+    """A 429 against the primary key must trigger exactly one swap to the
+    fallback key, retry the same request, and record a structured
+    ``key_swap`` event in the evidence stream. The primary API key must
+    NOT appear in any recorded evidence text."""
+    import os
+    from unittest.mock import patch
+    import agents.llm as llm_module
+    cfg = load_config()
+    name = next(iter(cfg["llm"]["providers"]))
+    provider_cfg = cfg["llm"]["providers"][name]
+    primary_env = provider_cfg["api_key_env"]
+    fallback_envs = provider_cfg.get("api_key_env_fallbacks") or []
+    assert fallback_envs, "primary provider must list at least one fallback"
+    fallback_env = fallback_envs[0]
+    records = []
+
+    primary_value = "primary-test-key-do-not-leak"
+    fallback_value = "fallback-test-key-do-not-leak"
+    env_overrides = {primary_env: primary_value, fallback_env: fallback_value}
+
+    call_count = {"n": 0}  # shared across all FakeChat instances
+    class FakeCompletions:
+        def __init__(self):
+            pass
+        def create(self, **kw):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise _rate_limit_error()
+            return _ok_response()
+    class FakeChat:
+        def __init__(self):
+            self.completions = FakeCompletions()
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.chat = FakeChat()
+        def close(self):
+            pass
+
+    with patch.object(llm_module.httpx, "Client", return_value=object()), \
+         patch.object(llm_module, "OpenAI", FakeOpenAI), \
+         patch.dict(os.environ, env_overrides):
+        client = llm_module.get_client(name, cfg, evidence=records.append)
+        text = client.chat("system", "user")
+        assert text == "ok"
+        client.close()
+
+    outcomes = [r.get("outcome") for r in records]
+    assert "key_swap" in [r.get("type") for r in records]
+    swap = next(r for r in records if r.get("type") == "key_swap")
+    assert swap["from_env"] == "primary"
+    assert swap["to_env"] == fallback_env
+    assert swap["reason"] == "rate_limit_error"
+    # Sanity: no key material ever leaves the redaction layer.
+    for r in records:
+        blob = json.dumps(r, ensure_ascii=False)
+        assert primary_value not in blob
+        assert fallback_value not in blob
+
+
+def test_key_swap_exhausted_raises_after_last_fallback():
+    """If every key in the chain returns 429, the final exception must surface
+    to the caller with ``outcome='request_failed_after_key_switch'`` recorded.
+    The swap must advance through every entry exactly once."""
+    import os
+    from unittest.mock import patch
+    import agents.llm as llm_module
+    cfg = load_config()
+    name = next(iter(cfg["llm"]["providers"]))
+    provider_cfg = cfg["llm"]["providers"][name]
+    primary_env = provider_cfg["api_key_env"]
+    fallback_envs = list(provider_cfg.get("api_key_env_fallbacks") or [])
+    assert fallback_envs, "primary provider must list at least one fallback"
+    records = []
+
+    class FakeCompletions:
+        def __init__(self):
+            self.calls = 0
+        def create(self, **kw):
+            self.calls += 1
+            raise _rate_limit_error()
+
+    class FakeChat:
+        def __init__(self):
+            self.completions = FakeCompletions()
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.chat = FakeChat()
+        def close(self):
+            pass
+
+    env_overrides = {primary_env: "p", **{e: f"fallback-{e}" for e in fallback_envs}}
+
+    with patch.object(llm_module.httpx, "Client", return_value=object()), \
+         patch.object(llm_module, "OpenAI", FakeOpenAI), \
+         patch.dict(os.environ, env_overrides):
+        client = llm_module.get_client(name, cfg, evidence=records.append)
+        with pytest.raises(Exception) as exc_info:
+            client.chat("system", "user")
+        assert getattr(exc_info.value, "status_code", None) == 429
+        client.close()
+
+    swaps = [r for r in records if r.get("type") == "key_swap"]
+    # The primary failed, then each fallback was tried once, then the final
+    # 429 was recorded against the last fallback.
+    assert len(swaps) == len(fallback_envs)
+    for r in records:
+        if r.get("outcome") == "request_failed_after_key_switch":
+            return
+    raise AssertionError("expected an outcome='request_failed_after_key_switch' record")
+
+
+def test_no_fallbacks_means_single_attempt_on_429():
+    """A provider without api_key_env_fallbacks must not loop on 429. The
+    429 must be recorded exactly once and re-raised."""
+    import os
+    from unittest.mock import patch
+    import agents.llm as llm_module
+    cfg = load_config()
+    # Build a synthetic single-key provider.
+    cfg2 = {"llm": {"providers": {"only": {**cfg["llm"]["providers"][next(iter(cfg["llm"]["providers"]))],
+                                       "api_key_env_fallbacks": []}},
+                       "trust_env_proxy": False}}
+    records = []
+
+    class FakeCompletions:
+        def __init__(self):
+            self.calls = 0
+        def create(self, **kw):
+            self.calls += 1
+            raise _rate_limit_error()
+    class FakeChat:
+        def __init__(self):
+            self.completions = FakeCompletions()
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            self.chat = FakeChat()
+        def close(self):
+            pass
+    with patch.object(llm_module.httpx, "Client", return_value=object()), \
+         patch.object(llm_module, "OpenAI", FakeOpenAI), \
+         patch.dict(os.environ, {"only_API_KEY": "x"}):
+        client = llm_module.get_client("only", cfg2, evidence=records.append)
+        with pytest.raises(Exception):
+            client.chat("system", "user")
+        client.close()
+    outcomes = [r["outcome"] for r in records if r.get("type") == "model_request"]
+    assert outcomes == ["request_failed"]
+    swaps = [r for r in records if r.get("type") == "key_swap"]
+    assert swaps == []
+
+
+def _rate_limit_error():
+    """Build a 429 APIStatusError using the real SDK exception class."""
+    from openai import APIStatusError
+    response = httpx.Response(429, request=httpx.Request("POST", "https://api.minimaxi.com/v1/chat/completions"),
+                              json={"error": {"type": "rate_limit_error"}})
+    return APIStatusError(message="rate_limit_error", response=response, body=None)
+
+
+def _ok_response():
+    from types import SimpleNamespace
+    return SimpleNamespace(
+        usage=None,
+        choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))],
+    )
 
 
 if __name__ == "__main__":

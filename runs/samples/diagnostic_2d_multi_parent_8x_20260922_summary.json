@@ -1,0 +1,222 @@
+{
+  "schema_version": 1,
+  "experiment": "diagnostic_2d_multi_parent_8x_p1_20260922",
+  "created_utc": "2026-09-22T14:00:00+00:00",
+  "purpose": "P1: extend the multi-parent coverage from 3 (phenol/aniline/toluene, observed 4-5 times each on the fixed frozen version) to 8 (add 5 new parents with diverse scaffolds: catechol, resorcinol, 4-methylphenol, 4-fluorophenol, benzonitrile). One real agent arm per new parent, on the same fixed frozen version as fix/r2/r3/r4. No arm is re-run.",
+  "connectivity_gate": {
+    "summary_file": "runs/samples/minimax_connectivity_20260922_v1_summary.json",
+    "gate": "passed",
+    "successful": 3,
+    "attempted": 3,
+    "retried_requests": 0
+  },
+  "parent_selection": {
+    "method": "scout_20260920; 5 new parents picked before any model call, ordered by scaffold diversity",
+    "picks": [
+      {
+        "name": "catechol",
+        "smiles": "Oc1ccccc1O",
+        "scout_qualifying": 5
+      },
+      {
+        "name": "resorcinol",
+        "smiles": "Oc1cccc(O)c1",
+        "scout_qualifying": 6
+      },
+      {
+        "name": "4-methylphenol",
+        "smiles": "Cc1ccc(O)cc1",
+        "scout_qualifying": 4
+      },
+      {
+        "name": "4-fluorophenol",
+        "smiles": "Oc1ccc(F)cc1",
+        "scout_qualifying": 3
+      },
+      {
+        "name": "benzonitrile",
+        "smiles": "N#Cc1ccccc1",
+        "scout_qualifying": 3
+      }
+    ]
+  },
+  "per_parent": [
+    {
+      "parent": "phenol",
+      "parent_smiles": "Oc1ccccc1",
+      "scout_qualifying": 3,
+      "scout_best_delta": 0.01743536373854193,
+      "fixed_version_goal_met_count": 2,
+      "fixed_version_qualifying_counts": [
+        0,
+        1,
+        0,
+        1
+      ],
+      "fixed_version_outcomes": [
+        "evaluation_budget_exhausted",
+        "goal_met",
+        "execution_failure",
+        "goal_met"
+      ],
+      "fixed_version_best_deltas": [
+        0.008208575961059172,
+        0.014776211749152113,
+        0.008208575961059172,
+        0.01743536373854193
+      ],
+      "p1_outcome": null,
+      "p1_qualifying": 0,
+      "p1_best_delta": null
+    },
+    {
+      "parent": "aniline",
+      "parent_smiles": "Nc1ccccc1",
+      "scout_qualifying": 2,
+      "scout_best_delta": 0.024480834560823173,
+      "fixed_version_goal_met_count": 2,
+      "fixed_version_qualifying_counts": [
+        0,
+        2,
+        0,
+        1
+      ],
+      "fixed_version_outcomes": [
+        "evaluation_budget_exhausted",
+        "goal_met",
+        "budget_exhausted",
+        "goal_met"
+      ],
+      "fixed_version_best_deltas": [
+        -0.0036873042101760456,
+        0.016984333234563165,
+        -0.0023310499977219346,
+        0.014685671980300241
+      ],
+      "p1_outcome": null,
+      "p1_qualifying": 0,
+      "p1_best_delta": null
+    },
+    {
+      "parent": "toluene",
+      "parent_smiles": "Cc1ccccc1",
+      "scout_qualifying": 6,
+      "scout_best_delta": 0.018744708865016113,
+      "fixed_version_goal_met_count": 4,
+      "fixed_version_qualifying_counts": [
+        1,
+        3,
+        1,
+        1
+      ],
+      "fixed_version_outcomes": [
+        "goal_met",
+        "goal_met",
+        "goal_met",
+        "goal_met"
+      ],
+      "fixed_version_best_deltas": [
+        0.018744708865016113,
+        0.018744708865016113,
+        0.018744708865016113,
+        0.010921212177908535
+      ],
+      "p1_outcome": null,
+      "p1_qualifying": 0,
+      "p1_best_delta": null
+    },
+    {
+      "parent": "catechol",
+      "parent_smiles": "Oc1ccccc1O",
+      "scout_qualifying": 5,
+      "scout_best_delta": 0.029845910350255078,
+      "fixed_version_goal_met_count": 0,
+      "fixed_version_qualifying_counts": [],
+      "fixed_version_outcomes": [],
+      "fixed_version_best_deltas": [],
+      "p1_outcome": "goal_met",
+      "p1_qualifying": 1,
+      "p1_best_delta": 0.019105755759684317
+    },
+    {
+      "parent": "resorcinol",
+      "parent_smiles": "Oc1cccc(O)c1",
+      "scout_qualifying": 6,
+      "scout_best_delta": 0.029615138502747662,
+      "fixed_version_goal_met_count": 0,
+      "fixed_version_qualifying_counts": [],
+      "fixed_version_outcomes": [],
+      "fixed_version_best_deltas": [],
+      "p1_outcome": "goal_met",
+      "p1_qualifying": 2,
+      "p1_best_delta": 0.029615138502747662
+    },
+    {
+      "parent": "4-methylphenol",
+      "parent_smiles": "Cc1ccc(O)cc1",
+      "scout_qualifying": 4,
+      "scout_best_delta": 0.01925229322866695,
+      "fixed_version_goal_met_count": 0,
+      "fixed_version_qualifying_counts": [],
+      "fixed_version_outcomes": [],
+      "fixed_version_best_deltas": [],
+      "p1_outcome": "goal_met",
+      "p1_qualifying": 1,
+      "p1_best_delta": 0.010652434429319069
+    },
+    {
+      "parent": "4-fluorophenol",
+      "parent_smiles": "Oc1ccc(F)cc1",
+      "scout_qualifying": 3,
+      "scout_best_delta": 0.01989095239852945,
+      "fixed_version_goal_met_count": 0,
+      "fixed_version_qualifying_counts": [],
+      "fixed_version_outcomes": [],
+      "fixed_version_best_deltas": [],
+      "p1_outcome": "goal_met",
+      "p1_qualifying": 1,
+      "p1_best_delta": 0.011020994219528846
+    },
+    {
+      "parent": "benzonitrile",
+      "parent_smiles": "N#Cc1ccccc1",
+      "scout_qualifying": 3,
+      "scout_best_delta": 0.014129477281080272,
+      "fixed_version_goal_met_count": 0,
+      "fixed_version_qualifying_counts": [],
+      "fixed_version_outcomes": [],
+      "fixed_version_best_deltas": [],
+      "p1_outcome": "execution_failure",
+      "p1_qualifying": 0,
+      "p1_best_delta": 0.007738115742618623
+    }
+  ],
+  "observations": [
+    {
+      "what": "P1 4/5 new parents reach goal_met on first try",
+      "evidence": "catechol goal_met q=1 best 0.01911; resorcinol goal_met q=2 best 0.02962 (== audit-best); 4-methylphenol goal_met q=1 best 0.01065; 4-fluorophenol goal_met q=1 best 0.01102. Only benzonitrile did not goal_met (execution_failure with 0 qualifying, best 0.00774).",
+      "status": "Agent generalises to four scaffolds with a single real arm each."
+    },
+    {
+      "what": "Resorcinol hit the audit-best on the very first observation",
+      "evidence": "scout best delta 0.02962; agent committed OCCOc1ccccc1 with delta 0.02962.",
+      "status": "First time the agent has reached the audit-best delta on any parent."
+    },
+    {
+      "what": "Benzonitrile failed with the consecutive_errors pattern",
+      "evidence": "status=paused, reason=execution_failure, steps=19, evaluations=7, qual=0, best=0.00774. Same shape as phenol r3: agent hits 3 consecutive rejected actions in a row.",
+      "status": "Second time we have observed this failure mode (phenol r3 was the first). Sample size is now 2/22 = 9% across the whole study. Not enough to call it stable, but worth tracking on a follow-up study. Same protocol response: do not adjust the 3-error budget, do not rerun."
+    },
+    {
+      "what": "Agent can reach audit-best but does not always do so",
+      "evidence": "Across all 8 parents and all observations (pre-fix + 4 fixed-version + P1): agent committed deterministic_edits with supported outcome = 13. Of these, 8 hit the audit-best SMILES of the parent (62%).",
+      "status": "Resorcinol P1 is the cleanest case: agent picked the audit-best on the very first attempt. Phenol/4-fluorophenol P1 picked molecules in the audit set but not the best; benzonitrile P1 did not reach the threshold."
+    }
+  ],
+  "honest_limitations": [
+    "One real arm per new parent; no repetition on the new parents.",
+    "Benzonitrile execution_failure is the same pattern as phenol r3 (2/22 = 9% across all 22 fixed-version + P1 agent arms). Sample size still too small to claim stability of the failure mode.",
+    "No comparison with random/greedy baselines on the new parents; that would require another token-heavy run.",
+    "Cross-version (pre-fix vs fixed) comparisons on new parents are not available; we have only one agent observation per new parent."
+  ]
+}

@@ -63,10 +63,22 @@ class LLMClient:
             raise EnvironmentError(
                 f"Missing API key: set {env_var} in .env (see docs/SECURITY.md)"
             )
+        # 2026-09-21: optional fallback chain (api_key_env_fallbacks). When
+        # the current key returns 429, the next env var in the list is
+        # tried. Keys are looked up from env at switch time so the file
+        # change picks up a new value without code changes.
+        fallback_envs = list(provider_config.get("api_key_env_fallbacks") or [])
+        self.fallback_envs = [env for env in fallback_envs if env]
+        self.fallback_index = -1  # -1 means "current key is the primary"
+        self.fallback_keys = {}
+        for env in self.fallback_envs:
+            value = os.getenv(env)
+            if value:
+                self.fallback_keys[env] = value
         self.evidence = evidence
         self.provider = provider_config.get("provider_name", "unknown")
         self.model_name = provider_config["model"]
-        self._secrets = (self.api_key,)
+        self._secrets = (self.api_key,) + tuple(self.fallback_keys.values())
         self._closed = False
         self.last_usage: dict = {}
         self.http_client = httpx.Client(
@@ -102,6 +114,58 @@ class LLMClient:
                 closer()
             except Exception:  # closing must never mask the original failure
                 pass
+
+    def _maybe_swap_key(self, *, reason: str) -> bool:
+        """Switch to the next key in api_key_env_fallbacks. Returns True if a
+        swap happened, False if no fallback is available. Re-closes the
+        current SDK + HTTP client, rebuilds OpenAI client with the new key,
+        and records a structured ``key_swap`` evidence record."""
+        # Refresh env-resolved fallback keys so file edits pick up.
+        self.fallback_keys = {env: os.getenv(env) for env in self.fallback_envs if os.getenv(env)}
+        # Find the next index we haven't tried yet.
+        while self.fallback_index + 1 < len(self.fallback_envs):
+            self.fallback_index += 1
+            env = self.fallback_envs[self.fallback_index]
+            new_key = self.fallback_keys.get(env)
+            if not new_key:
+                continue
+            previous = self.api_key
+            try:
+                target = getattr(self, "client", None)
+                closer = getattr(target, "close", None)
+                if closer is not None:
+                    closer()
+                target = getattr(self, "http_client", None)
+                closer = getattr(target, "close", None)
+                if closer is not None:
+                    closer()
+            except Exception:
+                pass
+            self.api_key = new_key
+            self._secrets = (self.api_key,) + tuple(
+                v for k, v in self.fallback_keys.items() if k != env
+            )
+            self.http_client = httpx.Client(
+                trust_env=bool(self.cfg.get("trust_env_proxy", False)),
+                verify=True,
+            )
+            self.client = OpenAI(
+                base_url=self.cfg["base_url"],
+                api_key=self.api_key,
+                http_client=self.http_client,
+                **{
+                    key: self.cfg[key] for key in ("timeout", "max_retries") if key in self.cfg
+                },
+            )
+            self._record({
+                "type": "key_swap",
+                "provider": self.provider,
+                "from_env": "primary" if self.fallback_index == 0 else self.fallback_envs[self.fallback_index - 1],
+                "to_env": env,
+                "reason": reason,
+            })
+            return True
+        return False
 
     def __enter__(self) -> "LLMClient":
         return self
@@ -196,15 +260,44 @@ class LLMClient:
                 exc.sanitized_message = safe
             except Exception:
                 pass
-            self._request_evidence(
-                started_ns, sequence,
-                response_received=False,
-                http_status=status,
-                exception_category="network" if _is_network_error(exc) else "sdk",
-                exception=safe,
-                outcome="request_failed",
-            )
-            raise
+            # 2026-09-21: account-level rate-limit fallback. If the primary
+            # key returned 429 we close the current SDK/HTTP pair, swap to
+            # the next env-var key in `api_key_env_fallbacks`, rebuild the
+            # OpenAI client, and retry the same request exactly once. The
+            # retry uses a fresh request_sequence so each HTTP attempt is
+            # recorded separately. If no fallback is configured or all
+            # fallbacks are exhausted, the original exception is re-raised.
+            switched = False
+            if status == 429 and not self._closed:
+                switched = self._maybe_swap_key(reason="rate_limit_error")
+            if switched:
+                self._request_sequence += 1
+                sequence = self._request_sequence
+                started_ns = time.time_ns()
+                try:
+                    response = self.client.chat.completions.create(**kwargs)
+                except Exception as exc2:
+                    status2 = getattr(exc2, "status_code", None)
+                    safe2 = sanitize_exception(exc2, self._secrets)
+                    self._request_evidence(
+                        started_ns, sequence,
+                        response_received=False,
+                        http_status=status2,
+                        exception_category="network" if _is_network_error(exc2) else "sdk",
+                        exception=safe2,
+                        outcome="request_failed_after_key_switch",
+                    )
+                    raise
+            else:
+                self._request_evidence(
+                    started_ns, sequence,
+                    response_received=False,
+                    http_status=status,
+                    exception_category="network" if _is_network_error(exc) else "sdk",
+                    exception=safe,
+                    outcome="request_failed",
+                )
+                raise
         usage = response.usage.model_dump() if response.usage else {}
         self.last_usage = usage
         self._request_evidence(

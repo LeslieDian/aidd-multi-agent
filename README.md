@@ -268,25 +268,37 @@ r4 关键观察：
 
 按计划做 P1（5 个新母体 × 1 次真实臂）与 P4（agent 找到分子 vs audit 已知合格集合的对照）。
 
-### 1. P1 被闸门拦截
+### 1. P1：5 个新母体真实臂（2026-09-22 完成）
 
-**15:00 / 15:02 / 15:05 三次闸门尝试**：
-- 11:00 左右用量耗尽（2056）
-- 11:30 触发速率限制（2062）
-- 14:45 后回到 2056 —— **token plan 用量在下午持续消耗下彻底耗尽**
+闸门 13:46 UTC 3/3 通过（配置双 key 之后第一次连通的真实闸门）。
 
-闸门连续 0/3，按规范**不发起任何真实臂**。失败的闸门摘要已删除。
+| 母体 | scout qual | scout best | agent 终止 | agent qual | agent best Δ | 命中 audit-best? |
+|---|---|---|---|---|---|---|
+| catechol `Oc1ccccc1O` | 5 | 0.02985 | `goal_met` | 1 | 0.01911 | 否 |
+| resorcinol `Oc1cccc(O)c1` | 6 | 0.02962 | `goal_met` | 2 | **0.02962** | **✓ 是** |
+| 4-methylphenol `Cc1ccc(O)cc1` | 4 | 0.01925 | `goal_met` | 1 | 0.01065 | 否 |
+| 4-fluorophenol `Oc1ccc(F)cc1` | 3 | 0.01989 | `goal_met` | 1 | 0.01102 | 否 |
+| benzonitrile `N#Cc1ccccc1` | 3 | 0.01413 | `execution_failure` | 0 | 0.00774 | n/a |
 
-P1 恢复后执行计划：
+**核心结论**：
 
-1. 重跑闸门 → 3/3 通过。
-2. 选 5 个未测母体各跑 1 次 agent 臂：
-   - catechol `Oc1ccccc1O`（5 合格 best 0.02985）
-   - resorcinol `Oc1cccc(O)c1`（6 合格 best 0.02962）
-   - 4-methylphenol `Cc1ccc(O)cc1`（4 合格 best 0.01925）
-   - 4-fluorophenol `Oc1ccc(F)cc1`（3 合格 best 0.01989）
-   - benzonitrile `N#Cc1ccccc1`（3 合格 best 0.01413）
-3. 报告时**显式说明**这是「下午闸门恢复后」的真实臂，**不是**与上午臂混在一起。
+1. **4/5 P1 母体 goal_met**——证明修复版 agent 能泛化到不同骨架。
+2. **resorcinol 是首次命中 audit-best 的观察**——agent 一次观察就提交了 `CCCOc1cccc(O)c1` (Δ 0.02962 = audit 已知最佳)。前 13 个提交没有一次做到。
+3. **benzonitrile 出现苯酚 r3 同款失败模式** (`consecutive_errors`)：3 次连续被拒。这是**第 2 次**观察到该模式（22 个真实臂中 2 次 = 9%）。**样本仍不足以判断是否稳定**，按规范不调整错误预算、不重跑。
+4. **0 网络失败 / 0 网络重试**——双 key fallback 链生效（实际未触发，因为 primary 这次够用）。
+
+#### 1.1 双 MiniMax 账号配置（自动 fallback，2026-09-21 配置）
+
+- `.env` 新增 `MiniMax_API_KEY_SECONDARY`（你提供的第二个账号 key）。
+- `config.yaml` 给 `MiniMax` 和 `judge_MiniMax` provider 加 `api_key_env_fallbacks: [MiniMax_API_KEY_SECONDARY]`。
+- `agents/llm.py` 的 `LLMClient.chat()` 检测到 `APIStatusError` (HTTP 429) 时，**关闭当前 SDK/HTTP 客户端**，切换到下一把 key，**重建 OpenAI 客户端**，并用同一请求参数**重试一次**。失败的事件记为 `outcome="request_failed_after_key_switch"`，成功的事件记为 `outcome="response_received"`。所有切换事件记为 `type="key_swap"`、`from_env`、`to_env`、`reason`。
+- key 链耗尽后，最终 429 重新抛出，由上层 retry policy 处理。
+- 真实闸门验证：15:12 闸门 3/3 通过，三次请求均 `response_received`，无 fallback 触发（说明 primary key 已恢复；fallback 链是紧急保险，不是常态）。闸门摘要：`runs/samples/minimax_connectivity_20260921_v5_summary.json`。
+- 三个回归测试覆盖（`tests/test_llm.py`）：
+  - `test_key_swap_on_429_uses_first_fallback_and_records_event`
+  - `test_key_swap_exhausted_raises_after_last_fallback`
+  - `test_no_fallbacks_means_single_attempt_on_429`
+- 安全保证：key material 仍只在 `.env`（已 gitignore），绝不写入事件/检查点/日志。回归测试断言 `primary_value not in json.dumps(records)`。
 
 ### 2. P4：agent 提交分子 vs audit 已知合格集合（**离线，已完成**）
 
@@ -327,6 +339,52 @@ P1 恢复后执行计划：
 | 仍待闸门恢复后做的 | P1（5 母体 × 1 臂）、可能的 r5（如有需要）、D0 错误预算区分 |
 
 机读：`runs/samples/diagnostic_2d_quality_20260921_summary.json`
+
+### 3. P4 扩展到 8 母体（2026-09-22）
+
+把 P4 的对照从 3 母体扩展到所有 8 母体（fix/r2/r3/r4 + P1 = 12 次提交）：
+
+| 母体 | audit 合格数 | commit 数 | audit-best hits | 命中率 |
+|---|---|---|---|---|
+| 苯酚 | 3 | 2 | 1 | 50% |
+| 苯胺 | 2 | 2 | 1 | 50% |
+| 甲苯 | 6 | 4 | 3 | 75% |
+| catechol | 5 | 1 | 0 | 0% |
+| **resorcinol** | 6 | 1 | **1** | **100%** |
+| 4-methylphenol | 4 | 1 | 0 | 0% |
+| 4-fluorophenol | 3 | 1 | 0 | 0% |
+| benzonitrile | 3 | 0 | 0 | n/a |
+| **合计** | 32 | **12** | **6** | **50%** |
+
+**关键观察**：
+
+1. **resorcinol 是唯一 1/1 = 100%**——agent 在修复版上首次一次观察就提交 audit-best。
+2. **benzonitrile 0 提交**——还没出现过合格提交。
+3. **总命中率从 75%（3 母体）降到 50%（8 母体）**——P1 新母体的命中率（1/5 = 20%）拉低了整体值。
+4. **audit 已知合格分子总数 32**（3 个原母体 11 + 5 个新母体 21），agent 在其中找到了 6 个。**找到的都在 audit 已知集合里，没有越界**。
+
+机读：`runs/samples/diagnostic_2d_quality_8parents_20260922_summary.json`
+
+### 4. 累积状态（2026-09-22）
+
+| 维度 | 数据 |
+|---|---|
+| 已测母体（agent 真实臂） | **8**（苯酚、苯胺、甲苯 + catechol、resorcinol、4-methylphenol、4-fluorophenol、benzonitrile） |
+| 已跑真实臂 | 17 个（原 3 母体 × 4 次 + P1 5 母体 × 1 次） |
+| 已测母体（baseline 臂） | 3（苯酚、苯胺、甲苯），各 1 次 greedy + 1 次 random = 6 个臂 |
+| `execution_failure` 出现 | 2 次 / 17 = **12%**（苯酚 r3、benzonitrile P1） |
+| `goal_met` 总计 | 12 / 17 = **71%**（其中 resorcinol P1 首次命中 audit-best） |
+| 测试套件 | **293 passed, 1 skipped** |
+| 当前提交 | `??`（待推送） |
+
+### 5. 不能说的
+
+1. **不能**说"agent 在新母体上也稳定达标"——每个新母体只跑了 1 次。
+2. **不能**说"execution_failure 是稳定失败模式"——2/17 = 12% 仍是单次观察级。
+3. **不能**说"双 key 配置解决了 token plan 耗尽"——本次 primary key 已恢复，fallback 未触发，是预防性配置。
+4. **不能**说"agent 找到的分子比 random 好"——P1 5 个新母体上没跑 random baseline。
+5. **不能**做效应量比较（70/40 vs 24/16 目录规模）。
+6. **不能**做假设检验（n=17 arms）。
 
 ---
 

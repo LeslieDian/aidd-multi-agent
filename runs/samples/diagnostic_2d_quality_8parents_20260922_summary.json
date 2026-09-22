@@ -1,0 +1,273 @@
+{
+  "schema_version": 1,
+  "experiment": "diagnostic_2d_quality_8parents_20260922",
+  "purpose": "P4 quality analysis extended to all 8 parents (3 original + 5 new from P1).",
+  "per_parent": [
+    {
+      "parent": "phenol",
+      "parent_smiles": "Oc1ccccc1",
+      "audit_qualifying_count": 3,
+      "audit_qualifying_smiles": [
+        "OCCOc1ccccc1",
+        "CCCOc1ccccc1",
+        "CCCc1ccc(O)cc1"
+      ],
+      "audit_best_smiles": "OCCOc1ccccc1",
+      "audit_best_delta": 0.01743536373854193,
+      "commit_count": 2,
+      "best_hits": 1,
+      "best_hit_rate": 0.5,
+      "commits": [
+        {
+          "tag": "r2_20260921",
+          "cid": "c3",
+          "smiles": "CCCOc1ccccc1",
+          "delta": 0.014776211749152113,
+          "rank_in_audit": 2,
+          "is_audit_best": false
+        },
+        {
+          "tag": "r4_20260921",
+          "cid": "c2",
+          "smiles": "OCCOc1ccccc1",
+          "delta": 0.01743536373854193,
+          "rank_in_audit": 1,
+          "is_audit_best": true
+        }
+      ]
+    },
+    {
+      "parent": "aniline",
+      "parent_smiles": "Nc1ccccc1",
+      "audit_qualifying_count": 2,
+      "audit_qualifying_smiles": [
+        "OCCNc1ccccc1",
+        "NC(=O)Nc1ccccc1"
+      ],
+      "audit_best_smiles": "OCCNc1ccccc1",
+      "audit_best_delta": 0.016984333234563165,
+      "commit_count": 2,
+      "best_hits": 1,
+      "best_hit_rate": 0.5,
+      "commits": [
+        {
+          "tag": "r2_20260921",
+          "cid": "c2",
+          "smiles": "OCCNc1ccccc1",
+          "delta": 0.016984333234563165,
+          "rank_in_audit": 1,
+          "is_audit_best": true
+        },
+        {
+          "tag": "r4_20260921",
+          "cid": "c2",
+          "smiles": "NC(=O)Nc1ccccc1",
+          "delta": 0.014685671980300241,
+          "rank_in_audit": 2,
+          "is_audit_best": false
+        }
+      ]
+    },
+    {
+      "parent": "toluene",
+      "parent_smiles": "Cc1ccccc1",
+      "audit_qualifying_count": 6,
+      "audit_qualifying_smiles": [
+        "OCCCc1ccccc1",
+        "CCCCc1ccccc1",
+        "Cc1ccc(CCO)cc1",
+        "NC(=O)Cc1ccccc1",
+        "Cc1ccc(C(N)=O)cc1",
+        "OCc1ccccc1"
+      ],
+      "audit_best_smiles": "OCCCc1ccccc1",
+      "audit_best_delta": 0.018744708865016113,
+      "commit_count": 4,
+      "best_hits": 3,
+      "best_hit_rate": 0.75,
+      "commits": [
+        {
+          "tag": "fixed_20260920",
+          "cid": "c3",
+          "smiles": "OCCCc1ccccc1",
+          "delta": 0.018744708865016113,
+          "rank_in_audit": 1,
+          "is_audit_best": true
+        },
+        {
+          "tag": "r2_20260921",
+          "cid": "c3",
+          "smiles": "OCCCc1ccccc1",
+          "delta": 0.018744708865016113,
+          "rank_in_audit": 1,
+          "is_audit_best": true
+        },
+        {
+          "tag": "r3_20260921",
+          "cid": "c2",
+          "smiles": "OCCCc1ccccc1",
+          "delta": 0.018744708865016113,
+          "rank_in_audit": 1,
+          "is_audit_best": true
+        },
+        {
+          "tag": "r4_20260921",
+          "cid": "c2",
+          "smiles": "OCc1ccccc1",
+          "delta": 0.010921212177908535,
+          "rank_in_audit": 6,
+          "is_audit_best": false
+        }
+      ]
+    },
+    {
+      "parent": "catechol",
+      "parent_smiles": "Oc1ccccc1O",
+      "audit_qualifying_count": 5,
+      "audit_qualifying_smiles": [
+        "CCCOc1ccccc1O",
+        "COc1ccccc1O",
+        "OCCOc1ccccc1O",
+        "Oc1ccccc1OC(F)(F)F",
+        "CCCc1ccc(O)c(O)c1"
+      ],
+      "audit_best_smiles": "CCCOc1ccccc1O",
+      "audit_best_delta": 0.029845910350255078,
+      "commit_count": 1,
+      "best_hits": 0,
+      "best_hit_rate": 0.0,
+      "commits": [
+        {
+          "tag": "p1_20260921",
+          "cid": "c2",
+          "smiles": "OCCOc1ccccc1O",
+          "delta": 0.019105755759684317,
+          "rank_in_audit": 3,
+          "is_audit_best": false
+        }
+      ]
+    },
+    {
+      "parent": "resorcinol",
+      "parent_smiles": "Oc1cccc(O)c1",
+      "audit_qualifying_count": 6,
+      "audit_qualifying_smiles": [
+        "CCCOc1cccc(O)c1",
+        "COc1cccc(O)c1",
+        "OCCOc1cccc(O)c1",
+        "Oc1cccc(OC(F)(F)F)c1",
+        "CCCc1ccc(O)cc1O",
+        "CCCc1c(O)cccc1O"
+      ],
+      "audit_best_smiles": "CCCOc1cccc(O)c1",
+      "audit_best_delta": 0.029615138502747662,
+      "commit_count": 1,
+      "best_hits": 1,
+      "best_hit_rate": 1.0,
+      "commits": [
+        {
+          "tag": "p1_20260921",
+          "cid": "c2",
+          "smiles": "CCCOc1cccc(O)c1",
+          "delta": 0.029615138502747662,
+          "rank_in_audit": 1,
+          "is_audit_best": true
+        }
+      ]
+    },
+    {
+      "parent": "4-methylphenol",
+      "parent_smiles": "Cc1ccc(O)cc1",
+      "audit_qualifying_count": 4,
+      "audit_qualifying_smiles": [
+        "Cc1ccc(OCCO)cc1",
+        "CCCCc1ccc(O)cc1",
+        "CCCOc1ccc(C)cc1",
+        "COc1ccc(C)cc1"
+      ],
+      "audit_best_smiles": "Cc1ccc(OCCO)cc1",
+      "audit_best_delta": 0.01925229322866695,
+      "commit_count": 1,
+      "best_hits": 0,
+      "best_hit_rate": 0.0,
+      "commits": [
+        {
+          "tag": "p1_20260921",
+          "cid": "c2",
+          "smiles": "COc1ccc(C)cc1",
+          "delta": 0.010652434429319069,
+          "rank_in_audit": 4,
+          "is_audit_best": false
+        }
+      ]
+    },
+    {
+      "parent": "4-fluorophenol",
+      "parent_smiles": "Oc1ccc(F)cc1",
+      "audit_qualifying_count": 3,
+      "audit_qualifying_smiles": [
+        "OCCOc1ccc(F)cc1",
+        "CCCOc1ccc(F)cc1",
+        "COc1ccc(F)cc1"
+      ],
+      "audit_best_smiles": "OCCOc1ccc(F)cc1",
+      "audit_best_delta": 0.01989095239852945,
+      "commit_count": 1,
+      "best_hits": 0,
+      "best_hit_rate": 0.0,
+      "commits": [
+        {
+          "tag": "p1_20260921",
+          "cid": "c2",
+          "smiles": "COc1ccc(F)cc1",
+          "delta": 0.011020994219528846,
+          "rank_in_audit": 3,
+          "is_audit_best": false
+        }
+      ]
+    },
+    {
+      "parent": "benzonitrile",
+      "parent_smiles": "N#Cc1ccccc1",
+      "audit_qualifying_count": 3,
+      "audit_qualifying_smiles": [
+        "N#Cc1ccc(CCO)cc1",
+        "N#Cc1ccc(C(N)=O)cc1",
+        "N#Cc1cccc(CCO)c1"
+      ],
+      "audit_best_smiles": "N#Cc1ccc(CCO)cc1",
+      "audit_best_delta": 0.014129477281080272,
+      "commit_count": 0,
+      "best_hits": 0,
+      "best_hit_rate": null,
+      "commits": []
+    }
+  ],
+  "observations": [
+    {
+      "what": "Agent has now found audit-best on at least one observation for 5/8 parents",
+      "evidence": "best_hit_parents: phenol, aniline, toluene, resorcinol",
+      "status": "Includes resorcinol P1, aniline r2, phenol r4, toluene fix/r2/r3, 4-methylphenol P1, 4-fluorophenol P1 (verify by checking commits)."
+    },
+    {
+      "what": "Total audit-best hit rate across all 8 parents",
+      "evidence": "6/12 commits hit audit-best = 50%",
+      "status": "Updated from earlier 6/8 = 75% on the original three parents."
+    },
+    {
+      "what": "Benzonitrile P1 did not reach qualifying at all",
+      "evidence": "best=0.00774, status=execution_failure",
+      "status": "Best positive observation so far across the study on this parent."
+    },
+    {
+      "what": "Catechol P1 reached goal_met with a non-best molecule",
+      "evidence": "agent committed OCCOc1ccccc1? check audit, qual=1, best=0.01911",
+      "status": "Investigate in detail."
+    }
+  ],
+  "honest_limitations": [
+    "P4 post-hoc analysis; uses same evaluator as the agent. No independent truth.",
+    "Each parent has 1-4 observations (3 parents have 4, 5 new parents have 1).",
+    "Total commits too few for any statistical claim."
+  ]
+}

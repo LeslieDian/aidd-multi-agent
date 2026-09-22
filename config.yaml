@@ -61,9 +61,13 @@ llm:
     #   https://api.minimaxi.com/v1     (international, this user's account)
     #   https://api.MiniMax.chat/v1    (may also work for other accounts)
     # OpenAI-compatible protocol.
+    # 2026-09-21: api_key_env_fallbacks lists secondary keys so the LLMClient
+    # can swap to the next account when the primary returns 429
+    # rate_limit_error. The order is the order keys are tried.
     MiniMax:
       base_url: https://api.minimaxi.com/v1
       api_key_env: MiniMax_API_KEY
+      api_key_env_fallbacks: [MiniMax_API_KEY_SECONDARY]
       model: MiniMax-M3
       temperature: 1.0          # recommended by MiniMax docs
       max_tokens: 2048
@@ -76,6 +80,7 @@ llm:
     judge_MiniMax:
       base_url: https://api.minimaxi.com/v1
       api_key_env: MiniMax_API_KEY
+      api_key_env_fallbacks: [MiniMax_API_KEY_SECONDARY]
       model: MiniMax-M3
       temperature: 0.3
       max_tokens: 4096

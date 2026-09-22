@@ -5,6 +5,8 @@
 # API 密钥与本地配置（绝对不能入库）
 .env
 .env.local
+.env.backup
+.env.backup.*
 config.local.yaml
 *.key
 *.secret
