@@ -32,19 +32,60 @@ class ToolRegistry:
                 for t in self.tools.values() if allowed is None or t.name in allowed]
 
     def validate(self, action):
-        if not isinstance(action, dict) or set(action) != {"tool", "arguments", "reason"}:
-            if isinstance(action, dict):
-                missing = sorted({"tool", "arguments", "reason"} - set(action))
-                unexpected = sorted(set(action) - {"tool", "arguments", "reason"})
-                detail = []
-                if missing:
-                    detail.append(f"missing={missing}")
-                if unexpected:
-                    detail.append(f"unexpected={unexpected}")
-                raise ValueError(
-                    f"Action must contain tool, arguments, reason only ({'; '.join(detail)}); "
-                    "allowed=['arguments', 'reason', 'tool']")
+        if not isinstance(action, dict):
             raise ValueError("Action must contain tool, arguments, reason only")
+        # Recover from a small set of model drift patterns before strict checks.
+        # The validator must still reject the action if recovery is impossible.
+        #   1. If the model put "operation" instead of "tool" (attach_fragment, etc.),
+        #      copy operation -> tool.
+        if "tool" not in action and "operation" in action and isinstance(action["operation"], str):
+            action["tool"] = action.pop("operation")
+        #   2. Accept "rationale" (top-level OR inside arguments) as a fallback for
+        #      top-level "reason". The system prompt states reason is REQUIRED, but
+        #      observed benzonitrile runs (Events 14, 39) repeatedly dropped it.
+        #      For tools that accept rationale as an argument (e.g. choose_strategy),
+        #      we COPY it to reason and leave the original arguments intact.
+        #      For tools that do NOT accept rationale as an argument, we MOVE it.
+        if not action.get("reason"):
+            inner_rationale = None
+            if isinstance(action.get("arguments"), dict):
+                inner_rationale = action["arguments"].get("rationale")
+            tool_obj = self.tools.get(action.get("tool"))
+            tool_params = set(tool_obj.parameters) if tool_obj is not None else set()
+            if isinstance(inner_rationale, str) and inner_rationale.strip():
+                action["reason"] = inner_rationale
+                # If rationale is not a valid argument for this tool, move it.
+                if "rationale" not in tool_params and isinstance(action.get("arguments"), dict):
+                    action["arguments"].pop("rationale", None)
+            elif isinstance(action.get("rationale"), str) and action["rationale"].strip():
+                action["reason"] = action.pop("rationale")
+        #   3. Drop unknown top-level keys (model invents bookkeeping fields like
+        #      step/revision/basis/status/next_hypothesis_id). The system prompt is
+        #      strict about {tool, arguments, reason} only.
+        envelope = {"tool", "arguments", "reason"}
+        unknown_top = sorted(set(action) - envelope)
+        for k in unknown_top:
+            action.pop(k, None)
+        #   4. For tool arguments, drop unknown keys silently so verbose model
+        #      metadata (expected_benefit/allowed_cost/predictions etc.) does not
+        #      fail the action. The strict set() check still flags truly missing
+        #      required keys below.
+        if isinstance(action.get("arguments"), dict):
+            tool_obj = self.tools.get(action.get("tool"))
+            tool_params = set(tool_obj.parameters) if tool_obj is not None else set()
+            for k in sorted(set(action["arguments"]) - tool_params):
+                action["arguments"].pop(k, None)
+        if set(action) != envelope:
+            missing = sorted(envelope - set(action))
+            unexpected = sorted(set(action) - envelope)
+            detail = []
+            if missing:
+                detail.append(f"missing={missing}")
+            if unexpected:
+                detail.append(f"unexpected={unexpected}")
+            raise ValueError(
+                f"Action must contain tool, arguments, reason only ({'; '.join(detail)}); "
+                "allowed=['arguments', 'reason', 'tool']")
         if not isinstance(action["reason"], str) or not action["reason"].strip():
             raise ValueError("Action needs a short reason")
         name = action["tool"]

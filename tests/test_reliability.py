@@ -850,16 +850,26 @@ def test_illegal_stop_is_classified_as_state_machine():
 # wrong argument names both failed without saying which key was wrong)
 # ---------------------------------------------------------------------------
 
-def test_action_envelope_error_names_missing_and_unexpected_keys():
+def test_action_envelope_unknown_top_level_keys_are_silently_dropped():
+    """Top-level extras (model invents bookkeeping fields like step/revision/basis)
+    are silently dropped by the validator (added 2026-09-22 to recover from the
+    benzonitrile execution_failure pattern). The strict error message is still
+    produced for genuinely missing required keys."""
     from agents.harness.tools import default_registry
     registry = default_registry()
+    # Unknown extras + missing required 'summary' -> raises about missing
     with pytest.raises(ValueError) as exc:
-        registry.validate({"tool": "finish", "arguments": {"candidate_ids": ["c1"], "summary": "s"},
+        registry.validate({"tool": "finish", "arguments": {"candidate_ids": ["c1"]},
                            "reason": "r", "extra": 1})
     message = str(exc.value)
-    assert "unexpected=['extra']" in message
+    assert "missing=['summary']" in message
+    assert "unexpected=['extra']" not in message
     assert error_category(exc.value) == "schema"
-    assert classify_error(exc.value) is None
+    # Unknown extras only -> silently dropped, action validates
+    tool = registry.validate({"tool": "finish", "arguments": {"candidate_ids": ["c1"], "summary": "s"},
+                              "reason": "r", "extra": 1, "another_extra": "x"})
+    assert tool.name == "finish"
+    assert "extra" not in tool.parameters  # type: ignore[attr-defined]
 
 
 def test_action_argument_error_names_missing_argument():

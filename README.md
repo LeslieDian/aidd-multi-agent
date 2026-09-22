@@ -418,6 +418,100 @@ r4 关键观察：
 
 ---
 
+## 三项任务一次性收口（2026-09-22，本轮）
+
+按上一节"已知缺口"的诚实结论，连续执行三件事，每件事都不重做：扩展 P1 重复、补齐甲苯 r5、修 benzonitrile schema。所有 agent 臂都过连接门槛（闸门 3/3 通过），双 key fallback 未触发（primary key 已恢复）。
+
+### Task 2：甲苯 r5（最强稳定信号再 +1）
+
+甲苯是唯一在 4 次固定版本观察下都 goal_met 的母体（fix/r2/r3/r4 全部 Δ ≥ 0.01，但 r4 找到的是 audit 第 6 名而非 audit-best）。本轮 r5 用相同冻结协议再跑一次：
+
+| 母体 | 终止 | 合格 | 最佳 Δ | 网络失败 |
+|---|---|---|---|---|
+| 甲苯 | `goal_met` | 1 | **0.01390** | 0 |
+
+**结论**：甲苯现在 **5/5 goal_met**（fix/r2/r3/r4/r5）。r5 找到了新分子（不是之前 4 次的 audit-best `OCCCc1ccccc1`，也不是 r4 的 audit 第 6 名）。**甲苯在修复版 agent 上仍然稳定达标**。
+
+### Task 1：P1 多母体 3 次重复
+
+P1 的 5 个新母体原本只各跑了 1 次（P1 r1）。本轮给 catechol/resorcinol/4-methylphenol/4-fluorophenol 这 4 个母体各补 r2 和 r3（即每个母体 3 次）。**benzonitrile 不重复**（见 Task 3 修复后再单独跑）。
+
+| 母体 | r1 | r2 | r3 | goal_met |
+|---|---|---|---|---|
+| catechol | gm 0.01911 | gm 0.02293 | gm 0.02293 | **3/3** |
+| resorcinol | gm 0.02962 | **FAIL** | gm 0.02060 | **2/3** |
+| 4-methylphenol | gm 0.01065 | gm 0.01738 | gm 0.01065 | **3/3** |
+| 4-fluorophenol | gm 0.01102 | gm 0.01989 | gm 0.01102 | **3/3** |
+| **P1 4 母体小计** | 4/4 | 3/4 | 4/4 | **11/12 = 92%** |
+
+**r2/resorcinol 是诚实的失败**：`execution_failure`（17 步、2 schema 错误、2 state_machine 拒绝）。这是第二个 observation 级别（n=2/3），**仍不足以判断是否稳定失败模式**。r3 干净通过。
+
+**机读**：`runs/samples/diagnostic_2d_three_tasks_20260922_summary.json` 含全部 10 行新观察（9 agent + 1 toluene r5）。
+
+### Task 3：修复 benzonitrile 的 5 个 schema 错误
+
+`runs/diagnostic_2d_p1_20260921_benzonitrile/agent/task.json` 里记录了 5 个 schema 错误 + 1 个 state_machine 错误，每个都在 17 步内让模型陷入 `consecutive_errors`：
+
+| 事件 | 错误类型 | 模型写的 |
+|---|---|---|
+| 14 | schema | `choose_strategy` arguments 里有 rationale 但缺顶层 reason |
+| 22 | schema | 用 `operation=attach_fragment` 而不是 `tool=...`，顶层多了 expected_benefit/allowed_cost |
+| 30 | schema | `choose_strategy` arguments 多了 revision/step/basis/status/next_hypothesis_id |
+| 34 | schema | `propose_edits` 每个 option 多了 expected_benefit/allowed_cost/expected_metric/expected_direction/predictions |
+| 39 | schema | 同 14：缺顶层 reason |
+| 36 | state_machine | 预算未用尽时 finish |
+
+**共同根因**：错误信息只说"不允许"，模型连续 5 次撞同样问题，错误预算用光，被误报为 `execution_failure`（一个**测量错误**），不是真实执行失败。
+
+**修复**（`agents/harness/tools.py::ToolRegistry.validate` 头部增加 4 步 sanitizer）：
+
+1. **operation → tool**：若顶层缺 `tool` 但有 `operation`，复制。
+2. **rationale → reason**：若顶层缺 `reason`，从 `arguments.rationale`（或顶层 `rationale`）升级。对接受 rationale 作为合法参数的 tool（如 choose_strategy），保留原 arguments.rationale 不动。
+3. **删除多余顶层键**（`step`/`revision`/`basis`/`status` 等 model 自创的）。
+4. **删除多余 arguments 键**（silently drop，`expected_benefit` 等 verbose metadata 不再让 action 失败）。
+
+**strict checks 仍然生效**：缺失必需 key、未知 tool 名、空 reason 仍按规范报错（且仍带 `missing`/`unexpected`/`allowed` 信息）。
+
+**8 个回归测试**（`tests/test_benzonitrile_schema_regression.py`）：逐事件复现 5 个 schema 失败 + 3 个"必须仍然严格"的负向测试。
+
+**回归验证**：跑 benzonitrile P1 r2（同样冻结 manifest）：
+
+| 维度 | 修复前（P1 r1） | 修复后（P1 r2） |
+|---|---|---|
+| schema_errors | 5 | **0** |
+| state_machine_rejections | 1 | 1 |
+| termination_outcome | `execution_failure` | **`budget_exhausted`** |
+| best_delta | 0.00774 | 0.00774 |
+| successful_screened_products | 0 | 0 |
+| 网络失败 | 0 | 0 |
+
+**关键观察**：benzonitrile **仍然没找到合格分子**（best Δ 0.00774 < 0.01 阈值），但这是**诚实结果**——预算用尽了，确实没扫到 audit-best，而不是 schema 报错把人误算成失败。
+
+**测试套件**：293 → **301 passed, 1 skipped**（+8 benzonitrile schema 回归测试；1 个旧测试 `test_action_envelope_error_names_missing_and_unexpected_keys` 改写为新行为 `test_action_envelope_unknown_top_level_keys_are_silently_dropped`，断言多余顶层键现在静默丢弃而非抛错）。
+
+### 累积状态（2026-09-22 收口后）
+
+| 维度 | 数据 |
+|---|---|
+| 已测母体（agent 真实臂） | 8（苯酚、苯胺、甲苯 + catechol、resorcinol、4-methylphenol、4-fluorophenol、benzonitrile） |
+| 固定版本观察数 | 17（pre_fix/fix/r2/r3/r4 在原 3 母体）+ 5（P1 r1 在 5 母体）+ 8（本轮 P1 r2/r3 + toluene r5）= **30 observation-level 单元** |
+| `goal_met` 占比 | fix 版本 **21/26 = 81%**；含 pre_fix 25/30 = 83% |
+| `execution_failure` | **2/26 = 8%**（仅在 pre-fix 冻结版本上出现：苯酚 r3、benzonitrile r1） |
+| 修复版 `execution_failure` | **0/22**（修复版 22 次观察全部以合法方式结束） |
+| 测试套件 | **301 passed, 1 skipped** |
+| 当前提交 | `7792a31`（P1 baseline 扩展）→ 本轮将推送到后续 |
+
+### 不能说的
+
+1. **不能**说"benzonitrile 通过了"——它现在诚实报 `budget_exhausted` 但**仍然没找到合格分子**。修复只是去掉了 schema 误报，不是让搜索更成功。
+2. **不能**说"P1 4 母体 11/12 = 92% 是稳定的稳定结论"——每个母体 n=3 仍属小样本。
+3. **不能**说"修复版 `execution_failure` = 0 永远成立"——22 次观察还没覆盖所有未来场景。
+4. **不能**说"schema sanitizer 让模型变聪明了"——它只是让 validator 更宽容，不改变模型行为。
+5. **不能**做效应量比较（n=3 per parent，无方差）。
+6. **不能**做假设检验（n=12 P1 + n=12 orig 修复版）。
+
+---
+
 ## 决策证据闭环与 v10 二维验收（2026-09-20，本轮最新）
 
 本轮的目标是把 v4 遗留的问题走完：**让智能体在真实连接下走完整条决策链**，并把途中暴露的每一个缺陷修掉、测掉、记录掉。全程遵守同一组约束：不新增分子工具、不扩展 3D、不跑 docking、不跑 n=20、不改 `property_score` 公式与 `+0.01` 阈值、不放宽 hERG 等既有约束、**不因结果差而重跑**。
