@@ -138,7 +138,33 @@ def estimate_admet(smiles: str) -> dict:
         "admet_quality_score": round(admet_quality_score, 6),
         "summary_score": round(summary_score, 6),
         "warnings": warnings,
+        # 2026-09-22 (P3): calibrated hERG risk proxy (7-feature logistic).
+        # Independent of the single-feature `herg_risk_score` above; both are
+        # reported so callers can compare. The calibrated version is what the
+        # 4-category memory + dock-aware diagnostic read.
+        **calibrated_herg_block(smiles),
     }
+
+
+def calibrated_herg_block(smiles: str) -> dict:
+    """Inline integration of tools.calibrated_herg.calibrated_herg_score.
+
+    Returns only the keys that should land in the admet payload, so callers
+    get a stable, documented surface.
+    """
+    try:
+        from tools.calibrated_herg import calibrated_herg_score
+        r = calibrated_herg_score(smiles)
+        if not r.get("valid"):
+            return {"calibrated_herg_score": None, "calibrated_herg_features": None}
+        return {
+            "calibrated_herg_score": r.get("score"),
+            "calibrated_herg_features": r.get("features"),
+            "calibrated_herg_dominant": r.get("dominant_contributors"),
+        }
+    except Exception as exc:  # pragma: no cover - integration shim
+        return {"calibrated_herg_score": None, "calibrated_herg_features": None,
+                "calibrated_herg_error": f"{type(exc).__name__}: {exc}"}
 
 
 def admet_batch(smiles_list: Iterable[str]) -> list[dict]:
