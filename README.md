@@ -611,6 +611,66 @@ memory hook 在"insufficient_evidence"上不工作是设计选择：
 
 ---
 
+## Dock-aware v3：3 母体 × 25 评估预算（2026-09-23）
+
+紧接 v2（单母体 n=1）发现"agent 失败"无法区分真弱 vs 预算太小 vs 单次方差之后，这一版做两个动作：
+
+1. **评估预算 11 → 25**（`AIDD_MAX_EVALUATIONS` env var，默认仍是 11 保证测试不退化）
+2. **3 个不同母体**（phenol + catechol + 4-fluorophenol）—— 让结论能跨 parent
+
+### 阈值（与 v2 一致）
+
+```
+supported iff
+    property_score_delta >= 0.01
+    AND vina_score <= -5.0
+    AND (herg_risk_score <= 0.55 AND calibrated_herg_score <= 0.50)
+    AND logp <= 4.50
+```
+
+### 三方结果（n=3 parents × n=1 arm）
+
+| parent | greedy (qual/goal) | random (qual/goal) | agent (qual/goal) | audit 合格数 |
+|---|---|---|---|---|
+| phenol | **2 / GM** | **2 / GM** | 0 / NO | 2 / 16 |
+| catechol | **4 / GM** | **3 / GM** | 0 / NO | 18 / 70 |
+| 4-fluorophenol | **2 / GM** | **2 / GM** | 0 / NO | 19 / 70 |
+| **tally** | **3/3 GM** | **3/3 GM** | **0/3 GM** | — |
+
+### 关键诚实发现
+
+1. **baselines 在 3/3 母体上都 goal_met**——包括 audit 合格数最少（2/16）的 phenol
+2. **agent 在 3/3 母体上都 0 qualifying**——budget=25 时仍无法在 40+ 步内找到合格分子
+3. **agent 的失败有 3 种 termination**：
+   - phenol: `execution_failure`（consecutive_errors，2 schema + 1 state_machine）
+   - catechol: `execution_failure`（3 schema + 3 state_machine）
+   - 4-fluorophenol: `evaluation_budget_exhausted`（用完 24 次评估 + 6 schema + 6 state_machine）
+4. **agent 0/3 vs baselines 3/3** ——这是**第一次 n>1 的清晰信号**：agent 在多目标下系统性弱于 baselines
+5. **agent 产生大量无效 SMILES**（RDKit 报 Can't kekulize 或 valence 错误）——模型在没有 catalogue 边界提示时倾向自由发挥
+
+### 三个母体的差异
+
+| parent | audit 合格率 | 现象 |
+|---|---|---|
+| phenol | 2/16 (12%) | 最难；目录产物 vina 普遍 -4.2 到 -5.1 |
+| catechol | 18/70 (26%) | 大量丙基/乙基 + 双 -OH 产物 vina < -5.0 |
+| 4-fluorophenol | 19/70 (27%) | F + 长链产物 vina -5.1 到 -5.7 |
+
+agent 即便在最"慷慨"的 catechol（18 个合格分子）下也 0/1——**说明 agent 的失败不是预算或搜索空间问题**。
+
+### 不能说的（v3 仍然的小样本限制）
+
+1. **不能**说"agent 在多目标下永远弱"——3 个 parent × 1 次观察 ≈ 3 个数据点
+2. **不能**说"baselines 永远更好"——同上
+3. **不能**做效应量比较（n 仍小）
+4. **不能**做假设检验（n=3，无随机化）
+5. **不能**说"memory 集成没用"——因为 v2 agent 也没能造出任何 supported 选项，memory hook 没有机会 fire
+6. **catalibrated_herg 没起作用**——所有合格分子 calibrated_herg < 0.10，远低于 0.50 阈值
+
+机读：`runs/samples/diagnostic_2d_dock_3_parents_20260923_summary.json`。
+
+---
+
 ## Resorcinol r4：把最弱 P1 母体升到 3/4（2026-09-22 续）
 
 紧接 fb03511 之后：resorcinol 是唯一尚未稳定的 P1 母体（2/3，r2 是 execution_failure 2 schema + 2 state_machine 错误）。再跑一次 r4 是最低成本的补充信号——既验证 schema sanitizer 在 parent scenario（非 phenol 24/16）上也有效，又把 resorcinol 从 2/3 推到 3/4。

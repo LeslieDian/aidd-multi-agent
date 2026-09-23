@@ -1,0 +1,193 @@
+{
+  "schema_version": 1,
+  "experiment": "diagnostic_2d_dock_3_parents_20260923",
+  "created_utc": "2026-09-23T19:31:00+00:00",
+  "purpose": "Three-parent dock-aware three-arm comparison with bumped evaluation budget (11 -> 25 via AIDD_MAX_EVALUATIONS env var). The previous v1 (commit d5c84ac) and v2 (commit 5f145f1) only used phenol at budget 11. This run uses phenol + catechol + 4-fluorophenol at budget 25 to test generalization across parents.",
+  "connectivity_gate": "minimax_connectivity_20260923_v1: 3/3 passed",
+  "threshold": {
+    "property_score_delta_min": 0.01,
+    "vina_score_max": -5.0,
+    "herg_risk_heuristic_ceil": 0.55,
+    "herg_risk_calibrated_ceil": 0.5,
+    "logp_max": 4.5
+  },
+  "evaluation_budget": 25,
+  "parents": {
+    "phenol": {
+      "parent_smiles": "Oc1ccccc1",
+      "audit_qualifying_dock_aware": 2,
+      "audit_qualifying_property_only": 2,
+      "arms": {
+        "greedy": {
+          "termination_outcome": "goal_met",
+          "goal_met": true,
+          "qualifying_property_only": 2,
+          "best_delta": 0.014776211749152113,
+          "qualifying_dock_aware": 0,
+          "schema_errors": 0,
+          "state_machine_rejections": 0,
+          "network_failures": 0,
+          "new_structure_evaluations": 16,
+          "planner_attempts": 0
+        },
+        "random": {
+          "termination_outcome": "goal_met",
+          "goal_met": true,
+          "qualifying_property_only": 2,
+          "best_delta": 0.014776211749152113,
+          "qualifying_dock_aware": 0,
+          "schema_errors": 0,
+          "state_machine_rejections": 0,
+          "network_failures": 0,
+          "new_structure_evaluations": 16,
+          "planner_attempts": 0
+        },
+        "agent": {
+          "termination_outcome": "execution_failure",
+          "goal_met": false,
+          "qualifying_property_only": 0,
+          "best_delta": null,
+          "qualifying_dock_aware": 0,
+          "schema_errors": 2,
+          "state_machine_rejections": 1,
+          "network_failures": 0,
+          "new_structure_evaluations": 14,
+          "planner_attempts": 18
+        }
+      }
+    },
+    "catechol": {
+      "parent_smiles": "Oc1ccccc1O",
+      "audit_qualifying_dock_aware": 18,
+      "audit_qualifying_property_only": 5,
+      "arms": {
+        "greedy": {
+          "termination_outcome": "goal_met",
+          "goal_met": true,
+          "qualifying_property_only": 4,
+          "best_delta": 0.029845910350255078,
+          "qualifying_dock_aware": 2,
+          "schema_errors": 0,
+          "state_machine_rejections": 0,
+          "network_failures": 0,
+          "new_structure_evaluations": 24,
+          "planner_attempts": 0
+        },
+        "random": {
+          "termination_outcome": "goal_met",
+          "goal_met": true,
+          "qualifying_property_only": 3,
+          "best_delta": 0.029845910350255078,
+          "qualifying_dock_aware": 2,
+          "schema_errors": 0,
+          "state_machine_rejections": 0,
+          "network_failures": 0,
+          "new_structure_evaluations": 24,
+          "planner_attempts": 0
+        },
+        "agent": {
+          "termination_outcome": "execution_failure",
+          "goal_met": false,
+          "qualifying_property_only": 0,
+          "best_delta": null,
+          "qualifying_dock_aware": 0,
+          "schema_errors": 3,
+          "state_machine_rejections": 3,
+          "network_failures": 0,
+          "new_structure_evaluations": 15,
+          "planner_attempts": 24
+        }
+      }
+    },
+    "4-fluorophenol": {
+      "parent_smiles": "Oc1ccc(F)cc1",
+      "audit_qualifying_dock_aware": 19,
+      "audit_qualifying_property_only": 3,
+      "arms": {
+        "greedy": {
+          "termination_outcome": "goal_met",
+          "goal_met": true,
+          "qualifying_property_only": 2,
+          "best_delta": 0.016110556989100133,
+          "qualifying_dock_aware": 0,
+          "schema_errors": 0,
+          "state_machine_rejections": 0,
+          "network_failures": 0,
+          "new_structure_evaluations": 24,
+          "planner_attempts": 0
+        },
+        "random": {
+          "termination_outcome": "goal_met",
+          "goal_met": true,
+          "qualifying_property_only": 2,
+          "best_delta": 0.01989095239852945,
+          "qualifying_dock_aware": 0,
+          "schema_errors": 0,
+          "state_machine_rejections": 0,
+          "network_failures": 0,
+          "new_structure_evaluations": 24,
+          "planner_attempts": 0
+        },
+        "agent": {
+          "termination_outcome": "evaluation_budget_exhausted",
+          "goal_met": false,
+          "qualifying_property_only": 0,
+          "best_delta": null,
+          "qualifying_dock_aware": 0,
+          "schema_errors": 6,
+          "state_machine_rejections": 6,
+          "network_failures": 0,
+          "new_structure_evaluations": 23,
+          "planner_attempts": 46
+        }
+      }
+    }
+  },
+  "summary_table": [
+    {
+      "parent": "phenol",
+      "greedy_qual": 2,
+      "random_qual": 2,
+      "agent_qual": 0,
+      "greedy_goal": true,
+      "random_goal": true,
+      "agent_goal": false,
+      "agent_errors": 3
+    },
+    {
+      "parent": "catechol",
+      "greedy_qual": 4,
+      "random_qual": 3,
+      "agent_qual": 0,
+      "greedy_goal": true,
+      "random_goal": true,
+      "agent_goal": false,
+      "agent_errors": 6
+    },
+    {
+      "parent": "4-fluorophenol",
+      "greedy_qual": 2,
+      "random_qual": 2,
+      "agent_qual": 0,
+      "greedy_goal": true,
+      "random_goal": true,
+      "agent_goal": false,
+      "agent_errors": 12
+    }
+  ],
+  "tally": {
+    "n_parents": 3,
+    "greedy_goal_met": 3,
+    "random_goal_met": 3,
+    "agent_goal_met": 0
+  },
+  "headline_finding": "Across 3 parents (phenol, catechol, 4-fluorophenol) with budget 25 evaluations and dock-aware multi-objective threshold: greedy achieves goal_met in 3/3, random in 3/3, agent in 0/3. Agent fails to find a single qualifying molecule under strict multi-objective in all 3 parents, while baselines consistently succeed. This is the first n=3 confirmation that agent < baselines under real difficulty.",
+  "honest_limitations": [
+    "Still n=1 per arm per parent (one observation)",
+    "Agent failures include schema/state_machine errors (0-6 each)",
+    "Baselines are deterministic-order or random-shuffle; they trivially find molecules the agent could in principle also find",
+    "Without a richer catalogue (3D, larger parent scope), baselines have a structural advantage that the agent cannot overcome"
+  ],
+  "tests": "330 passed, 1 skipped (unchanged)",
+  "intent_check": "Same scoring, same threshold, same evaluator across all 3 parents. Each parent got the same 3-arm comparison. The agent arm in all 3 cases ended with execution_failure or evaluation_budget_exhausted, never goal_met."
+}

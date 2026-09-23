@@ -8,6 +8,7 @@ directly. They are honest offline evaluators used as stronger-than-rule baseline
 for the multi-parent stability study (P3, 2026-09-21).
 """
 import argparse
+import os
 from copy import deepcopy
 from datetime import datetime, timezone
 import json
@@ -115,7 +116,7 @@ def new_state(manifest, arm):
     config = deepcopy(manifest["config"])
     config["_diagnostic_output"] = manifest["output_dir"]
     state = TaskState(goal=goal, config=config, mock=arm != "agent", dock_enabled=False,
-        max_steps=45, max_model_calls=60, max_evaluations=11, constraints=deepcopy(manifest["constraints"]))
+        max_steps=int(os.environ.get("AIDD_MAX_STEPS", "45")), max_model_calls=int(os.environ.get("AIDD_MAX_MODEL_CALLS", "60")), max_evaluations=int(os.environ.get("AIDD_MAX_EVALUATIONS", "11")), constraints=deepcopy(manifest["constraints"]))
     add_seed_candidates(state, [manifest["parent_smiles"]], source="frozen_diagnostic")
     return state
 
