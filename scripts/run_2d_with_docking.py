@@ -191,9 +191,14 @@ def audit_cmd(output: Path) -> dict:
 
 
 def _new_state_with_docking(manifest, arm):
-    """Like cmp2d.new_state but with dock_enabled=True."""
+    """Like cmp2d.new_state but with dock_enabled=True and manifest attached."""
     state = cmp2d.new_state(manifest, arm)
     state.dock_enabled = True
+    # 2026-09-23: inject the manifest so the agent prompt can render the
+    # compact catalogue summary (VALID FRAGMENTS / VALID SITES). The harness
+    # never writes this into state via _diagnostic_output (already set by
+    # new_state), so we just stash it under _diagnostic_manifest.
+    state.config["_diagnostic_manifest"] = manifest
     return state
 
 

@@ -32,6 +32,38 @@ from agents.redaction import sanitize
 from agents.rule_memory import RuleStore
 
 
+
+def _catalogue_summary(state):
+    """Compact list of valid edits for the agent prompt.
+
+    Renders the manifest's catalogue as 'attach_fragment <fragment> @ site <N>'
+    lines so the model can pick exactly from the discrete option set. Prevents
+    the model from proposing arbitrary fragment_smiles values that fail RDKit
+    validation downstream (observed in v3: 6 schema + 6 state_machine
+    rejections per 4-fluorophenol arm due to malformed SMILES proposals).
+    """
+    manifest = state.config.get("_diagnostic_manifest")
+    if not manifest:
+        return ""
+    fragments = set()
+    sites = set()
+    for row in manifest.get("catalogue", []):
+        edit = row.get("edit", {})
+        args = edit.get("arguments", {})
+        f = args.get("fragment_smiles")
+        s = args.get("atom_index")
+        if f is not None:
+            fragments.add(f)
+        if s is not None:
+            sites.add(s)
+    parent = next((c.get("smiles") for c in state.candidates.values() if c.get("candidate_id") == "c1"), "?")
+    return (f"PARENT = {parent}\n"
+            f"VALID FRAGMENTS (only these are accepted): {sorted(fragments)}\n"
+            f"VALID SITES (atom_index on parent): {sorted(sites)}\n"
+            f"PROPOSE_EDITS option must use one fragment from VALID FRAGMENTS and one site from VALID SITES.\n"
+            f"Do not invent fragment_smiles outside this list; do not write multi-fragment SMILES.")
+
+
 class LLMPolicy:
     """Real planner: one model client per provider, reused for the whole task."""
 
@@ -245,7 +277,7 @@ class LLMPolicy:
             "Stop with finish when max_edits is reached, a candidate qualifies, or no reasonable feasible alternative remains; "
             "explain the reason. If the task text states a stricter stop rule, the task text wins: obey it exactly. "
             "A feasibility pass does not imply synthetic accessibility or activity.",
-            json.dumps({"goal": state.goal, "instructions": state.instructions,
+json.dumps({"goal": state.goal, "instructions": state.instructions,
                         "constraints": state.constraints, "hypotheses": state.hypotheses, "strategies": state.strategies,
                         "task_experience": experience(state),
                         "edit_proposals": list(state.edit_proposals.values())[-3:], "edit_selections": state.edit_selections,
@@ -263,6 +295,7 @@ class LLMPolicy:
                                 "scaffold_class": candidates[0].get("scaffold") if candidates else None},
                             max_chars=2000,
                         ) if self.rule_store and self.rule_store.rules else "",
+                        "catalogue_summary": _catalogue_summary(state),
                         "tools": offered_tools}, ensure_ascii=False))
 
 

@@ -671,6 +671,51 @@ agent 即便在最"慷慨"的 catechol（18 个合格分子）下也 0/1——**
 
 ---
 
+## Dock-aware v4：catalogue_summary 修复 SMILES 生成（2026-09-23）
+
+v3 数据暴露 agent 一个**独立**问题：**模型自由发挥时倾向造无效 SMILES**。4-fluorophenol 的 6 schema + 6 state_machine 错误几乎全是 RDKit `Can't kekulize` 或 `Explicit valence`——模型把片段拼成了根本不合法的芳香环。
+
+### 修复：catalogue_summary
+
+在 `agents/harness/runtime.py::LLMPolicy.decide` 的 prompt 上下文里加一个**紧凑版目录摘要**：
+
+```
+PARENT = Oc1ccc(F)cc1
+VALID FRAGMENTS (only these are accepted): [F, C, N, O, Cl, OC, CO, ...]
+VALID SITES (atom_index on parent): [0, 1, 2, 3, 4, 5]
+PROPOSE_EDITS option must use one fragment from VALID FRAGMENTS and one
+site from VALID SITES.
+Do not invent fragment_smiles outside this list; do not write multi-fragment SMILES.
+```
+
+数据来源：`state.config["_diagnostic_manifest"]["catalogue"]`（在 `_new_state_with_docking` 注入）。
+
+### v4 在 4F agent 的影响（n=1）
+
+| 指标 | v3（无 catalogue_summary） | v4（有 catalogue_summary） |
+|---|---|---|
+| schema_errors | 6 | **1** |
+| state_machine_rejections | 6 | **4** |
+| termination | evaluation_budget_exhausted | evaluation_budget_exhausted |
+| qualifying | **0** | **0** |
+
+**schema_errors -83%（6→1），state_machine_rejections -33%（6→4）**。模型现在几乎不再发明无效 SMILES。
+
+但 **agent 仍 0 qualifying**——selection policy 和 budget 仍是约束，prompt 修复只解决了 SMILES 合法性这一层。
+
+### 诚实陈述
+
+1. **catalogue_summary 有效降低错误率**——但只是 n=1，可能有方差
+2. **仍未达 goal_met**——单一 prompt 改动不能解决根本的 selection 问题
+3. **要真正反转 v3 的 agent<baselines 结论**，需要：
+   - 重跑 phenol + catechol agent 看是否在 catalogue_summary 下能找到合格分子
+   - 或加更多 repetition（每个 parent 5 次）做统计对比
+4. **catalogue_summary 是 n=1 内部增益**——但对外的 agent-vs-baseline 结论**没变**：仍 0/3
+
+机读：`runs/samples/diagnostic_2d_dock_catalogue_summary_v4_20260923_summary.json`。
+
+---
+
 ## Resorcinol r4：把最弱 P1 母体升到 3/4（2026-09-22 续）
 
 紧接 fb03511 之后：resorcinol 是唯一尚未稳定的 P1 母体（2/3，r2 是 execution_failure 2 schema + 2 state_machine 错误）。再跑一次 r4 是最低成本的补充信号——既验证 schema sanitizer 在 parent scenario（非 phenol 24/16）上也有效，又把 resorcinol 从 2/3 推到 3/4。

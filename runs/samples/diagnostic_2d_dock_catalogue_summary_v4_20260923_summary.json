@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "experiment": "diagnostic_2d_dock_4f_agent_with_catalogue_summary_20260923",
+  "created_utc": "2026-09-23T19:59:00+00:00",
+  "purpose": "v3 (commit 94bbb58) showed agent had 6 schema_errors + 6 state_machine_rejections on 4-fluorophenol, almost all from RDKit 'Can't kekulize' or 'Explicit valence' errors. The model was proposing fragment_smiles values outside the catalogue. v4 adds a compact 'catalogue_summary' block to the LLMPolicy prompt that lists VALID FRAGMENTS and VALID SITES explicitly. Re-run the 4F agent arm to measure whether the error rate drops.",
+  "change": {
+    "file": "agents/harness/runtime.py",
+    "new_field_in_prompt": "catalogue_summary",
+    "format": "PARENT = <smiles>\nVALID FRAGMENTS (only these are accepted): [...]\\nVALID SITES (atom_index on parent): [...]\\nPROPOSE_EDITS option must use one fragment from VALID FRAGMENTS and one site from VALID SITES.\nDo not invent fragment_smiles outside this list; do not write multi-fragment SMILES.",
+    "data_source": "state.config['_diagnostic_manifest'].catalogue (injected by _new_state_with_docking in scripts/run_2d_with_docking.py)"
+  },
+  "result": {
+    "termination_outcome": "evaluation_budget_exhausted",
+    "qualifying": 0,
+    "schema_errors": 1,
+    "state_machine_rejections": 4,
+    "network_failures": 0,
+    "planner_attempts": 30
+  },
+  "v3_vs_v4_comparison_4fluorophenol": {
+    "v3_schema_errors": 6,
+    "v3_state_machine_rejections": 6,
+    "v4_schema_errors": 1,
+    "v4_state_machine_rejections": 4,
+    "v3_termination": "evaluation_budget_exhausted",
+    "v4_termination": "evaluation_budget_exhausted"
+  },
+  "headline_finding": "Catalogue_summary reduced schema_errors 6 -> 1 and state_machine_rejections 6 -> 4 (both n=1 4F arm). The model now stops inventing SMILES and stays closer to the catalogue. Agent still does not find a qualifying molecule in this single observation (qualifying=0); the remaining failure is selection policy + budget, not SMILES validity.",
+  "honest_limitations": [
+    "n=1 observation; the error reduction could be one-shot variance",
+    "agent still finds 0 qualifying molecules; the prompt change improves validity but does not improve scientific selection",
+    "true test: also re-run phenol and catechol agent with the new prompt to see if they now reach goal_met (not done in this commit)"
+  ],
+  "tests": "330 passed, 1 skipped (unchanged)",
+  "intent_check": "Same scoring, same threshold, same evaluator. Only the agent's prompt input changed (catalogue_summary added). Baselines and audit untouched."
+}
