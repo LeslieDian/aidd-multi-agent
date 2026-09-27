@@ -1,0 +1,207 @@
+{
+  "schema_version": 1,
+  "target": "1d924259efb0455da59583e085b3097f",
+  "saved_utc": "2026-09-27T07:07:30.970866+00:00",
+  "rules": {
+    "neg::Oc1ccc(F)cc1": {
+      "rule_id": "neg::Oc1ccc(F)cc1",
+      "category": "negative_constraint",
+      "description": "Avoid SMILES Oc1ccc(F)cc1: screening_inconclusive",
+      "pattern": {
+        "smiles": "Oc1ccc(F)cc1"
+      },
+      "applicable_context": [
+        "c1ccccc1"
+      ],
+      "evidence_strength": 1.0,
+      "observations": 1,
+      "successes": 1,
+      "failures": 0,
+      "created_utc": "2026-09-27T07:06:15.978684+00:00",
+      "last_updated_utc": "2026-09-27T07:06:15.978684+00:00",
+      "source_round": null,
+      "source_smiles": null,
+      "parent_smiles": null
+    },
+    "neg::Cc1ccc(O)cc1": {
+      "rule_id": "neg::Cc1ccc(O)cc1",
+      "category": "negative_constraint",
+      "description": "Avoid SMILES Cc1ccc(O)cc1: screening_inconclusive",
+      "pattern": {
+        "smiles": "Cc1ccc(O)cc1"
+      },
+      "applicable_context": [
+        "c1ccccc1"
+      ],
+      "evidence_strength": 1.0,
+      "observations": 1,
+      "successes": 1,
+      "failures": 0,
+      "created_utc": "2026-09-27T07:06:15.979172+00:00",
+      "last_updated_utc": "2026-09-27T07:06:15.979172+00:00",
+      "source_round": null,
+      "source_smiles": null,
+      "parent_smiles": null
+    },
+    "neg::Oc1ccc(O)cc1": {
+      "rule_id": "neg::Oc1ccc(O)cc1",
+      "category": "negative_constraint",
+      "description": "Avoid SMILES Oc1ccc(O)cc1: screening_tradeoff_exceeded",
+      "pattern": {
+        "smiles": "Oc1ccc(O)cc1"
+      },
+      "applicable_context": [
+        "c1ccccc1"
+      ],
+      "evidence_strength": 1.0,
+      "observations": 1,
+      "successes": 1,
+      "failures": 0,
+      "created_utc": "2026-09-27T07:06:15.979585+00:00",
+      "last_updated_utc": "2026-09-27T07:06:15.979585+00:00",
+      "source_round": null,
+      "source_smiles": null,
+      "parent_smiles": null
+    },
+    "neg::Cc1cccc(O)c1": {
+      "rule_id": "neg::Cc1cccc(O)c1",
+      "category": "negative_constraint",
+      "description": "Avoid SMILES Cc1cccc(O)c1: screening_inconclusive",
+      "pattern": {
+        "smiles": "Cc1cccc(O)c1"
+      },
+      "applicable_context": [
+        "c1ccccc1"
+      ],
+      "evidence_strength": 1.0,
+      "observations": 2,
+      "successes": 2,
+      "failures": 0,
+      "created_utc": "2026-09-27T07:06:15.979996+00:00",
+      "last_updated_utc": "2026-09-27T07:06:24.785392+00:00",
+      "source_round": null,
+      "source_smiles": null,
+      "parent_smiles": null
+    },
+    "neg::Oc1cccc(F)c1": {
+      "rule_id": "neg::Oc1cccc(F)c1",
+      "category": "negative_constraint",
+      "description": "Avoid SMILES Oc1cccc(F)c1: screening_tradeoff_exceeded",
+      "pattern": {
+        "smiles": "Oc1cccc(F)c1"
+      },
+      "applicable_context": [
+        "c1ccccc1"
+      ],
+      "evidence_strength": 1.0,
+      "observations": 2,
+      "successes": 2,
+      "failures": 0,
+      "created_utc": "2026-09-27T07:06:24.785401+00:00",
+      "last_updated_utc": "2026-09-27T07:06:40.340951+00:00",
+      "source_round": null,
+      "source_smiles": null,
+      "parent_smiles": null
+    },
+    "neg::Oc1ccccc1F": {
+      "rule_id": "neg::Oc1ccccc1F",
+      "category": "negative_constraint",
+      "description": "Avoid SMILES Oc1ccccc1F: screening_inconclusive",
+      "pattern": {
+        "smiles": "Oc1ccccc1F"
+      },
+      "applicable_context": [
+        "c1ccccc1"
+      ],
+      "evidence_strength": 1.0,
+      "observations": 1,
+      "successes": 1,
+      "failures": 0,
+      "created_utc": "2026-09-27T07:06:24.785861+00:00",
+      "last_updated_utc": "2026-09-27T07:06:24.785861+00:00",
+      "source_round": null,
+      "source_smiles": null,
+      "parent_smiles": null
+    },
+    "neg::Cc1ccccc1O": {
+      "rule_id": "neg::Cc1ccccc1O",
+      "category": "negative_constraint",
+      "description": "Avoid SMILES Cc1ccccc1O: screening_inconclusive",
+      "pattern": {
+        "smiles": "Cc1ccccc1O"
+      },
+      "applicable_context": [
+        "c1ccccc1"
+      ],
+      "evidence_strength": 1.0,
+      "observations": 1,
+      "successes": 1,
+      "failures": 0,
+      "created_utc": "2026-09-27T07:06:40.340463+00:00",
+      "last_updated_utc": "2026-09-27T07:06:40.340463+00:00",
+      "source_round": null,
+      "source_smiles": null,
+      "parent_smiles": null
+    },
+    "neg::Nc1ccc(O)cc1": {
+      "rule_id": "neg::Nc1ccc(O)cc1",
+      "category": "negative_constraint",
+      "description": "Avoid SMILES Nc1ccc(O)cc1: screening_tradeoff_exceeded",
+      "pattern": {
+        "smiles": "Nc1ccc(O)cc1"
+      },
+      "applicable_context": [
+        "c1ccccc1"
+      ],
+      "evidence_strength": 1.0,
+      "observations": 1,
+      "successes": 1,
+      "failures": 0,
+      "created_utc": "2026-09-27T07:06:40.340959+00:00",
+      "last_updated_utc": "2026-09-27T07:06:40.340959+00:00",
+      "source_round": null,
+      "source_smiles": null,
+      "parent_smiles": null
+    },
+    "neg::COc1ccccc1": {
+      "rule_id": "neg::COc1ccccc1",
+      "category": "negative_constraint",
+      "description": "Avoid SMILES COc1ccccc1: screening_inconclusive",
+      "pattern": {
+        "smiles": "COc1ccccc1"
+      },
+      "applicable_context": [
+        "c1ccccc1"
+      ],
+      "evidence_strength": 1.0,
+      "observations": 1,
+      "successes": 1,
+      "failures": 0,
+      "created_utc": "2026-09-27T07:07:30.970280+00:00",
+      "last_updated_utc": "2026-09-27T07:07:30.970280+00:00",
+      "source_round": null,
+      "source_smiles": null,
+      "parent_smiles": null
+    },
+    "neg::CC(C)Oc1ccccc1": {
+      "rule_id": "neg::CC(C)Oc1ccccc1",
+      "category": "negative_constraint",
+      "description": "Avoid SMILES CC(C)Oc1ccccc1: screening_inconclusive",
+      "pattern": {
+        "smiles": "CC(C)Oc1ccccc1"
+      },
+      "applicable_context": [
+        "c1ccccc1"
+      ],
+      "evidence_strength": 1.0,
+      "observations": 1,
+      "successes": 1,
+      "failures": 0,
+      "created_utc": "2026-09-27T07:07:30.970777+00:00",
+      "last_updated_utc": "2026-09-27T07:07:30.970777+00:00",
+      "source_round": null,
+      "source_smiles": null,
+      "parent_smiles": null
+    }
+  }
+}

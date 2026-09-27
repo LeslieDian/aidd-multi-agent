@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from visualize_memory import (  # noqa: E402
     category_counts, discover_rule_memory_paths, evidence_pairs,
-    load_rules, write_json_report,
+    file_summaries, load_rules, write_json_report,
 )
 
 
@@ -179,5 +179,121 @@ def test_cli_with_real_rule_file(tmp_path):
     try:
         import matplotlib  # noqa: F401
         assert (out_dir / "memory_categories_pie.png").exists()
+    except ImportError:
+        pass
+
+
+# ---------------- cross-run drift ----------------
+
+
+def _make_file_with_evidence(path: Path, *, predicted: float, observed: float,
+                              saved_utc: str = "2026-09-27T00:00:00+00:00"):
+    """Helper: write a rule_memory JSON with one EVIDENCE pair and a
+    saved_utc timestamp so file_summaries can sort deterministically."""
+    payload = {
+        "schema_version": 1,
+        "target": "EGFR",
+        "saved_utc": saved_utc,
+        "rules": {
+            "e1": _make_rule("e1", "evidence_strength",
+                              predicted=predicted, observed=observed,
+                              direction="under" if predicted > observed else "over"),
+        },
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def test_file_summaries_skips_files_without_evidence(tmp_path):
+    """A file with zero EVIDENCE observations does NOT contribute a
+    drift point (would only stretch the x-axis with empty bins)."""
+    no_e = tmp_path / "no_evidence.json"
+    no_e.write_text(json.dumps({
+        "schema_version": 1, "rules": {
+            "n1": _make_rule("n1", "negative_constraint"),
+        }
+    }), encoding="utf-8")
+    rows = file_summaries([no_e])
+    assert rows == []
+
+
+def test_file_summaries_orders_by_saved_utc(tmp_path):
+    """Three files with different saved_utc -> rows sorted ascending."""
+    paths = []
+    for ts in ("2026-09-27T03:00:00+00:00",
+                "2026-09-27T01:00:00+00:00",
+                "2026-09-27T02:00:00+00:00"):
+        p = tmp_path / f"rules_{ts[:13].replace(':', '')}.json"
+        _make_file_with_evidence(p, predicted=0.02, observed=0.005,
+                                   saved_utc=ts)
+        paths.append(p)
+    rows = file_summaries(paths)
+    assert len(rows) == 3
+    # First row must be the 01:00 file (earliest saved_utc).
+    assert rows[0]["sort_key"].startswith("2026-09-27T01")
+    assert rows[-1]["sort_key"].startswith("2026-09-27T03")
+
+
+def test_file_summaries_computes_per_file_metrics(tmp_path):
+    p = tmp_path / "rules.json"
+    _make_file_with_evidence(p, predicted=0.020, observed=0.005,
+                               saved_utc="2026-09-27T00:00:00+00:00")
+    rows = file_summaries([p])
+    assert len(rows) == 1
+    r = rows[0]
+    assert r["n_pairs"] == 1
+    assert r["mean_abs_error"] == 0.015
+    assert r["max_abs_error"] == 0.015
+    assert r["under_claim_rate"] == 1.0
+    assert r["over_claim_rate"] == 0.0
+
+
+def test_cross_run_block_in_json_report(tmp_path):
+    """write_json_report includes the cross_run list."""
+    p = tmp_path / "rules.json"
+    _make_file_with_evidence(p, predicted=0.020, observed=0.005)
+    rules = load_rules([p])
+    counts = category_counts(rules)
+    pairs = evidence_pairs(rules)
+    rows = file_summaries([p])
+    report_path = write_json_report(rules, pairs, counts, tmp_path,
+                                      file_rows=rows)
+    data = json.loads(report_path.read_text(encoding="utf-8"))
+    assert data["schema_version"] == 2
+    assert isinstance(data["cross_run"], list)
+    assert len(data["cross_run"]) == 1
+    assert data["cross_run"][0]["mean_abs_error"] == 0.015
+
+
+def test_cli_cross_run_flag_emits_drift_plot(tmp_path):
+    """--cross-run with 2 files -> calibration_cross_run.png is written."""
+    from visualize_memory import main
+    paths = []
+    for i, ts in enumerate(("2026-09-27T01:00:00+00:00",
+                             "2026-09-27T02:00:00+00:00")):
+        p = tmp_path / f"rules_{i}.json"
+        # Drift: first run has high error, second has lower -> "learning".
+        if i == 0:
+            _make_file_with_evidence(p, predicted=0.04, observed=0.005,
+                                       saved_utc=ts)
+        else:
+            _make_file_with_evidence(p, predicted=0.02, observed=0.018,
+                                       saved_utc=ts)
+        paths.append(str(p))
+    out_dir = tmp_path / "figs"
+    # --memory is action="append" -> must repeat the flag for each path,
+    # not splat them as bare args (which argparse would treat as
+    # unrecognized positionals).
+    rc = main(["--cross-run",
+                 "--memory", paths[0],
+                 "--memory", paths[1],
+                 "--output", str(out_dir)])
+    assert rc == 0
+    try:
+        import matplotlib  # noqa: F401
+        drift = out_dir / "calibration_cross_run.png"
+        assert drift.exists(), "cross-run drift plot was not written"
+        # Both PNGs of the single-run path also exist
+        assert (out_dir / "memory_categories_pie.png").exists()
+        assert (out_dir / "calibration_scatter.png").exists()
     except ImportError:
         pass

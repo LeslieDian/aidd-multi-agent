@@ -144,10 +144,13 @@ def test_supported_and_tradeoff_outcomes_do_not_pollute_evidence():
     policy = LLMPolicy(rule_store=store, task_id="EGFR")
     state = _make_state()
     # supported
-    supported = _eval_event(predicted_min_change=0.02, observed_delta=0.025)
+    supported = _eval_event(predicted_min_change=0.02, observed_delta=0.025,
+                              child_smiles="COc1ccccc1")
     supported["result"]["screening_comparison"]["rows"][0]["effect"]["outcome"] = "supported"
-    # tradeoff_exceeded
-    tradeoff = _eval_event(predicted_min_change=0.02, observed_delta=-0.10, opt_index=1)
+    # tradeoff_exceeded: distinct SMILES so the negative rule key differs
+    # from the supported rule, and opt_index=0 (positional in a 1-option list).
+    tradeoff = _eval_event(predicted_min_change=0.02, observed_delta=-0.10,
+                             child_smiles="CCOc1ccccc1", opt_index=0)
     tradeoff["result"]["screening_comparison"]["rows"][0]["effect"]["outcome"] = "tradeoff_exceeded"
     policy.update_memory_from_events([supported, tradeoff], state)
     assert store.by_category(EVIDENCE) == []

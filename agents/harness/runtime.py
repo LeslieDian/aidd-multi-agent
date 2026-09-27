@@ -118,30 +118,53 @@ class LLMPolicy:
                 # The screening_comparison.rows list carries per-option outcomes.
                 screening = result.get("screening_comparison", {})
                 rows = screening.get("rows", [])
-                # Options live in action.arguments.options, NOT in
-                # screening_comparison (which only carries scoring rows).
-                options = action.get("arguments", {}).get("options", [])
-                parent_id = action.get("arguments", {}).get("parent_id", "c1")
+                # The proposal_id identifies which edit_proposal in state the
+                # screening belongs to. The actual options (with their
+                # predictions, edits, precheck SMILES) live in
+                # ``state.edit_proposals[proposal_id].options``. Older events
+                # from before 2026-09-23 sometimes carried options inline in
+                # action.arguments.options, so we fall back to that for
+                # backwards compatibility.
+                proposal_id = action.get("arguments", {}).get("proposal_id")
+                inline_options = action.get("arguments", {}).get("options")
+                if inline_options:
+                    options = inline_options
+                elif proposal_id and hasattr(state, "edit_proposals"):
+                    proposal = (state.edit_proposals or {}).get(proposal_id) or {}
+                    options = list(proposal.get("options") or [])
+                else:
+                    options = []
+                # parent_id can come from the proposal's parent_id or default
+                # to c1 for the diagnostic flow.
+                if proposal_id and hasattr(state, "edit_proposals"):
+                    proposal = (state.edit_proposals or {}).get(proposal_id) or {}
+                    parent_id = proposal.get("parent_id") or \
+                                 action.get("arguments", {}).get("parent_id", "c1")
+                else:
+                    parent_id = action.get("arguments", {}).get("parent_id", "c1")
                 parent = state.candidates.get(parent_id, {})
                 parent_smiles = parent.get("smiles", "?")
-                # Build option-index -> option-edit map (for supported rows).
-                opts_by_index = {o.get("option_index"): o for o in options
-                                  if o.get("option_index") is not None}
+                # Build option-index -> option-edit map. Options don't carry
+                # ``option_index`` as a field — the screening tool assigns it
+                # implicitly via the option's position in the list
+                # (``for i, option, check in options: rows.append({...,
+                # "option_index": i})`` in agents/harness/screening.py).
+                # So we key by position; this is the correct lookup.
+                opts_by_index = {i: o for i, o in enumerate(options)}
                 # Collect predictions once per option so we can compare to
                 # observed for the new prediction_error tracker (EVIDENCE
                 # category, NOT positive/negative).
                 opts_predictions = {}
-                for o in options:
-                    oid = o.get("option_index")
-                    if oid is None:
-                        continue
+                # 2026-09-27: same fix as opts_by_index — predictions are
+                # keyed by the option's position in the list, NOT a field.
+                for i, o in enumerate(options):
                     # predictions live on the option's `predictions` list;
                     # pick the property_score prediction's min_change.
                     preds = o.get("predictions", []) or []
                     for p in preds:
                         if p.get("metric") == "property_score":
                             try:
-                                opts_predictions[oid] = float(p.get("min_change") or 0.0)
+                                opts_predictions[i] = float(p.get("min_change") or 0.0)
                             except (TypeError, ValueError):
                                 pass
                             break
@@ -761,11 +784,31 @@ class Harness:
                         working.pending = None
                         # 2026-09-22: feed the new event into the 4-category rule
                         # store before the next decide() reads the prompt.
+                        # 2026-09-27: do NOT silently swallow exceptions. A
+                        # broken memory update means calibration + reflection
+                        # are silently degraded. Audit the failure through the
+                        # evidence sink (which Harness always provides) AND
+                        # stderr so it cannot pass unnoticed in CI.
                         try:
                             if hasattr(policy, "update_memory_from_events"):
                                 policy.update_memory_from_events([event], working)
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            try:
+                                from agents.redaction import sanitize_exception
+                                msg = sanitize_exception(exc, self._secrets)
+                            except Exception:
+                                msg = "<unreadable>"
+                            print(
+                                f"[WARN] update_memory_from_events failed: {msg}",
+                                flush=True,
+                            )
+                            self._record_request({
+                                "type": "rule_store_error",
+                                "rule_category": "memory_update",
+                                "operation": "update_memory_from_events",
+                                "call_id": event.get("call_id"),
+                                "exception": msg,
+                            })
                         working.consecutive_errors = 0
                         working.idle_actions = 0 if (working.candidates != state.candidates
                             or working.hypotheses != state.hypotheses or working.strategies != state.strategies

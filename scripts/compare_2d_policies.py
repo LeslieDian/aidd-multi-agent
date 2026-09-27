@@ -473,12 +473,20 @@ def run_arm(output, arm):
     store = CheckpointStore(output / arm)
     if store.path.exists():
         raise ValueError("Arm already exists; no reruns or automatic restarts in this diagnostic")
-    store.save(new_state(manifest, arm))
+    initial_state = new_state(manifest, arm)
+    store.save(initial_state)
     registry = CatalogRegistry(manifest)
     if arm == "agent":
         # One policy (and therefore one HTTP client) for the whole arm; it is
         # closed explicitly below, even if the arm fails.
-        policy = LLMPolicy()
+        # 2026-09-27: pass task_id so the policy's RuleStore gets a persist
+        # path (``runs/samples/rule_memory_<task_id>.json``). Without this,
+        # every EVIDENCE calibration rule written by
+        # ``update_memory_from_events`` stays in memory and is lost when the
+        # policy closes. With it, ``scripts/visualize_memory.py`` can read
+        # the calibration data and the cross-run drift detector can show
+        # how the agent's calibration evolves over time.
+        policy = LLMPolicy(task_id=initial_state.task_id)
         try:
             state = drive_arm(store, policy, registry, arm)
         finally:

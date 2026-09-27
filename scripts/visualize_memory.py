@@ -9,6 +9,7 @@ Outputs (when matplotlib is available):
   calibration_scatter.png        predicted_delta vs observed_delta (EVIDENCE)
   calibration_drift.png           abs-error histogram + over/under balance
   top_rules_evidence.png          top-N rules ranked by evidence_strength
+  calibration_cross_run.png       abs-error + under/over rate over time
 
 Source of truth
 ---------------
@@ -26,6 +27,7 @@ Usage
     python scripts/visualize_memory.py                      # auto-discover all
     python scripts/visualize_memory.py --output docs/figures
     python scripts/visualize_memory.py --json-only          # skip PNGs
+    python scripts/visualize_memory.py --cross-run          # per-file drift
     python scripts/visualize_memory.py --memory path/to/rules.json
 
 The script NEVER writes back to the rule store. It is read-only.
@@ -34,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -124,6 +127,63 @@ def evidence_pairs(rules: list[dict]) -> list[tuple[float, float, str, str, str]
             except (TypeError, ValueError, KeyError):
                 continue
     return pairs
+
+
+def file_summaries(paths: list[Path]) -> list[dict]:
+    """Per-file calibration summary so cross-run trends can be drawn.
+
+    Each file is treated as a single point in time. Returns rows ordered
+    by the embedded ISO timestamp (saved_utc -> last_updated -> file mtime),
+    so even old runs without an explicit timestamp sort sensibly.
+
+    Schema:
+      {path, label, n_pairs, mean_abs_error, max_abs_error,
+       under_claim_rate, over_claim_rate, sort_key}
+
+    `label` is the file's basename (sans extension) — short enough to fit
+    on the x-axis of a time-series plot.
+    """
+    rows: list[dict] = []
+    for path in paths:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        rules = list((payload.get("rules") or {}).values())
+        pairs = evidence_pairs(rules)
+        if not pairs:
+            # Skip files with zero EVIDENCE observations: they cannot
+            # contribute a meaningful drift point and would just stretch
+            # the x-axis with empty bins.
+            continue
+        errors = [abs(p - o) for p, o, *_ in pairs]
+        n_under = sum(1 for p, o, *_ in pairs if p > o)
+        n = len(pairs)
+        # Sort key: prefer saved_utc / last_updated, fall back to file mtime.
+        sort_key = (payload.get("saved_utc")
+                     or max(
+                         (r.get("last_updated_utc") or r.get("created_utc") or "")
+                         for r in rules
+                     )
+                     or "")
+        if not sort_key:
+            try:
+                sort_key = path.stat().st_mtime_iso  # type: ignore[attr-defined]
+            except Exception:
+                sort_key = str(path.stat().st_mtime)
+        rows.append({
+            "path": str(path),
+            "label": path.stem,
+            "n_pairs": n,
+            "n_rules": len([r for r in rules if r.get("category") == "evidence_strength"]),
+            "mean_abs_error": round(sum(errors) / n, 4),
+            "max_abs_error": round(max(errors), 4),
+            "under_claim_rate": round(n_under / n, 3),
+            "over_claim_rate": round((n - n_under) / n, 3),
+            "sort_key": sort_key,
+        })
+    rows.sort(key=lambda r: r["sort_key"])
+    return rows
 
 
 # ---------- figures --------------------------------------------------------
@@ -270,15 +330,75 @@ def plot_top_rules(rules: list[dict], out_dir: Path,
     return path
 
 
+def plot_calibration_cross_run(file_rows: list[dict],
+                                 out_dir: Path) -> Path | None:
+    """Calibration trend across multiple rule memory files.
+
+    Each file becomes one x-axis point (sorted by saved_utc / last_updated
+    / file mtime). The figure shows two y-axes:
+      * mean |predicted - observed| (left) — should drop if the agent
+        is learning to calibrate
+      * under / over claim rates (right) — should approach 0.5 / 0.5
+        if the agent is unbiased
+    A descending line of mean_abs_error is the "agent is learning to
+    calibrate" signal; a flat or rising line is "no calibration learning,
+    just noise".
+    """
+    if not HAS_MPL or len(file_rows) < 1:
+        return None
+    fig, ax_left = plt.subplots(figsize=(9, 5))
+    x = list(range(len(file_rows)))
+    labels = [r["label"] for r in file_rows]
+    mean_err = [r["mean_abs_error"] for r in file_rows]
+    ax_left.plot(x, mean_err, "o-", color="#1f77b4", linewidth=2, markersize=8,
+                  label="mean |predicted − observed|")
+    ax_left.fill_between(x, 0, mean_err, color="#1f77b4", alpha=0.1)
+    ax_left.set_ylabel("mean abs error (property Δ)", color="#1f77b4")
+    ax_left.set_ylim(bottom=0)
+    ax_left.tick_params(axis="y", labelcolor="#1f77b4")
+    ax_left.grid(alpha=0.25)
+    ax_right = ax_left.twinx()
+    under = [r["under_claim_rate"] for r in file_rows]
+    over = [r["over_claim_rate"] for r in file_rows]
+    ax_right.plot(x, under, "s--", color="#d62728", linewidth=1.5,
+                   markersize=6, label="under-claim rate")
+    ax_right.plot(x, over, "^--", color="#2ca02c", linewidth=1.5,
+                   markersize=6, label="over-claim rate")
+    ax_right.axhline(0.5, color="#7f7f7f", linestyle=":", linewidth=1,
+                       alpha=0.7)
+    ax_right.set_ylabel("rate (0–1)", color="#7f7f7f")
+    ax_right.set_ylim(0, 1)
+    ax_left.set_xticks(x)
+    ax_left.set_xticklabels(
+        [l if len(l) <= 30 else l[:27] + "…" for l in labels],
+        rotation=30, ha="right", fontsize=8, family="monospace",
+    )
+    ax_left.set_xlabel("rule_memory file (sorted by saved_utc / mtime)")
+    ax_left.set_title(
+        f"Calibration drift across {len(file_rows)} rule memory file(s)"
+    )
+    # Combined legend (left + right)
+    lines1, labels1 = ax_left.get_legend_handles_labels()
+    lines2, labels2 = ax_right.get_legend_handles_labels()
+    ax_left.legend(lines1 + lines2, labels1 + labels2,
+                    loc="upper right", fontsize=9)
+    fig.tight_layout()
+    path = out_dir / "calibration_cross_run.png"
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    return path
+
+
 # ---------- JSON report ----------------------------------------------------
 
 
-def write_json_report(rules, pairs, counts, out_dir: Path) -> Path:
+def write_json_report(rules, pairs, counts, out_dir: Path,
+                      file_rows: list[dict] | None = None) -> Path:
     errors = [abs(p - o) for p, o, *_ in pairs]
     n_under = sum(1 for p, o, *_ in pairs if p > o)
     n_over = len(pairs) - n_under
     report = {
-        "schema_version": 1,
+        "schema_version": 2,
         "n_rules_total": len(rules),
         "n_evidence_observations": len(pairs),
         "category_counts": counts,
@@ -303,6 +423,7 @@ def write_json_report(rules, pairs, counts, out_dir: Path) -> Path:
             key=lambda r: (r["evidence_strength"], r["observations"]),
             reverse=True,
         )[:20],
+        "cross_run": file_rows or [],
     }
     path = out_dir / "memory_visualization.json"
     path.write_text(json.dumps(report, indent=2, ensure_ascii=False),
@@ -319,6 +440,12 @@ def main(argv=None) -> int:
                          help="Directory to write PNG / JSON outputs")
     parser.add_argument("--json-only", action="store_true",
                          help="Skip matplotlib figures (no PNGs)")
+    parser.add_argument("--cross-run", action="store_true",
+                         help="Emit calibration_cross_run.png with per-file "
+                              "drift (mean abs error + over/under rates over "
+                              "time). Always include the cross_run block in "
+                              "memory_visualization.json, even without this "
+                              "flag.")
     parser.add_argument("--memory", action="append", default=[],
                          help="Explicit rule_memory JSON paths (repeatable). "
                               "If not given, the script auto-discovers files "
@@ -343,10 +470,13 @@ def main(argv=None) -> int:
     rules = load_rules(paths)
     counts = category_counts(rules)
     pairs = evidence_pairs(rules)
+    file_rows = file_summaries(paths)
     print(f"[viz] {len(rules)} rules from {len(paths)} files "
-          f"(EVIDENCE observations: {len(pairs)})")
+          f"(EVIDENCE observations: {len(pairs)}, "
+          f"files with EVIDENCE data: {len(file_rows)})")
 
-    report_path = write_json_report(rules, pairs, counts, out_dir)
+    report_path = write_json_report(rules, pairs, counts, out_dir,
+                                      file_rows=file_rows)
     print(f"[viz] wrote {report_path}")
 
     if not args.json_only:
@@ -361,6 +491,13 @@ def main(argv=None) -> int:
             plot_calibration_drift(pairs, out_dir),
             plot_top_rules(rules, out_dir, top_n=args.top_n),
         ]
+        if args.cross_run or len(file_rows) >= 2:
+            # Cross-run plot is only useful with >=2 files; if the user
+            # explicitly asked for it, write the figure even with one file
+            # (a single point is degenerate but the JSON still captures it).
+            path = plot_calibration_cross_run(file_rows, out_dir)
+            if path:
+                outputs.append(path)
         for path in outputs:
             if path:
                 print(f"[viz] wrote {path}")

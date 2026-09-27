@@ -1,9 +1,9 @@
 {
-  "schema_version": 1,
-  "n_rules_total": 1,
+  "schema_version": 2,
+  "n_rules_total": 11,
   "n_evidence_observations": 0,
   "category_counts": {
-    "negative_constraint": 1
+    "negative_constraint": 11
   },
   "calibration": {
     "mean_abs_error": null,
@@ -14,11 +14,82 @@
   },
   "top_rules": [
     {
+      "rule_id": "neg::Cc1cccc(O)c1",
+      "category": "negative_constraint",
+      "evidence_strength": 1.0,
+      "observations": 2,
+      "source_file": "runs\\samples\\rule_memory_1d924259efb0455da59583e085b3097f.json"
+    },
+    {
+      "rule_id": "neg::Oc1cccc(F)c1",
+      "category": "negative_constraint",
+      "evidence_strength": 1.0,
+      "observations": 2,
+      "source_file": "runs\\samples\\rule_memory_1d924259efb0455da59583e085b3097f.json"
+    },
+    {
+      "rule_id": "neg::Oc1ccc(F)cc1",
+      "category": "negative_constraint",
+      "evidence_strength": 1.0,
+      "observations": 1,
+      "source_file": "runs\\samples\\rule_memory_1d924259efb0455da59583e085b3097f.json"
+    },
+    {
+      "rule_id": "neg::Cc1ccc(O)cc1",
+      "category": "negative_constraint",
+      "evidence_strength": 1.0,
+      "observations": 1,
+      "source_file": "runs\\samples\\rule_memory_1d924259efb0455da59583e085b3097f.json"
+    },
+    {
+      "rule_id": "neg::Oc1ccc(O)cc1",
+      "category": "negative_constraint",
+      "evidence_strength": 1.0,
+      "observations": 1,
+      "source_file": "runs\\samples\\rule_memory_1d924259efb0455da59583e085b3097f.json"
+    },
+    {
+      "rule_id": "neg::Oc1ccccc1F",
+      "category": "negative_constraint",
+      "evidence_strength": 1.0,
+      "observations": 1,
+      "source_file": "runs\\samples\\rule_memory_1d924259efb0455da59583e085b3097f.json"
+    },
+    {
+      "rule_id": "neg::Cc1ccccc1O",
+      "category": "negative_constraint",
+      "evidence_strength": 1.0,
+      "observations": 1,
+      "source_file": "runs\\samples\\rule_memory_1d924259efb0455da59583e085b3097f.json"
+    },
+    {
+      "rule_id": "neg::Nc1ccc(O)cc1",
+      "category": "negative_constraint",
+      "evidence_strength": 1.0,
+      "observations": 1,
+      "source_file": "runs\\samples\\rule_memory_1d924259efb0455da59583e085b3097f.json"
+    },
+    {
+      "rule_id": "neg::COc1ccccc1",
+      "category": "negative_constraint",
+      "evidence_strength": 1.0,
+      "observations": 1,
+      "source_file": "runs\\samples\\rule_memory_1d924259efb0455da59583e085b3097f.json"
+    },
+    {
+      "rule_id": "neg::CC(C)Oc1ccccc1",
+      "category": "negative_constraint",
+      "evidence_strength": 1.0,
+      "observations": 1,
+      "source_file": "runs\\samples\\rule_memory_1d924259efb0455da59583e085b3097f.json"
+    },
+    {
       "rule_id": "neg::Cc1ccc(O)cc1",
       "category": "negative_constraint",
       "evidence_strength": 1.0,
       "observations": 1,
       "source_file": "runs\\samples\\rule_memory_diagnostic_2d_dock_20260922.json"
     }
-  ]
+  ],
+  "cross_run": []
 }

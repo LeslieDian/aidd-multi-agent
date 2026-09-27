@@ -15,12 +15,12 @@ opportunity in the AIDD multi-agent system. Issues are categorized by severity
 
 ## Quick Reference
 
-| Severity | Open | Resolved (2026-09-14) |
+| Severity | Open | Resolved |
 |---|---|---|
 | P0 blocker | 0 | 3 (MiniMax 401, failed_ligands cap, WorkingMem persist) |
 | P1 important | 0 | 4 (best_molecules persist, reflection sees molecules, deterministic adoption, embedding similarity) |
 | P2 polish | 0 | 3 (thresholds to config, agent-level metrics, HITL i18n) |
-| P3 future | 4 | 0 |
+| P3 future | 2 | 2 (stereochemistry, memory visualization) — MD validation + ADMET model upgrade remain |
 
 ---
 
@@ -318,6 +318,27 @@ considered. Real drugs are chiral.
 
 **Fix**: Use 3D-aware canonicalization + R/S annotation.
 
+**Status**: ✅ RESOLVED 2026-09-27 (Phase 4.4). `tools/validate_mol.py`
+now returns a `_stereochemistry_block` with six new fields:
+
+  - ``n_stereocenters`` (RDKit ``CalcNumAtomStereoCenters``)
+  - ``n_specified`` — centres whose ``@``/``@@`` parity is encoded
+  - ``n_unspecified_stereocenters`` — stereogenic but unannotated atoms
+  - ``has_double_bond_geometry`` — any ``/``/``\\`` annotation present
+  - ``canonical_with_stereo`` — preserves the annotation through canonicalisation
+  - ``chirality`` ∈ ``{achiral, chiral, racemic_mix, unknown}``
+
+``n_unspecified_stereocenters > 0`` is the actionable signal: the
+molecule is implicitly racemic unless the chemist specifies. Drug
+discovery wants this to be 0 because racemates can have wildly
+different ADMET from a pure enantiomer (thalidomide is the canonical
+example). 9 regression tests in
+``tests/test_validate_mol_stereo.py`` cover (S)-alanine, (R)-alanine,
+unspecified alanine, achiral phenol/ethanol, cis/trans-2-butene, and
+the invalid-SMILES branch.
+
+Commit: ``b9d6bd2``.
+
 ---
 
 ### P3-4. No memory visualization
@@ -327,6 +348,28 @@ considered. Real drugs are chiral.
 
 **Fix**: `scripts/visualize_memory.py` — pie chart of failure
 categories, line plot of best-Vina-over-time, scaffold network graph.
+
+**Status**: ✅ RESOLVED 2026-09-27 (Phase 4.4). New
+``scripts/visualize_memory.py`` is a read-only CLI that scans
+``runs/`` + ``memory/`` for every ``rule_memory*.json`` file and emits:
+
+  - ``memory_categories_pie.png`` — 4-category RuleStore distribution
+  - ``calibration_scatter.png`` — predicted vs observed Δ with ``y=x`` reference
+  - ``calibration_drift.png`` — |error| histogram + over/under balance
+  - ``top_rules_evidence.png`` — top-15 rules ranked by ``evidence_strength``
+  - ``memory_visualization.json`` — machine-readable summary
+
+Auto-discovers files under ``./runs`` and ``./memory``; ``--memory``
+flag overrides; ``--json-only`` skips PNGs. matplotlib missing ->
+graceful JSON-only mode (no crash). 9 regression tests in
+``tests/test_visualize_memory.py`` cover pure functions, CLI
+end-to-end, missing-matplotlib mode, and empty-input exit codes.
+
+Also added ``compute_calibration_metrics(rule_store)`` in
+``agents/agent_metrics.py`` which is now the calibration block of
+``metrics.json`` + ``summary.json`` (see Phase 4.4 chapter 41).
+
+Commit: ``b9d6bd2``.
 
 ---
 
@@ -343,8 +386,9 @@ categories, line plot of best-Vina-over-time, scaffold network graph.
 | P1-4 | Reflection only sees focus text | 2026-09-14 | (Phase 4.3) |
 | P2-1 | Thresholds hard-coded | 2026-09-14 | (Phase 4.3) |
 | P2-2 | HITL prompts mix English/Chinese | 2026-09-14 | (Phase 4.3) |
-| P2-3 | No Agent-level evaluation framework | 2026-09-14 | (Phase 4.3) |
-| Loop Ctrl | `should_stop` only checked pre-round | 2026-09-13 | (loop.py fix) |
+| P2-3 | No Agent-level evaluation framework | 2026-09-14 | (Phase 4.3) || P3-3 | Stereochemistry ignored | 2026-09-27 | `b9d6bd2` (Phase 4.4) |
+| P3-4 | No memory visualization | 2026-09-27 | `b9d6bd2` (Phase 4.4) |
+| Phase4.4 | EVIDENCE calibration + memory viz + stereochemistry | 2026-09-27 | `b9d6bd2` || Loop Ctrl | `should_stop` only checked pre-round | 2026-09-13 | (loop.py fix) |
 | Phase4.1 | Foundation (WorkingMem + FailedSet + LoopCtrl + HITL) | 2026-09-13 | `382e7ae` |
 | Phase4.2 | Self-Reflection Judge | 2026-09-13 | `023b9f2` |
 | Phase C | Vina deep-dive validation | 2026-09-13 | `5774ad9` |
