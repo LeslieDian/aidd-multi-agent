@@ -2472,3 +2472,41 @@ python scripts/visualize_memory.py --json-only
 | 立体化学 round-trip + racemic 标记 | `tests/test_validate_mol_stereo.py` | 9 |
 
 完整文档见 [docs/PROJECT_HANDBOOK.md](docs/PROJECT_HANDBOOK.md) 第 41 章「Phase 4.4 — 校准、可视化、立体化学」。
+
+### 5. Phase 4.4 后续：真实 EVIDENCE 校准数据（2026-09-27）
+
+上一节的可视化管线在最初只有**空数据**——非 dock 的 phenol 诊断永远产生 `inconclusive` / `tradeoff_exceeded`，从不产生 `insufficient_evidence`，因此 EVIDENCE 类别为空、校准图无法生成。本轮打通了真实数据路径：
+
+**真实 `insufficient_evidence` 来源**：dock 诊断运行（`runs/diagnostic_2d_dock_*_20260923`）中，母体用 `dock_enabled=True`（Vina 协议）评估，而 `evaluate_options` 以 `dock_enabled=False` 筛选子代 → `evidence_delta` 报告 `same_protocol=False` → `judge_effect` 对每一行返回 `insufficient_evidence`。这些运行共记录 **497 条**真实预测-观测对，每条都带模型 `property_score` 预测与实测 `observed_delta`——正是校准链所需的输入。
+
+**探针脚本**：`tools/calibration_probe.py` 重放这些真实 receipts（逐字读取，不伪造任何数字），通过真实的 `RuleStore.add_prediction_error` 路径写入 `runs/samples/rule_memory_<probe_id>.json`：
+
+```bash
+python tools/calibration_probe.py
+# 输出 runs/samples/rule_memory_calib_probe_*.json（44 条 EVIDENCE 规则、497 条观测）
+```
+
+**校准结果（真实数据）**：
+
+| 指标 | 值 |
+|---|---|
+| EVIDENCE 规则数 | 44（36 under / 8 over） |
+| 观测总数 | 497 |
+| `mean_abs_error` | 0.0196 |
+| `max_abs_error` | 0.0469 |
+| `under_claim_rate` | 0.865（模型系统性高估改善幅度） |
+
+`under_claim_rate 0.865` 是一个有意义的工程发现：模型几乎总是预测 `property_score +0.01`，而 dock 协议下实测 delta 常常为负——说明**协议不一致时的预测不可信**，校准块把这一系统性偏差量化了。
+
+重新生成带真实数据的图表（`calibration_cross_run.png` 需要 `--cross-run`，或当 ≥2 个规则文件时自动输出）：
+
+```bash
+python scripts/visualize_memory.py --cross-run --output docs/figures
+```
+
+| 图表 | 内容 |
+|---|---|
+| [docs/figures/calibration_scatter.png](docs/figures/calibration_scatter.png) | predicted vs observed 散点 + `y=x` 参考线（497 个真实点） |
+| [docs/figures/calibration_drift.png](docs/figures/calibration_drift.png) | 误差直方图 + over/under 比例 |
+| [docs/figures/calibration_cross_run.png](docs/figures/calibration_cross_run.png) | 跨 run 平均绝对误差 + over/under 比例趋势 |
+| [docs/figures/memory_visualization.json](docs/figures/memory_visualization.json) | 机读汇总（含 `calibration` 与 `cross_run` 块） |

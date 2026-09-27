@@ -27,6 +27,11 @@ from agents.harness.planning import preview
 from agents.harness.molecule_ops import add_seed_candidates, normalize_constraints, evidence_delta
 from agents.harness.evidence import judge_effect
 from tools.provenance import file_hash, digest, evaluation_protocol, versions
+# 2026-09-27: Phase 4.4 calibration. Inject the RuleStore from the agent
+# policy so agent arm's metrics.json gets a calibration block derived from
+# the EVIDENCE rules written by update_memory_from_events. Without this,
+# the calibration pipeline writes rules to disk but never reports them.
+from agents.agent_metrics import compute_agent_metrics
 
 
 def write(path, value):
@@ -367,7 +372,15 @@ class BaselinePolicy:
         raise NotImplementedError("BaselinePolicy is metadata-only; use run_baseline()")
 
 
-def metrics(state, arm):
+def metrics(state, arm, rule_store=None):
+    """Build the arm's metrics.json dict.
+
+    Phase 4.4 (2026-09-27): when ``rule_store`` is provided (the agent
+    arm only), the returned dict also carries a ``calibration`` block
+    summarising the EVIDENCE rules the agent wrote during the run.
+    Without ``rule_store`` (rule / greedy / random arms) the block is
+    the zero-filled default — same convention as loop.py.
+    """
     successes, total_new, first_hit = [], 0, None
     for event in state.events:
         if event["type"] == "tool_result" and event["action"]["tool"] == "evaluate_options":
@@ -424,7 +437,7 @@ def metrics(state, arm):
         for key, value in (usage or {}).items():
             if isinstance(value, (int, float)):
                 token_totals[key] = token_totals.get(key, 0) + value
-    return {"arm": arm, "status": state.status, "reason": state.reason, "final_outcome": final_outcome,
+    result = {"arm": arm, "status": state.status, "reason": state.reason, "final_outcome": final_outcome,
         "termination_outcome": termination_outcome, "stop_evidence": stop_evidence,
         "stop_evidence_valid": bool(stop_evidence) or final_outcome is not None,
         "new_structure_evaluations": len(state.option_screenings), "total_charged_evaluations": state.evaluations_used,
@@ -456,7 +469,33 @@ def metrics(state, arm):
         "steps": state.steps_used,
         "actual_edits": sum(c.get("candidate_role") == "deterministic_edit" for c in state.candidates.values()),
         "screened_products": successes,
-        "intent_check": "Exact catalogue parameters enforced; free-text chemical claims require separate manual audit"}
+        "intent_check": "Exact catalogue parameters enforced; free-text chemical claims require separate manual audit",
+    }
+    # 2026-09-27 (Phase 4.4): attach the calibration block. We do this by
+    # calling compute_agent_metrics with an empty summary list so the
+    # existing curves/aggregates shape is preserved (we don't want to
+    # duplicate that work in this script) — only the calibration block is
+    # taken from the result.
+    if rule_store is not None:
+        cal = compute_agent_metrics(
+            summary_history=[],
+            judgments=[],
+            loop_state={},
+            rule_store=rule_store,
+        )
+        result["calibration"] = cal["calibration"]
+        result["calibration_rationale"] = cal["calibration_rationale"]
+    else:
+        # zero-filled block so downstream readers don't need a None check
+        cal = compute_agent_metrics(
+            summary_history=[],
+            judgments=[],
+            loop_state={},
+            rule_store=None,
+        )
+        result["calibration"] = cal["calibration"]
+        result["calibration_rationale"] = cal["calibration_rationale"]
+    return result
 
 
 def run_arm(output, arm):
@@ -491,6 +530,14 @@ def run_arm(output, arm):
             state = drive_arm(store, policy, registry, arm)
         finally:
             policy.close()
+        # Phase 4.4 (2026-09-27): hand the policy's RuleStore to metrics()
+        # so the calibration block (EVIDENCE rules) makes it into
+        # metrics.json. The store is closed but its in-memory rules dict
+        # is still readable; on disk it has already been persisted via
+        # ``runs/samples/rule_memory_<task_id>.json``.
+        result = metrics(state, arm, rule_store=policy.rule_store)
+        write(output / arm / "metrics.json", result)
+        return result
     elif arm == "rule":
         state = drive_arm(store, RulePolicy(manifest, json.loads((output / "rule_order.json").read_text())),
                           registry, arm)

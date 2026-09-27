@@ -1,16 +1,17 @@
 {
   "schema_version": 2,
-  "n_rules_total": 11,
-  "n_evidence_observations": 0,
+  "n_rules_total": 55,
+  "n_evidence_observations": 497,
   "category_counts": {
-    "negative_constraint": 11
+    "negative_constraint": 11,
+    "evidence_strength": 44
   },
   "calibration": {
-    "mean_abs_error": null,
-    "max_abs_error": null,
-    "under_claim_count": 0,
-    "over_claim_count": 0,
-    "under_claim_rate": null
+    "mean_abs_error": 0.0196,
+    "max_abs_error": 0.0469,
+    "under_claim_count": 430,
+    "over_claim_count": 67,
+    "under_claim_rate": 0.865
   },
   "top_rules": [
     {
@@ -26,6 +27,13 @@
       "evidence_strength": 1.0,
       "observations": 2,
       "source_file": "runs\\samples\\rule_memory_1d924259efb0455da59583e085b3097f.json"
+    },
+    {
+      "rule_id": "pred::Oc1ccc(F)cc1::OCCc1cc(O)ccc1F::under",
+      "category": "evidence_strength",
+      "evidence_strength": 1.0,
+      "observations": 2,
+      "source_file": "runs\\samples\\rule_memory_calib_probe_20260927_114512.json"
     },
     {
       "rule_id": "neg::Oc1ccc(F)cc1",
@@ -84,12 +92,80 @@
       "source_file": "runs\\samples\\rule_memory_1d924259efb0455da59583e085b3097f.json"
     },
     {
+      "rule_id": "pred::Oc1ccccc1O::COc1ccccc1O::over",
+      "category": "evidence_strength",
+      "evidence_strength": 1.0,
+      "observations": 1,
+      "source_file": "runs\\samples\\rule_memory_calib_probe_20260927_114512.json"
+    },
+    {
+      "rule_id": "pred::Oc1ccccc1O::OCCOc1ccccc1O::over",
+      "category": "evidence_strength",
+      "evidence_strength": 1.0,
+      "observations": 1,
+      "source_file": "runs\\samples\\rule_memory_calib_probe_20260927_114512.json"
+    },
+    {
+      "rule_id": "pred::Oc1ccccc1O::CCCOc1ccccc1O::over",
+      "category": "evidence_strength",
+      "evidence_strength": 1.0,
+      "observations": 1,
+      "source_file": "runs\\samples\\rule_memory_calib_probe_20260927_114512.json"
+    },
+    {
+      "rule_id": "pred::Oc1ccccc1O::NC(=O)Oc1ccccc1O::under",
+      "category": "evidence_strength",
+      "evidence_strength": 1.0,
+      "observations": 1,
+      "source_file": "runs\\samples\\rule_memory_calib_probe_20260927_114512.json"
+    },
+    {
       "rule_id": "neg::Cc1ccc(O)cc1",
       "category": "negative_constraint",
       "evidence_strength": 1.0,
       "observations": 1,
       "source_file": "runs\\samples\\rule_memory_diagnostic_2d_dock_20260922.json"
+    },
+    {
+      "rule_id": "pred::Oc1ccc(F)cc1::Cc1cc(F)ccc1O::under",
+      "category": "evidence_strength",
+      "evidence_strength": 0.9466465215071134,
+      "observations": 38,
+      "source_file": "runs\\samples\\rule_memory_calib_probe_20260927_114512.json"
+    },
+    {
+      "rule_id": "pred::Oc1ccc(F)cc1::Oc1ccc(F)cc1Cl::under",
+      "category": "evidence_strength",
+      "evidence_strength": 0.9466465215071134,
+      "observations": 38,
+      "source_file": "runs\\samples\\rule_memory_calib_probe_20260927_114512.json"
+    },
+    {
+      "rule_id": "pred::Oc1ccc(F)cc1::Cc1cc(O)ccc1F::under",
+      "category": "evidence_strength",
+      "evidence_strength": 0.9098230784480892,
+      "observations": 22,
+      "source_file": "runs\\samples\\rule_memory_calib_probe_20260927_114512.json"
+    },
+    {
+      "rule_id": "pred::Oc1ccc(F)cc1::OCCOc1ccc(F)cc1::over",
+      "category": "evidence_strength",
+      "evidence_strength": 0.9098230784480892,
+      "observations": 22,
+      "source_file": "runs\\samples\\rule_memory_calib_probe_20260927_114512.json"
     }
   ],
-  "cross_run": []
+  "cross_run": [
+    {
+      "path": "runs\\samples\\rule_memory_calib_probe_20260927_114512.json",
+      "label": "rule_memory_calib_probe_20260927_114512",
+      "n_pairs": 497,
+      "n_rules": 44,
+      "mean_abs_error": 0.0196,
+      "max_abs_error": 0.0469,
+      "under_claim_rate": 0.865,
+      "over_claim_rate": 0.135,
+      "sort_key": "2026-09-27T11:45:12.615620+00:00"
+    }
+  ]
 }
