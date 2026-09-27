@@ -2389,3 +2389,86 @@ approved = efficacy_supported AND stable_improvement AND safety_noninferior
 ## 许可
 
 MIT © 2026 LeslieDian
+
+---
+
+## 2026-09-27：Phase 4.4 — 记忆校准、可视化、立体化学
+
+本轮把「agent 在做什么」从审计日志（`request_evidence.jsonl`）翻译成**可被人读、可被图表对比**的结果。三件事独立、可单元测试、可视化。
+
+### 1. 记忆校准（prediction_error → EVIDENCE 规则）
+
+`agents/harness/runtime.py` 在 `screening` 产生 `outcome=insufficient_evidence` 时，比较模型的 `predicted.min_change` 与实测 `observed_delta`，写入 `RuleStore` 的第 4 类——**EVIDENCE**（与 NEGATIVE/POSITIVE/CONTEXT 平级）。
+
+```text
+pred::Oc1ccccc1::COc1ccccc1::under
+  predicted +0.0200  observed +0.0050  (calibration error 0.0150, observations=3)
+```
+
+`agents/agent_metrics.py::compute_calibration_metrics(rule_store)` 给出：
+
+| 指标 | 含义 |
+|---|---|
+| `mean_abs_error` | 所有 EVIDENCE 观测的 `\|predicted - observed\|` 平均 |
+| `median_abs_error` / `max_abs_error` | 中位数 / 最大绝对误差 |
+| `under_claim_rate` | `predicted > observed` 的比例（模型系统性高估效应） |
+| `over_claim_rate` | `predicted ≤ observed` 的比例 |
+| `worst_pair` | 误差最大的一对 (parent_smiles, child_smiles) |
+
+每条规则都保留**完整观测日志** (`pattern.observations_log`)，跨 run 累积——同一 parent/child 对在多次实验中累积误差历史。
+
+修复要点：`agents/harness/runtime.py` 中 `add_prediction_error` 抛错时**不再静默**，而是写入 `rule_store_error` 审计事件 + stderr（之前是裸 `except Exception: pass`，校准链断裂无人知晓）。
+
+### 2. 内存可视化（P3-4）
+
+`scripts/visualize_memory.py` 扫描 `runs/` 和 `memory/` 下所有 `rule_memory*.json`，输出到 `docs/figures/`：
+
+- `memory_categories_pie.png`：4 类规则占比（红=NEGATIVE / 绿=POSITIVE / 紫=CONTEXT / 蓝=EVIDENCE）
+- `calibration_scatter.png`：predicted vs observed 散点 + `y=x` 参考线
+- `calibration_drift.png`：误差直方图 + over/under 比例条
+- `top_rules_evidence.png`：按 `evidence_strength` 排序的 top-15 规则
+- `memory_visualization.json`：机读汇总（`n_rules_total`、`calibration.mean_abs_error`、top 20 规则表）
+
+```bash
+python scripts/visualize_memory.py --output docs/figures
+# 或纯 JSON：
+python scripts/visualize_memory.py --json-only
+```
+
+缺失 matplotlib 时自动降级——只输出 JSON。
+
+### 3. 立体化学（P3-3 修复）
+
+之前所有 SMILES 都是 2D 平面式，遇到 `(S)-alanine` 这类带 `@`/`@@` 的手性中心时**会被静默丢失**。`tools/validate_mol.py` 现在输出：
+
+```json
+{
+  "valid": true,
+  "smiles": "C[C@H](N)C(=O)O",
+  "n_stereocenters": 1,
+  "n_specified": 1,
+  "n_unspecified_stereocenters": 0,
+  "has_double_bond_geometry": false,
+  "canonical_with_stereo": "C[C@H](N)C(=O)O",
+  "chirality": "chiral"
+}
+```
+
+`n_unspecified_stereocenters > 0` 表示生成器**忘记标注手性**——下游可以拒绝这种产物（外消旋混合物 ADMET 与纯对映体差异巨大）。
+
+### 4. 完整测试套件
+
+```
+369 passed, 1 skipped
+```
+
+新增（基线 336 + 33 新增）：
+
+| 测试 | 文件 | 数量 |
+|---|---|---|
+| Runtime 校准端到端（含异常审计） | `tests/test_runtime_calibration.py` | 7 |
+| Calibration metrics 聚合 | `tests/test_calibration_metrics.py` | 8 |
+| 内存可视化脚本（CLI + JSON + auto-discovery） | `tests/test_visualize_memory.py` | 9 |
+| 立体化学 round-trip + racemic 标记 | `tests/test_validate_mol_stereo.py` | 9 |
+
+完整文档见 [docs/PROJECT_HANDBOOK.md](docs/PROJECT_HANDBOOK.md) 第 41 章「Phase 4.4 — 校准、可视化、立体化学」。

@@ -41,6 +41,7 @@ from agents.failed_set import FailedLigandSet
 from agents.working_memory import WorkingMemory
 from agents.hitl import HITLCheckpoint
 # Phase 4.3 (P2-3): agent-level metrics aggregation
+# Phase 4.4 (2026-09-27): calibration block from 4-category RuleStore
 from agents.agent_metrics import compute_agent_metrics
 
 
@@ -757,11 +758,26 @@ def run_loop(
     }
 
     # ----- Phase 4.3 (P2-3): aggregate agent-level metrics -----
+    # ----- Phase 4.4 (2026-09-27): also load the 4-category RuleStore so
+    # the calibration block (EVIDENCE rules from prediction_error tracking)
+    # is included. The legacy loop.py path does not itself emit screening
+    # outcomes, so calibration will be empty unless the harness has already
+    # populated memory_base / "rule_memory.json" for this run.
     judgments = [r.get("judgment", {}) for r in rounds_log]
+    metrics_rule_store = None
+    try:
+        from agents.rule_memory import RuleStore
+        rule_store_path = memory_base / "rule_memory.json"
+        if rule_store_path.exists():
+            metrics_rule_store = RuleStore(persist_path=rule_store_path,
+                                            target=target["name"])
+    except Exception:
+        metrics_rule_store = None
     metrics = compute_agent_metrics(
         summary_history=summary_history,
         judgments=judgments,
         loop_state=overall["loop_state"],
+        rule_store=metrics_rule_store,
     )
     overall["agent_metrics"] = {
         "best_vina_first": metrics["aggregates"]["best_vina_first"],
@@ -774,6 +790,8 @@ def run_loop(
         "run_shows_improvement": metrics["verdict"]["run_shows_improvement"],
         "agent_is_learning": metrics["verdict"]["agent_is_learning"],
         "verdict_rationale": metrics["verdict"]["rationale"],
+        # Phase 4.4 (2026-09-27): calibration block, lifted from metrics.json.
+        "calibration": metrics["calibration"],
         "see_also": "metrics.json",
     }
     (out_path / "summary.json").write_text(

@@ -127,21 +127,38 @@ class LLMPolicy:
                 # Build option-index -> option-edit map (for supported rows).
                 opts_by_index = {o.get("option_index"): o for o in options
                                   if o.get("option_index") is not None}
+                # Collect predictions once per option so we can compare to
+                # observed for the new prediction_error tracker (EVIDENCE
+                # category, NOT positive/negative).
+                opts_predictions = {}
+                for o in options:
+                    oid = o.get("option_index")
+                    if oid is None:
+                        continue
+                    # predictions live on the option's `predictions` list;
+                    # pick the property_score prediction's min_change.
+                    preds = o.get("predictions", []) or []
+                    for p in preds:
+                        if p.get("metric") == "property_score":
+                            try:
+                                opts_predictions[oid] = float(p.get("min_change") or 0.0)
+                            except (TypeError, ValueError):
+                                pass
+                            break
+
                 for row in rows:
                     opt_index = row.get("option_index")
                     effect = row.get("effect", {})
                     outcome = effect.get("outcome", "")
-                    if outcome not in ("supported", "tradeoff_exceeded", "inconclusive"):
-                        continue
                     # The smiles comes from the option's precheck or the row itself.
                     opt = opts_by_index.get(opt_index, {})
                     smi = (opt.get("precheck", {}).get("product_smiles")
                            or row.get("smiles"))
-                    if not smi:
-                        continue
                     delta = effect.get("observed_delta")
                     scaffold = parent.get("scaffold", "?")
                     if outcome == "supported":
+                        if not smi:
+                            continue
                         edit = opt.get("edit", {})
                         self.rule_store.add_positive_transformation(
                             edit=edit,
@@ -152,11 +169,62 @@ class LLMPolicy:
                             source_round=state.total_rounds if hasattr(state, "total_rounds") else None,
                         )
                     elif outcome in ("tradeoff_exceeded", "inconclusive"):
+                        if not smi:
+                            continue
                         self.rule_store.add_negative(
                             smi,
                             reason=f"screening_{outcome}",
                             context_scaffolds=[scaffold],
                         )
+                    elif outcome == "insufficient_evidence":
+                        # NEW (2026-09-23): track prediction-vs-observed mismatch.
+                        # The model predicted min_change but the result fell
+                        # short; record as EVIDENCE rule keyed by
+                        # (parent, child) so accumulated runs build
+                        # calibration profiles.
+                        if not smi or delta is None:
+                            continue
+                        predicted = opts_predictions.get(opt_index)
+                        if predicted is None:
+                            continue
+                        try:
+                            self.rule_store.add_prediction_error(
+                                parent_smiles=parent_smiles,
+                                child_smiles=smi,
+                                predicted_delta=predicted,
+                                observed_delta=float(delta),
+                                context_scaffolds=[scaffold],
+                            )
+                        except Exception as exc:
+                            # 2026-09-27: never silently swallow exceptions.
+                            # Best-effort: emit a redaction-safe audit event
+                            # so the calibration-storage failure is visible in
+                            # `model_request` / task events, AND fall back to
+                            # stderr so unit tests / scripts that run without
+                            # an evidence sink still see it.
+                            try:
+                                from agents.redaction import sanitize_exception
+                                msg = sanitize_exception(exc, self._secrets)
+                            except Exception:
+                                msg = "<unreadable>"
+                            print(
+                                f"[WARN] prediction_error storage failed for "
+                                f"{parent_smiles}->{smi}: {msg}",
+                                flush=True,
+                            )
+                            sink = getattr(self, "evidence", None)
+                            if callable(sink):
+                                try:
+                                    sink({
+                                        "type": "rule_store_error",
+                                        "rule_category": "evidence_strength",
+                                        "operation": "add_prediction_error",
+                                        "parent_smiles": parent_smiles,
+                                        "child_smiles": smi,
+                                        "exception": msg,
+                                    })
+                                except Exception:
+                                    pass
             elif tool == "compare_parent_child":
                 # A successful compare -> negative rule for child (if it lost) or
                 # positive reinforcement for the underlying edit.

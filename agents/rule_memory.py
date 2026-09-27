@@ -138,6 +138,75 @@ class RuleStore:
             successes=1,
         ))
 
+    def add_prediction_error(self, *, parent_smiles: str, child_smiles: str,
+                                predicted_delta: float, observed_delta: float,
+                                context_scaffolds: Optional[list[str]] = None) -> str:
+        """Record a case where the model's prediction diverged from the observed.
+
+        Used by the agent harness when screening returns outcome=
+        "insufficient_evidence" (predicted >= min_effect but observed < min_effect,
+        or vice versa). Distinct from the supported / tradeoff_exceeded
+        rules: this captures the agent's calibration error rate rather than
+        hard failures. The rule_id is keyed by (parent, child, direction) so
+        repeated runs accumulate evidence on the same parent-child pair.
+
+        The pattern stores both the latest (predicted, observed) and a full
+        ``observations_log`` list of every (predicted, observed, utc) tuple
+        so ``compute_calibration_metrics`` can compute accurate mean / max
+        abs error across all observations, not just the latest one.
+        """
+        # Calibration: |observed - predicted|
+        calibration_error = abs(predicted_delta - observed_delta)
+        # Direction: under-claim (predicted > observed) vs over-claim
+        direction = "under" if predicted_delta > observed_delta else "over"
+        rid = f"pred::{parent_smiles}::{child_smiles}::{direction}"
+        now_iso = datetime.now(timezone.utc).isoformat()
+        # Note: we do NOT pre-set observations; RuleStore.add() will handle
+        # accumulation on duplicate rule_ids (path 1) and create path 2.
+        rule = Rule(
+            rule_id=rid,
+            category=EVIDENCE,
+            description=(f"prediction error: predicted {predicted_delta:+.4f} "
+                        f"observed {observed_delta:+.4f} (calibration "
+                        f"error {calibration_error:.4f}, direction={direction})"),
+            pattern={
+                "parent_smiles": parent_smiles, "child_smiles": child_smiles,
+                "direction": direction,
+                "predicted_delta": float(predicted_delta),
+                "observed_delta": float(observed_delta),
+                "observations_log": [(float(predicted_delta), float(observed_delta), now_iso)],
+            },
+            applicable_context=context_scaffolds or [],
+            evidence_strength=min(1.0, calibration_error / 0.05),  # saturate at 0.05 gap
+            source_round=None,
+            source_smiles=child_smiles,
+            parent_smiles=parent_smiles,
+        )
+        # add() handles both create and accumulate; if it created the rule,
+        # bump observations by 1 (since add() does NOT increment on creation).
+        if rid not in self.rules:
+            self.rules[rid] = rule
+            self._save()
+            self.rules[rid].update_evidence(success=True)
+            return rid
+        # Already in store: merge the new observation into the log so we
+        # don't lose history, then let add() run its accumulate path.
+        existing = self.rules[rid]
+        log = existing.pattern.setdefault("observations_log", [])
+        log.append((float(predicted_delta), float(observed_delta), now_iso))
+        # Keep the latest values in the top-level fields for fast read.
+        existing.pattern["predicted_delta"] = float(predicted_delta)
+        existing.pattern["observed_delta"] = float(observed_delta)
+        # Update the description to reflect the latest entry (description is
+        # regenerated from scratch; the full history is in observations_log).
+        existing.description = (
+            f"prediction error: predicted {predicted_delta:+.4f} "
+            f"observed {observed_delta:+.4f} (calibration "
+            f"error {calibration_error:.4f}, direction={direction}, "
+            f"observations={existing.observations})"
+        )
+        return self.add(rule)
+
     def add_positive_transformation(self, *, edit: dict, parent_smiles: str,
                                      child_smiles: str, property_delta: float,
                                      context_scaffolds: Optional[list[str]] = None,

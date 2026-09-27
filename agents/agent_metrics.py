@@ -1,4 +1,5 @@
-"""agents/agent_metrics.py - Loop-level metrics for Phase 4.3 (P2-3).
+"""agents/agent_metrics.py - Loop-level metrics for Phase 4.3 (P2-3) and
+4-category calibration (Phase 4.4, 2026-09-27).
 
 Aggregates per-round `summary` + `judgment` records into a single
 metrics block that describes one run's trend.  A single run cannot establish
@@ -23,10 +24,14 @@ Aggregates (scalar):
 - rounds_without_improvement
 - run_shows_improvement: final best Vina improved by at least 0.1 kcal/mol
 - agent_is_learning: always null here; reserved for controlled experiments
+
+Calibration block (Phase 4.4):
+- n_evidence_rules, mean_abs_error, under_claim_rate, over_claim_rate,
+  worst_pair.{parent_smiles, child_smiles, abs_error}
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 
 # Descriptive threshold for one run.  It is not a causal learning threshold.
@@ -39,10 +44,107 @@ def _safe(values: list, idx: int, default=None):
     return values[idx]
 
 
+# ----------------------------------------------------------------------
+# Phase 4.4 (2026-09-27): calibration metrics from a RuleStore.
+# The 4-category RuleStore accumulates evidence rules from
+# ``add_prediction_error`` (parent, child, predicted_delta, observed_delta,
+# direction). We summarise those here so the run-level metrics.json
+# surfaces model calibration, not just candidate scores.
+# ----------------------------------------------------------------------
+
+
+def compute_calibration_metrics(rule_store: Optional[Any]) -> dict[str, Any]:
+    """Summarise the EVIDENCE (calibration) rules in `rule_store`.
+
+    Returns a JSON-safe dict. Returns a zero-filled block when
+    `rule_store` is None or has no EVIDENCE rules, so downstream readers
+    don't have to special-case missing calibration.
+    """
+    empty = {
+        "n_evidence_rules": 0,
+        "n_observations": 0,
+        "mean_abs_error": None,
+        "median_abs_error": None,
+        "max_abs_error": None,
+        "under_claim_rate": None,
+        "over_claim_rate": None,
+        "by_direction": {"under": 0, "over": 0},
+        "worst_pair": None,
+    }
+    if rule_store is None:
+        return empty
+    # Lazy import to avoid a hard cycle between agent_metrics and rule_memory.
+    from agents.rule_memory import EVIDENCE
+    rules = rule_store.by_category(EVIDENCE)
+    if not rules:
+        return empty
+    errors: list[float] = []
+    directions = {"under": 0, "over": 0}
+    worst = None
+    for r in rules:
+        # Prefer observations_log (full history) over the top-level
+        # predicted_delta / observed_delta, so accumulated rules report
+        # every past mismatch, not just the latest one.
+        log = r.pattern.get("observations_log") or []
+        pairs: list[tuple[float, float]] = []
+        if log:
+            for entry in log:
+                if isinstance(entry, (list, tuple)) and len(entry) >= 2:
+                    try:
+                        pairs.append((float(entry[0]), float(entry[1])))
+                    except (TypeError, ValueError):
+                        continue
+        if not pairs:
+            # Old rules persisted before observations_log existed.
+            try:
+                pairs.append((float(r.pattern.get("predicted_delta", 0.0)),
+                              float(r.pattern.get("observed_delta", 0.0))))
+            except (TypeError, ValueError):
+                continue
+        for predicted, observed in pairs:
+            err = abs(predicted - observed)
+            errors.append(err)
+            d = r.pattern.get("direction")
+            if d in directions:
+                directions[d] += 1
+            if worst is None or err > worst["abs_error"]:
+                worst = {
+                    "parent_smiles": r.pattern.get("parent_smiles"),
+                    "child_smiles": r.pattern.get("child_smiles"),
+                    "predicted_delta": predicted,
+                    "observed_delta": observed,
+                    "abs_error": round(err, 4),
+                    "direction": d,
+                    "observations": r.observations,
+                }
+    if not errors:
+        return {**empty, "n_evidence_rules": len(rules)}
+    errors_sorted = sorted(errors)
+    n = len(errors_sorted)
+    median = errors_sorted[n // 2] if n % 2 else (
+        errors_sorted[n // 2 - 1] + errors_sorted[n // 2]
+    ) / 2
+    n_under = directions["under"]
+    n_over = directions["over"]
+    n_dir = max(1, n_under + n_over)
+    return {
+        "n_evidence_rules": len(rules),
+        "n_observations": sum(r.observations for r in rules),
+        "mean_abs_error": round(sum(errors) / n, 4),
+        "median_abs_error": round(median, 4),
+        "max_abs_error": round(max(errors), 4),
+        "under_claim_rate": round(n_under / n_dir, 3),
+        "over_claim_rate": round(n_over / n_dir, 3),
+        "by_direction": directions,
+        "worst_pair": worst,
+    }
+
+
 def compute_agent_metrics(
     summary_history: list[dict],
     judgments: list[dict] | None = None,
     loop_state: dict | None = None,
+    rule_store: Optional[Any] = None,
 ) -> dict[str, Any]:
     """Build the metrics block from per-round summary + judgment records.
 
@@ -54,10 +156,13 @@ def compute_agent_metrics(
             may have empty reflection; that's fine.
         loop_state: optional LoopState snapshot, used for
             `rounds_without_improvement`.
+        rule_store: optional RuleStore (Phase 4.4). When present, an
+            additional `calibration` block summarising EVIDENCE rules
+            (predicted vs observed deltas) is included.
 
     Returns:
-        dict with curves + aggregates + verdict. JSON-safe (no custom
-        objects).
+        dict with curves + aggregates + verdict + calibration. JSON-safe
+        (no custom objects).
     """
     judgments = judgments or []
     loop_state = loop_state or {}
@@ -132,8 +237,10 @@ def compute_agent_metrics(
 
     run_shows_improvement = _run_trend(best_vina_curve, best_vina_delta)
 
+    calibration = compute_calibration_metrics(rule_store)
+
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "rounds_total": n,
         "rounds_without_improvement": loop_state.get(
             "rounds_without_vina_improvement"
@@ -169,6 +276,15 @@ def compute_agent_metrics(
                 "budget-matched control experiments"
             ),
         },
+        "calibration": calibration,
+        "calibration_rationale": (
+            "Phase 4.4 EVIDENCE rule summary: |predicted_delta - observed_delta| "
+            "for each insufficient_evidence screening row. under_claim_rate > 0.5 "
+            "means the model systematically overstates the property gain of "
+            "proposed edits; under_claim_rate < 0.5 means it understates them. "
+            "Empty when no RuleStore is supplied or the run produced no "
+            "insufficient_evidence rows."
+        ),
     }
 
 
