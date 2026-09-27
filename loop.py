@@ -783,11 +783,17 @@ def run_loop(
         "best_vina_first": metrics["aggregates"]["best_vina_first"],
         "best_vina_last": metrics["aggregates"]["best_vina_last"],
         "best_vina_delta": metrics["aggregates"]["best_vina_delta"],
+        "best_safe_vina_first": metrics["aggregates"].get("best_safe_vina_first"),
+        "best_safe_vina_last": metrics["aggregates"].get("best_safe_vina_last"),
+        "best_safe_vina_delta": metrics["aggregates"].get("best_safe_vina_delta"),
+        "rounds_without_safe_improvement": metrics["aggregates"].get(
+            "rounds_without_safe_improvement"),
         "valid_rate_improvement": metrics["aggregates"]["valid_rate_improvement"],
         "adoption_rate_avg_llm": metrics["aggregates"]["adoption_rate_avg_llm"],
         "adoption_rate_avg_det": metrics["aggregates"]["adoption_rate_avg_det"],
         "adoption_llm_vs_det_drift_avg": metrics["aggregates"]["adoption_llm_vs_det_drift_avg"],
         "run_shows_improvement": metrics["verdict"]["run_shows_improvement"],
+        "run_safe_shows_improvement": metrics["verdict"].get("run_safe_shows_improvement"),
         "agent_is_learning": metrics["verdict"]["agent_is_learning"],
         "verdict_rationale": metrics["verdict"]["rationale"],
         # Phase 4.4 (2026-09-27): calibration block, lifted from metrics.json.

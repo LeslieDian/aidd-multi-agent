@@ -143,6 +143,11 @@ def estimate_admet(smiles: str) -> dict:
         # reported so callers can compare. The calibrated version is what the
         # 4-category memory + dock-aware diagnostic read.
         **calibrated_herg_block(smiles),
+        # 2026-09-27 (P4): calibrated multi-endpoint ADMET block.
+        # Extends the calibrated-hERG pattern to absorption / bioavailability /
+        # BBB / CYP inhibition / solubility / metabolic stability. Same
+        # transparency contract: named features + dominant contributors.
+        **calibrated_admet_block(smiles),
     }
 
 
@@ -165,6 +170,26 @@ def calibrated_herg_block(smiles: str) -> dict:
     except Exception as exc:  # pragma: no cover - integration shim
         return {"calibrated_herg_score": None, "calibrated_herg_features": None,
                 "calibrated_herg_error": f"{type(exc).__name__}: {exc}"}
+
+
+def calibrated_admet_block(smiles: str) -> dict:
+    """Inline integration of tools.calibrated_admet.calibrated_admet_scores.
+
+    Returns only the keys that should land in the admet payload (stable
+    surface). Endpoint scores are nested under `calibrated_admet_endpoints`.
+    """
+    try:
+        from tools.calibrated_admet import calibrated_admet_scores
+        r = calibrated_admet_scores(smiles)
+        if not r.get("valid"):
+            return {"calibrated_admet_summary": None, "calibrated_admet_endpoints": None}
+        return {
+            "calibrated_admet_summary": r.get("admet_calibrated_summary"),
+            "calibrated_admet_endpoints": r.get("endpoints"),
+        }
+    except Exception as exc:  # pragma: no cover - integration shim
+        return {"calibrated_admet_summary": None, "calibrated_admet_endpoints": None,
+                "calibrated_admet_error": f"{type(exc).__name__}: {exc}"}
 
 
 def admet_batch(smiles_list: Iterable[str]) -> list[dict]:

@@ -9,6 +9,7 @@ budget-matched control experiments.
 Curves (per round):
 - valid_rate_curve:      list[float], fraction of valid candidates
 - best_vina_curve:       list[float | None], best Vina in each round
+- best_safe_vina_curve:  list[float | None], best safety-gate-passing Vina
 - scaffold_diversity_curve: list[int], n_unique_scaffolds
 - avg_admet_curve:       list[float | None]
 - adoption_rate_curve_llm:  list[float | None], Judge LLM self-report
@@ -17,12 +18,15 @@ Curves (per round):
 Aggregates (scalar):
 - valid_rate_first, valid_rate_last, valid_rate_improvement
 - best_vina_first, best_vina_last, best_vina_delta  (negative = improvement)
+- best_safe_vina_first, best_safe_vina_last, best_safe_vina_delta
+  (safety-gated twin; first-to-last on the safe objective)
 - adoption_rate_avg_llm, adoption_rate_avg_det
 - adoption_llm_vs_det_drift_avg
 - scaffold_diversity_first, scaffold_diversity_last
 - rounds_total
 - rounds_without_improvement
 - run_shows_improvement: final best Vina improved by at least 0.1 kcal/mol
+- run_safe_shows_improvement: same on the safety-gated best_safe_vina curve
 - agent_is_learning: always null here; reserved for controlled experiments
 
 Calibration block (Phase 4.4):
@@ -151,11 +155,11 @@ def compute_agent_metrics(
     Args:
         summary_history: list of `summarize_round()` outputs (one per round).
             Each dict has n_total, n_valid, valid_ratio, n_unique_scaffolds,
-            avg_admet, best_vina, ...
+            avg_admet, best_vina, best_safe_vina, ...
         judgments: list of `judge_round()` outputs (one per round). Round 0
             may have empty reflection; that's fine.
         loop_state: optional LoopState snapshot, used for
-            `rounds_without_improvement`.
+            `rounds_without_improvement` / `rounds_without_safe_vina_improvement`.
         rule_store: optional RuleStore (Phase 4.4). When present, an
             additional `calibration` block summarising EVIDENCE rules
             (predicted vs observed deltas) is included.
@@ -170,6 +174,7 @@ def compute_agent_metrics(
     n = len(summary_history)
     valid_rate_curve: list[float] = []
     best_vina_curve: list[Any] = []
+    best_safe_vina_curve: list[Any] = []
     scaffold_curve: list[int] = []
     avg_admet_curve: list[Any] = []
     adoption_curve_llm: list[Any] = []
@@ -179,6 +184,12 @@ def compute_agent_metrics(
     for i, s in enumerate(summary_history):
         valid_rate_curve.append(float(s.get("valid_ratio") or 0.0))
         best_vina_curve.append(s.get("best_vina"))
+        # Phase 4.4 follow-up (2026-09-27): safety-gated twin of best_vina.
+        # summarize_round already emits best_safe_vina per round; surface it
+        # as a first-class curve so "first-to-last" improvement can also be
+        # read on the safe-gated objective (REVIEW_MINIMAX_ADVICE_20260917
+        # item 1: "让'首末轮变化'也能按安全口径给出").
+        best_safe_vina_curve.append(s.get("best_safe_vina"))
         scaffold_curve.append(int(s.get("n_unique_scaffolds") or 0))
         avg_admet_curve.append(s.get("avg_admet"))
         if i < len(judgments):
@@ -219,6 +230,18 @@ def compute_agent_metrics(
         else None
     )
 
+    # Phase 4.4 follow-up (2026-09-27): safety-gated twin of the above.
+    # best_safe_vina is only defined for rounds that had a safety-gate-passing
+    # docked molecule; rounds without one contribute None to the curve.
+    safe_vina_real = [v for v in best_safe_vina_curve if v is not None]
+    best_safe_vina_first = safe_vina_real[0] if safe_vina_real else None
+    best_safe_vina_last = safe_vina_real[-1] if safe_vina_real else None
+    best_safe_vina_delta = (
+        round(best_safe_vina_last - best_safe_vina_first, 3)
+        if best_safe_vina_first is not None and best_safe_vina_last is not None
+        else None
+    )
+
     ad_llm_real = [v for v in adoption_curve_llm if v is not None]
     ad_det_real = [v for v in adoption_curve_det if v is not None]
     drift_real = [v for v in drift_curve if v is not None]
@@ -240,14 +263,18 @@ def compute_agent_metrics(
     calibration = compute_calibration_metrics(rule_store)
 
     return {
-        "schema_version": 3,
+        "schema_version": 4,
         "rounds_total": n,
         "rounds_without_improvement": loop_state.get(
             "rounds_without_vina_improvement"
         ),
+        "rounds_without_safe_improvement": loop_state.get(
+            "rounds_without_safe_vina_improvement"
+        ),
         "curves": {
             "valid_rate": valid_rate_curve,
             "best_vina": best_vina_curve,
+            "best_safe_vina": best_safe_vina_curve,
             "scaffold_diversity": scaffold_curve,
             "avg_admet": avg_admet_curve,
             "adoption_rate_llm": adoption_curve_llm,
@@ -261,6 +288,9 @@ def compute_agent_metrics(
             "best_vina_first": best_vina_first,
             "best_vina_last": best_vina_last,
             "best_vina_delta": best_vina_delta,
+            "best_safe_vina_first": best_safe_vina_first,
+            "best_safe_vina_last": best_safe_vina_last,
+            "best_safe_vina_delta": best_safe_vina_delta,
             "scaffold_diversity_first": scaffold_diversity_first,
             "scaffold_diversity_last": scaffold_diversity_last,
             "adoption_rate_avg_llm": adoption_rate_avg_llm,
@@ -269,7 +299,11 @@ def compute_agent_metrics(
         },
         "verdict": {
             "run_shows_improvement": run_shows_improvement,
+            "run_safe_shows_improvement": _run_trend(best_safe_vina_curve, best_safe_vina_delta),
             "run_rationale": _run_trend_rationale(best_vina_curve, best_vina_delta),
+            "run_safe_rationale": _run_trend_rationale(
+                best_safe_vina_curve, best_safe_vina_delta, safe_gated=True
+            ),
             "agent_is_learning": None,
             "rationale": (
                 "not assessed from a single run; requires repeated, "
@@ -296,10 +330,12 @@ def _run_trend(vina_curve: list, vina_delta) -> bool | None:
     return vina_delta <= LEARNING_DELTA_THRESHOLD
 
 
-def _run_trend_rationale(vina_curve, vina_delta) -> str:
+def _run_trend_rationale(vina_curve, vina_delta, *, safe_gated: bool = False) -> str:
     real = [v for v in vina_curve if v is not None]
+    label = "best_safe_vina" if safe_gated else "best_vina"
     if vina_delta is None or len(real) < 2:
-        return "insufficient data (need >= 2 rounds with Vina)"
+        return f"insufficient data (need >= 2 rounds with {label})"
     if vina_delta <= LEARNING_DELTA_THRESHOLD:
-        return f"best_vina dropped by {-vina_delta:.3f} kcal/mol"
-    return f"no final score improvement at the {abs(LEARNING_DELTA_THRESHOLD)} kcal/mol threshold"
+        return f"{label} dropped by {-vina_delta:.3f} kcal/mol"
+    return (f"no final {label} improvement at the "
+            f"{abs(LEARNING_DELTA_THRESHOLD)} kcal/mol threshold")

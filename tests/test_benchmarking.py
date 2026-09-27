@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 from experiments.reporting import build_report, write_report, _confirmatory_decision
 from agents.generator import generate_candidates, _extract_json as extract_generator_json
-from scripts.run_benchmark import assess_run_quality
+from scripts.run_benchmark import assess_run_quality, assess_random_gate, RANDOM_GATE_THRESHOLD
 from loop import load_config, run_loop
 
 
@@ -99,6 +99,48 @@ def test_quality_gate_rejects_provider_failure(tmp_path):
     )
     assert quality["eligible"] is False
     assert "round_0:MiniMax:error" in quality["reasons"]
+
+
+def test_random_gate_disabled_when_requested(tmp_path):
+    gate = assess_random_gate(tmp_path, enabled=False)
+    assert gate["status"] == "disabled"
+    assert gate["enabled"] is False
+    assert gate["p_random_beats_agent"] is None
+
+
+def test_random_gate_skips_when_no_scored_rounds(tmp_path):
+    (tmp_path / "baseline" / "repeat_01" / "attempt_01").mkdir(parents=True)
+    gate = assess_random_gate(tmp_path, enabled=True)
+    assert gate["status"] == "skipped_no_scored_rounds"
+    assert gate["p_random_beats_agent"] is None
+
+
+def test_random_gate_passes_when_agent_beats_random(tmp_path):
+    """Build a run tree where the agent's per-round best is far better than
+    random draws, so P(random beats agent) is small and the gate passes."""
+    # Pool: 3 "gold" molecules score 0.01, 12 "ordinary" score 1.0. The agent
+    # always hits a gold molecule each round (observed best ~0.01); random
+    # draws of 15 mostly sample ordinary molecules, so the null is ~1.0 and
+    # never beats the agent.
+    gold = [f"c1ccc2ccccc2c{i}" for i in range(3)]
+    ordinary = [f"CCCCCCCCCC{i}" for i in range(12)]
+    root = tmp_path / "run"
+    for rep in range(1, 3):
+        for rnd in range(4):
+            d = root / f"baseline/repeat_{rep:02d}/attempt_01"
+            d.mkdir(parents=True, exist_ok=True)
+            cands = (
+                [{"smiles": s, "dock": {"score": 0.01},
+                  "admet": {"herg_risk_score": 0.2}, "safety_gate_pass": True} for s in gold]
+                + [{"smiles": s, "dock": {"score": 1.0},
+                    "admet": {"herg_risk_score": 0.2}, "safety_gate_pass": True} for s in ordinary]
+            )
+            (d / f"round_{rnd}.json").write_text(json.dumps({
+                "is_mock": False, "round": rnd, "candidates": cands,
+            }), encoding="utf-8")
+    gate = assess_random_gate(root, enabled=True)
+    assert gate["status"] == "passed"
+    assert gate["p_random_beats_agent"] <= RANDOM_GATE_THRESHOLD
 
 
 def test_strict_generation_stops_before_evaluation(tmp_path):

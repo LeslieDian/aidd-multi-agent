@@ -343,6 +343,7 @@ def build_report(benchmark_dir: str | Path) -> dict[str, Any]:
         "incremental_comparisons": incremental_comparisons,
         "confirmatory_decision": confirmatory_decision,
         "early_stop": manifest.get("early_stop"),
+        "random_gate": manifest.get("random_gate"),
         "interpretation": _interpret(groups, comparisons, baseline_name, primary),
     }
 

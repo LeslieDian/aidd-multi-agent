@@ -2510,3 +2510,87 @@ python scripts/visualize_memory.py --cross-run --output docs/figures
 | [docs/figures/calibration_drift.png](docs/figures/calibration_drift.png) | 误差直方图 + over/under 比例 |
 | [docs/figures/calibration_cross_run.png](docs/figures/calibration_cross_run.png) | 跨 run 平均绝对误差 + over/under 比例趋势 |
 | [docs/figures/memory_visualization.json](docs/figures/memory_visualization.json) | 机读汇总（含 `calibration` 与 `cross_run` 块） |
+
+## 2026-09-27：Phase 4.4 收口 — 四项后续任务（REVIEW_MINIMAX_ADVICE 清单）
+
+上一轮完成了校准、可视化、立体化学三件事。本轮把 [docs/REVIEW_MINIMAX_ADVICE_20260917.md](docs/REVIEW_MINIMAX_ADVICE_20260917.md)「尚未做」清单里的四项一次做完，并写入本文档与 [docs/PROJECT_HANDBOOK.md](docs/PROJECT_HANDBOOK.md) 第 42 章。
+
+### P1：`best_safe_vina` 首末轮变化曲线（agent_metrics.py）
+
+之前 `compute_agent_metrics` 只算 `best_vina` 曲线和 delta。现在按**安全口径**同样给出：
+
+- `curves.best_safe_vina`：每轮安全门内最佳 Vina（`summarize_round` 已输出，现被透传进曲线）
+- `aggregates.best_safe_vina_first / last / delta`：首末轮安全 Vina 及其差值
+- `verdict.run_safe_shows_improvement` / `run_safe_rationale`：安全口径下的"首末轮改善"判定
+- `aggregates.rounds_without_safe_improvement`：来自 `loop_state.rounds_without_safe_vina_improvement`
+
+`schema_version` 3 → 4。新增 `tests/test_safe_vina_metrics.py`（5 个测试）。
+
+**伴随缺陷修复**：`loop.py` 写 `summary.json` 的 `agent_metrics` 是手写白名单，漏掉了以上 P1 字段（它们只在 `metrics.json` 里）。已补齐——现在 `summary.json` 与 `metrics.json` 口径一致。
+
+### P2：随机抽样胜率作为实验准入门槛（run_benchmark.py）
+
+把 `scripts/audit_pool_vs_random.py` 的核心审计逻辑重构为可导入的 `audit_report(run_dir, draws)`（返回 JSON-safe 报告，无数据时抛 `ValueError`），并在 `scripts/run_benchmark.py` 中接入：
+
+- 新增 `assess_random_gate(root, enabled)`：真实（非 mock）且 dock 评分可用的 benchmark，在报告生成前运行审计
+- 门槛：`P(随机抽样胜过智能体) > 50%` → `random_gate.status = "failed"`（REVIEW_MINIMAX_ADVICE 第 3 项：随机都打不过就不该进入统计比较）
+- 结果写入 `benchmark_manifest.json` 的 `random_gate` 字段，并透传进 `benchmark_report.json`
+- `--no-random-gate` 可显式关闭；mock 模式自动跳过（无 dock 分数 → `skipped_no_scored_rounds`）
+
+新增 `tests/test_benchmarking.py` 3 个测试（disabled / skipped / passed 三态）。
+
+### P3：真实运行验证 `safe_vina` 是否提升 `best_safe_composite_global`
+
+**这是本轮唯一的验收标准**（REVIEW_MINIMAX_ADVICE 第 4 项）。运行 `experiments/p3_signal_matrix.yaml`（2 组 × 2 重复 × 4 轮 × 6 候选，真实 LLM + Vina docking，主指标 `best_safe_composite_global`）：
+
+| 指标 | `signal_vina`（旧） | `signal_safe_vina`（新） | delta |
+|---|---|---|---|
+| `best_safe_composite_global` | 0.7958 ± 0.0024 | 0.7951 ± 0.0092 | **-0.0007**（持平，p=0.93） |
+| `best_safe_vina_global` | -8.24 ± 0.12 | **-9.03 ± 0.65** | **-0.80**（更优，p=0.33） |
+| `best_vina_global` | -8.51 | **-9.03** | -0.52（更优） |
+| `mean_herg_risk_score` | 0.624 | 0.642 | +0.018（略高） |
+| `safe_run_improvement_rate` | 0.0 | 0.0 | 持平（两臂都无改善） |
+
+**诚实解读**：
+
+1. `safe_vina` 信号确实把**安全门内的 Vina 推得更低**（-8.24 → -9.03，改善约 0.8 kcal/mol），说明进度信号改成安全口径后，搜索更早地锁定安全通过的好分子。
+2. 但 `best_safe_composite_global` **基本持平**（-0.0007，p=0.93）。原因是 composite 中 hERG/logP 安全项占比有限，而两臂的安全通过率都很低（见下），composite 主要被安全通过率而非 Vina 深度驱动。
+3. **两臂 `safe_run_improvement_rate` 均为 0**：没有任何 run 在首末轮之间持续改善安全 Vina。逐轮看：`signal_safe_vina/r2` 的唯一安全候选在第 3 轮才出现（-9.50，全场最佳），且首轮即峰值或倒数第二轮即峰值是常态——**安全门通过率过低（0–100% 大幅波动，多轮为 0）导致"无安全候选 → 无法证明持续改善"**。
+4. n=2/组，所有 Welch p > 0.2，本运行无统计功效，只能给出方向性证据。
+
+**同时验证了 P2 门槛的实战价值**：本次真实运行的 `random_gate.status = "failed"`，`P(随机抽样胜过智能体) = 65.8%`——随机抽样仍然胜过智能体（较历史 72.7% 略有下降但仍 >50%）。这证实 REVIEW_MINIMAX_ADVICE 的核心诊断：**瓶颈在生成器的原始输出分布，而不在轮数或进度信号**。
+
+### P4：ADMET 模型扩展 — calibrated_herg 模式推广到整个 ADMET 块
+
+`tools/calibrated_herg.py` 的"多特征 logistic + 结构化特征 + 主导贡献解释"模式（7 特征 hERG）此前只覆盖心脏毒性。本轮新增 `tools/calibrated_admet.py`，把同一透明合约推广到 6 个端点：
+
+| 端点 | 方向 | 主要特征 |
+|---|---|---|
+| `absorption` | 越高越好 | TPSA / logP / MW / HBD / HBA / RotB |
+| `bioavailability` | 越高越好 | RotB / TPSA / MW / HBD（Veber） |
+| `bbb_penetration` | 越高越透 | logP / MW / TPSA / HBD / 碱性 N |
+| `cyp_inhibition` | 越高越抑制 | 芳香环 / 碱性 N / logP / MW / HBA |
+| `solubility` | 越高越溶 | logP / MW / RotB / 芳香比例（ESOL 风格） |
+| `metabolic_stability` | 越高越稳 | RotB / 芳香环 / logP / 碱性 N / MW |
+
+每个端点输出 `{score, features, dominant_contributors, rationale}`；总体 `admet_calibrated_summary` = 6 端点均值。集成进 `tools/admet_score.py::estimate_admet`（`calibrated_admet_block`，与 `calibrated_herg_block` 同款稳定接口）。
+
+新增 `tests/test_calibrated_admet.py`（10 个测试，含方向性 sanity：亲脂芳香胺 → 高 CYP 抑制 + 低溶解度；Veber 违规者 → 低生物利用度；小亲脂分子 → 高 BBB）。
+
+### 测试统计
+
+```
+Before: 374 passed, 1 skipped
+After:  391 passed, 1 skipped   (+17 tests)
+```
+
+新增覆盖：
+
+| 类别 | 测试文件 | 数量 |
+|---|---|---|
+| `best_safe_vina` 曲线/聚合/判定 | `tests/test_safe_vina_metrics.py` | 5 |
+| 随机胜率 admission gate 三态 | `tests/test_benchmarking.py` | +3 |
+| 多端点校准 ADMET | `tests/test_calibrated_admet.py` | 10 |
+| schema_version 断言更新 | `tests/test_calibration_metrics.py` / `test_phase4_3.py` | — |
+
+完整设计文档见 [docs/PROJECT_HANDBOOK.md](docs/PROJECT_HANDBOOK.md) 第 42 章「Phase 4.4 收口 — 安全口径指标、随机胜率门槛、真实验收运行、ADMET 扩展」。

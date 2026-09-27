@@ -113,7 +113,7 @@ def test_compute_agent_metrics_emits_calibration_block():
     assert "calibration" in m
     assert m["calibration"]["n_evidence_rules"] == 1
     assert m["calibration"]["mean_abs_error"] == pytest.approx(0.015, abs=1e-4)
-    assert m["schema_version"] == 3
+    assert m["schema_version"] == 4
 
 
 def test_compute_agent_metrics_without_rule_store_calibration_is_zero():

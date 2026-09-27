@@ -20,6 +20,9 @@ from experiments.reporting import write_report, extract_run_metrics
 from experiments.contract import treatments, validate_design, resolve_budget, check_resume, normalized_config, contract_hashes
 from loop import load_config, run_loop
 
+sys.path.insert(0, str(ROOT / "scripts"))
+from audit_pool_vs_random import audit_report
+
 
 def deep_merge(base: dict, override: dict) -> dict:
     result = copy.deepcopy(base)
@@ -144,6 +147,53 @@ def assess_confirmatory_futility(manifest: dict) -> dict:
     }
 
 
+RANDOM_GATE_THRESHOLD = 0.5
+"""Admission gate (REVIEW_MINIMAX_ADVICE_20260917 item 3): a benchmark whose
+loop is beaten by random sampling more than half the time is not producing
+search signal and must not enter statistical comparison."""
+
+
+def assess_random_gate(run_dir: Path, *, enabled: bool, draws: int = 4000) -> dict:
+    """Run the search-vs-random audit and return an admission-gate verdict.
+
+    Returns a JSON-safe dict with keys:
+      - status: 'passed' | 'failed' | 'skipped_no_scored_rounds' | 'disabled'
+      - p_random_beats_agent: float | None
+      - observed_mean_best_of_round, random_best_of_round
+      - gate_threshold, message
+    """
+    base = {
+        "gate": "search_vs_random",
+        "gate_threshold": RANDOM_GATE_THRESHOLD,
+        "enabled": enabled,
+    }
+    if not enabled:
+        return {**base, "status": "disabled", "p_random_beats_agent": None,
+                "message": "random gate disabled (--no-random-gate or mock mode)"}
+    try:
+        report = audit_report(str(run_dir), draws=draws)
+    except ValueError as exc:
+        return {**base, "status": "skipped_no_scored_rounds",
+                "p_random_beats_agent": None, "message": str(exc)}
+    svr = report["search_vs_random"]
+    p = float(svr["p_random_beats_agent"])
+    passed = p <= RANDOM_GATE_THRESHOLD
+    return {
+        **base,
+        "status": "passed" if passed else "failed",
+        "p_random_beats_agent": p,
+        "observed_mean_best_of_round": svr["observed_mean_best_of_round"],
+        "random_best_of_round": svr["random_best_of_round"],
+        "molecules_per_round": svr["molecules_per_round"],
+        "message": (
+            "loop beats random sampling (admission OK)"
+            if passed else
+            f"random sampling beats the loop ({100 * p:.1f}% > 50%): "
+            "the feedback path is not adding search signal"
+        ),
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--matrix", default="experiments/matrix.yaml")
@@ -164,6 +214,8 @@ def main() -> None:
                         help="maximum attempts for each eligible repeat")
     parser.add_argument("--no-futility-stop", action="store_true",
                         help="finish the fixed sample even after a deterministic gate failure")
+    parser.add_argument("--no-random-gate", action="store_true",
+                        help="skip the search-vs-random admission gate (default: gate real, dock-scored runs)")
     parser.add_argument('--dry-run', action='store_true', help='Validate and display the resolved plan; no writes or API calls')
     args = parser.parse_args()
 
@@ -420,7 +472,20 @@ def main() -> None:
             break
 
     manifest["finished_at"] = datetime.now().isoformat(timespec="seconds")
+
+    # Random-sampling admission gate (REVIEW_MINIMAX_ADVICE_20260917 item 3).
+    # Real, dock-scored runs must show the loop beating random sampling before
+    # the benchmark's statistics are considered meaningful.
+    random_gate_enabled = not use_mock and not args.no_random_gate
+    gate = assess_random_gate(root, enabled=random_gate_enabled)
+    manifest["random_gate"] = gate
     manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+    if random_gate_enabled:
+        p = gate.get("p_random_beats_agent")
+        print(f"\n[BENCH] random gate: {gate['status']}  "
+              f"P(random beats agent) = {100 * (p or 0):.1f}%")
+        if gate["status"] == "failed":
+            print(f"[BENCH]   !! {gate['message']}")
     json_report, md_report = write_report(root)
     print(f"\n[BENCH] report JSON: {json_report}")
     print(f"[BENCH] report Markdown: {md_report}")

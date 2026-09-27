@@ -1,0 +1,42 @@
+schema_version: 1
+name: progress-signal-vina-vs-safe
+base_config: ../config.yaml
+description: >
+  P3 real-run validation (REVIEW_MINIMAX_ADVICE_20260917 item 4): does the
+  `safe_vina` progress signal raise the safety-gated composite endpoint
+  (`best_safe_composite_global`) relative to the legacy all-candidate `vina`
+  signal? The hypothesis from confirmatory_pareto_v3_1_20260916 is that the
+  all-candidate optimum carried herg_risk 0.830 while a safety-passing
+  molecule was only ~0.02 kcal/mol behind, so the hERG regression came from
+  the progress signal, not from an unavoidable docking/safety trade-off.
+  Arms are budget-matched (same rounds/candidates/docking) and differ ONLY in
+  loop.progress_signal. This is the single acceptance test for the safe_vina
+  change.
+
+execution:
+  repeats: 2
+  rounds: 4
+  candidates_per_round_per_generator: 6
+  primary_metric: best_safe_composite_global
+  order: grouped
+
+baseline_group: signal_vina
+
+groups:
+  signal_vina:
+    description: Legacy progress signal = best all-candidate Vina (pre-change control).
+    overrides:
+      loop:
+        progress_signal: vina
+        judge_enabled: true
+        memory_enabled: true
+        failed_set_enabled: true
+
+  signal_safe_vina:
+    description: Preferred progress signal = best safety-gate-passing Vina (treatment).
+    overrides:
+      loop:
+        progress_signal: safe_vina
+        judge_enabled: true
+        memory_enabled: true
+        failed_set_enabled: true

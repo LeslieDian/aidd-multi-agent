@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "source_directory": "benchmarks/p3_signal_20260927",
+  "matrix": "experiments/p3_signal_matrix.yaml",
+  "note": "Small committed summary only; full candidates, docking artifacts, logs and caches remain local (gitignored).",
+  "created_utc": "2026-09-27T22:40:00+00:00",
+  "purpose": "P3 real-run acceptance test (REVIEW_MINIMAX_ADVICE_20260917 item 4): does loop.progress_signal=safe_vina raise best_safe_composite_global vs the legacy all-candidate vina signal?",
+  "primary_metric": "best_safe_composite_global",
+  "budget": {"repeats": 2, "rounds": 4, "candidates_per_round_per_generator": 6},
+  "eligible_runs": {"signal_vina": 2, "signal_safe_vina": 2},
+  "group_means": {
+    "signal_vina": {
+      "best_safe_composite_global": 0.7958,
+      "best_safe_vina_global": -8.238,
+      "best_vina_global": -8.510,
+      "best_safe_vina_delta": 0.3615,
+      "safe_run_improvement_rate": 0.0,
+      "mean_herg_risk_score": 0.6236
+    },
+    "signal_safe_vina": {
+      "best_safe_composite_global": 0.7951,
+      "best_safe_vina_global": -9.034,
+      "best_vina_global": -9.034,
+      "best_safe_vina_delta": 0.2620,
+      "safe_run_improvement_rate": 0.0,
+      "mean_herg_risk_score": 0.6418
+    }
+  },
+  "comparisons_signal_safe_vina_vs_signal_vina": {
+    "best_safe_composite_global": {"delta": -0.000684, "welch_p": 0.934, "favorable": false},
+    "best_safe_vina_global": {"delta": -0.796, "welch_p": 0.327, "favorable": true},
+    "best_vina_global": {"delta": -0.524, "welch_p": 0.460, "favorable": true},
+    "mean_herg_risk_score": {"delta": 0.0183, "welch_p": 0.819, "favorable": false},
+    "top5_safe_vina_mean": {"delta": -0.895, "welch_p": 0.235, "favorable": true}
+  },
+  "random_gate": {
+    "gate": "search_vs_random",
+    "status": "failed",
+    "p_random_beats_agent": 0.6577,
+    "observed_mean_best_of_round": -8.401,
+    "threshold": 0.5
+  },
+  "per_run_safe_vina_curves": {
+    "signal_vina/repeat_01": [-8.15, -8.15, -7.692, -7.443],
+    "signal_vina/repeat_02": [-8.222, null, -8.326, -8.206],
+    "signal_safe_vina/repeat_01": [-8.15, -8.488, -8.572, -7.888],
+    "signal_safe_vina/repeat_02": [null, null, -9.496, null]
+  },
+  "conclusions": [
+    "safe_vina signal drove the safety-gated Vina lower (-8.24 -> -9.03, ~0.8 kcal/mol, directional).",
+    "best_safe_composite_global was flat (-0.0007, p=0.93): composite is driven by safety-pass rate, not Vina depth.",
+    "safe_run_improvement_rate = 0 in both arms; no run showed sustained safe-Vina improvement.",
+    "Safety-gate pass rate fluctuated 0-100% with several rounds at 0: too few safe candidates to demonstrate improvement.",
+    "random_gate FAILED (65.8%): random sampling still beats the loop; bottleneck is generator output distribution.",
+    "Acceptance NOT met: safe_vina did not raise best_safe_composite_global in this sample."
+  ],
+  "limitations": [
+    "n=2 per arm; all Welch p > 0.2; directional evidence only, no statistical power.",
+    "Vina and hERG are computational proxies, not measured activity or safety.",
+    "Per-run curves use None for rounds with no safety-passing candidate.",
+    "Confirmatory runs must pass the random-sampling gate BEFORE statistics are considered meaningful."
+  ]
+}

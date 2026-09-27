@@ -295,7 +295,7 @@ def test_end_to_end_loop_emits_metrics_json(tmp_path=None):
         m_path = Path(tmp) / "metrics.json"
         assert m_path.exists()
         m = json.loads(m_path.read_text(encoding="utf-8"))
-        assert m["schema_version"] == 3
+        assert m["schema_version"] == 4
         assert m["rounds_total"] == 3
         assert "curves" in m
         assert len(m["curves"]["best_vina"]) == 3
