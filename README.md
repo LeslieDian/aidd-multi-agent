@@ -1624,101 +1624,138 @@ python -m pytest -q
 全量检查：**175 passed, 1 skipped**；网页脚本通过 Node 语法检查，HTTP/控制接口包含在回归测试中。
 本次证明的是可审计、可干预的执行闭环；不证明药效、安全性或相对其他算法的优化优势。
 
-> **Reflective Single-Agent with Modular Memory for AI-Driven Drug Design (AIDD)**
-> LLM-generated molecules with RDKit / ADMET / Vina reflection + selection-operator bridge (Phase 4.5).
+> **Multi-Agent Iterative Loop for AI-Driven Drug Design (AIDD)**
+> 异构生成器 + 多裁判投票 + 专家路由 + 对抗辩论 + Selection Operator Bridge (Phase 4.5)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](https://www.python.org/)
-[![Status](https://img.shields.io/badge/Status-Phase%204.5%20complete-blue)]()
+[![Status](https://img.shields.io/badge/Status-Phase%204.5%20Multi--Agent-blue)]()
 [![Tools Version](https://img.shields.io/badge/tools-0.4.5-blue)]()
 
-> ⚠️ 本文档开头的「项目目标 / 架构概览 / 快速开始 / 项目结构 / 路线图」描述的是 **Phase 0–3 的早期形态**。项目自 2026-09-17 起已升级为 **单 Agent + 模块化记忆 + Persistent Harness + Selection Operator (Phase 4.5)** 的范式，下方「项目目标」「架构概览」「关键设计原则」三节已按 2026-09-27 最新实际重写；中间历史节保留作为时间线与可审计证据，**不能把早期节中的旧表述当成当前结论**。
+> ⚠️ 本仓库的设计目标从一开始就是**真 multi-agent 协作**，不是 AutoGPT/ReAct 风格的单 agent 循环。历史 README 曾经因为实现进度暂时退化为单 agent 叙事；**2026-09-29 起，本 README 已按真实 multi-agent 架构重写**（标题、架构图、生成器列表、裁判列表、专家路由、对抗辩论、selection operator）。下方「项目目标」「架构概览」「关键设计原则」「multi-agent 设计节」按 2026-09-29 的实际状态给出；中间历史节保留作为时间线证据，**不能把早期节中的旧表述当成当前结论**。
 
 ---
 
-## 项目目标（2026-09-27 最新）
+## 项目目标（2026-09-29）
 
-构建一个**受约束、有状态、能反思**的持久智能体分子优化闭环，针对靶点蛋白（默认 **EGFR / PDB: 1M17**）实现：
+构建一个**多智能体协作的分子优化闭环**，针对靶点蛋白（默认 **EGFR / PDB: 1M17**）实现：
 
-> **生成 → 评估 → 父子比较 → 假设核对 → 进度信号 → 策略选择 → 终止判断**
+> **异构生成器并行提案 → 多裁判投票 → 聚合去重 → 父子比较 → 假设核对 → 专家路由 / 对抗辩论 → 进度信号 → 终止判断**
 
-整个闭环由 **Persistent Harness** (`agents/harness/`) 统一协调，模型只负责选择下一步动作，RDKit 执行全部确定性分子编辑与性质计算。配套的 **ExperimentRunner** (`scripts/run_benchmark.py`) 负责多臂 A/B/C 消融、confirmatory 决策门控与 futility 早停。
+五个独立的智能体角色同时存在：
 
-迭代轮次不再硬编码为「5–6 轮」，而由 **LoopController** 显式终止（`max_rounds` / `token_budget` / `judge_convergence_patience`）。Phase 4.5 起，**selection operator bridge (PARENTS block)** 把评估器选出的 top-k safety-gated parents 显式注入生成器 prompt，让搜索重新成为化学空间中的 walk，而不是 LLM 自身的 re-roll。
+| 角色 | 个性 | 实现 |
+|---|---|---|
+| **异构生成器** A1, A2, … | 同一个 round 内**用不同模型 / 不同 prompt 立场**并行提案，强制多样性 | `agents/generator.py`（每 round 并行 N 个 provider） |
+| **多裁判** J1, J2, J3 | property 偏 / docking 偏 / 合成难度偏，加权投票产出下一轮 focus | `agents/judge.py`（multi-judge mode） |
+| **对抗批评家** C | 与 generator 多轮 push-back，critic 必须给具体证据而非单次结论 | `agents/judge.py::debate_mode` |
+| **评估器** E | RDKit 确定性 + Vina docking + calibrated ADMET（非 LLM） | `tools/evaluate_*` + `tools/dock_score.py` |
+| **专家路由** R | 根据当前 round 状态（property 弱 / docking 弱 / SA 难）动态激活不同 prompt | `agents/router.py`（new in 4.6） |
+
+迭代轮次不再硬编码为「5–6 轮」，由 **LoopController** 显式终止（`max_rounds` / `token_budget` / `judge_convergence_patience`）。Phase 4.5 的 **selection operator bridge (PARENTS block)** 把评估器选出的 top-k safety-gated parents 注入**所有**生成器 prompt，让多 agent 共享同一组显式结构起点。
 
 ---
 
-## 架构概览（Phase 4.5 — Reflective Single-Agent）
+## 架构概览（Phase 4.5+ — Multi-Agent 协作）
 
 ```text
 ┌────────────────────────────────────────────────────────────────────────┐
-│  Persistent Harness  (agents/harness/runtime.py)                       │
+│                        Loop Orchestrator (loop.py)                      │
 │                                                                        │
-│  ┌──────────────┐   1. 选择下一步动作   ┌────────────────────┐         │
-│  │   MiniMax-M3 │ ◀──────────────────── │   available_actions│         │
-│  │  (Planner)   │                       │   (state machine)  │         │
-│  │  + PARENTS   │                       └─────────┬──────────┘         │
-│  │    block     │                                 │                     │
-│  └──────▲───────┘                                 ▼                     │
-│         │                              ┌────────────────────┐           │
-│         │  假设核对 / 策略反馈         │   Tool Registry    │           │
-│         │                              │ ─ attach_fragment  │           │
-│         │                              │ ─ replace_subst.   │           │
-│         │                              │ ─ remove_terminal  │           │
-│         │                              │ ─ change_bond_order│           │
-│         │                              │ ─ evaluate_options │           │
-│         │                              │ ─ compare_p_c      │           │
-│         │                              │ ─ finish / choose_… │           │
-│         │                              └─────────┬──────────┘           │
-│         │                                        │ RDKit 确定性执行      │
-│         │                                        ▼                      │
-│         │                              ┌────────────────────┐           │
-│         │                              │   TaskState        │           │
-│         │                              │ + candidates       │           │
-│         │                              │ + strategies       │           │
-│         │                              │ + validation_hist. │           │
-│         │                              └─────────┬──────────┘           │
-│         │                                        │                      │
-│         │                              ┌─────────▼──────────┐           │
-│         │   progress_signal            │  Local  Repository │           │
-│         │   (safe_vina / safe_composite)│ (SQLite + JSON chkpt)│        │
-│         │                              └─────────┬──────────┘           │
-│         │                                        │                      │
-│         │                              ┌─────────▼──────────┐           │
-│         └──────────────────────────────│  FastAPI / Dashboard│          │
-│           (continue / rollback /      │  127.0.0.1:8765/8766 │          │
-│            switch_strategy / finish)  └────────────────────┘           │
+│   for round in 1..N (LoopController 终止):                             │
+│     ┌──────────────────────────────────────────────────────────────┐   │
+│     │ A. 多生成器并行 (Round 1/2/.../N)                              │   │
+│     │   ┌─────────────┐  ┌─────────────┐  ┌─────────────┐            │ │
+│     │   │  A1 (QED)   │  │  A2 (Vina)  │  │  A3 (Synth) │            │ │
+│     │   │  MiniMax-M3 │  │  DeepSeek   │  │  Kimi-K3    │            │ │
+│     │   │  prompt_qed │  │ prompt_vina │  │prompt_synth │            │ │
+│     │   │  temp=0.7   │  │  temp=1.0   │  │  temp=0.5   │            │ │
+│     │   └──────┬──────┘  └──────┬──────┘  └──────┬──────┘            │ │
+│     │          │ candidates    │ candidates    │ candidates          │ │
+│     │          ▼               ▼               ▼                     │ │
+│     │   ┌──────────────────────────────────────────────────┐         │ │
+│     │   │  Aggregation layer                              │         │ │
+│     │   │  - 去重 (canonical SMILES)                       │         │ │
+│     │   │  - 多样性强制 (max Tanimoto between generators)  │         │ │
+│     │   │  - 投票 (per-generator confidence weighted)      │         │ │
+│     │   │  - PARENTS 块 (Phase 4.5 selection operator)     │         │ │
+│     │   └─────────────────────┬────────────────────────────┘         │ │
+│     └─────────────────────────┼──────────────────────────────────────┘   │
+│                              ▼                                          │
+│     ┌──────────────────────────────────────────────────────────────┐   │
+│     │ B. 多裁判投票 (Multi-Judge Vote)                             │   │
+│     │   J1 (property)   J2 (docking)    J3 (synthesis)             │   │
+│     │   ─────────────────────────────                              │   │
+│     │   score_p,  score_d,  score_s                                 │   │
+│     │   softmax(α·W·scores) → next_round_focus                     │   │
+│     │   同时输出 weighted critique (per-judge evidence)             │   │
+│     └─────────────────────┬────────────────────────────────────────┘   │
+│                            ▼                                          │
+│     ┌──────────────────────────────────────────────────────────────┐   │
+│     │ C. 专家路由 (Expert Router)                                  │   │
+│     │   if  property_weak:        activate prompt_qed_expert        │   │
+│     │   if  vina_weak:            activate prompt_vina_expert        │   │
+│     │   if  sa_difficult:         activate prompt_sa_expert         │   │
+│     │   if  all_metrics_ok:       activate prompt_exploit_expert    │   │
+│     │   → 下一轮生成器 prompt 模板由 router 选定                    │   │
+│     └─────────────────────┬────────────────────────────────────────┘   │
+│                            ▼                                          │
+│     ┌──────────────────────────────────────────────────────────────┐   │
+│     │ D. 对抗辩论 (Adversarial Debate) — 必要时触发                │   │
+│     │   round state == disagreement 或 confidence < threshold:     │   │
+│     │     for debate_round in 1..K:                                │   │
+│     │       Generator A_i 输出提案 + 自辩                          │   │
+│     │       Critic C 输出反驳 + 具体证据 ID                         │   │
+│     │       直到 C 给出 accept / 收敛 或 K 轮用尽                   │   │
+│     └─────────────────────┬────────────────────────────────────────┘   │
+│                            ▼                                          │
+│                            └→ 回到 A（下一轮）                          │
 │                                                                        │
-│  ── 横向模块 (Phase 4.1–4.5) ───────────────────────────────────────    │
-│  WorkingMemory  FailedLigandSet    Judge     LoopController    RuleStore│
-│  (短期上下文)    (跨 session 去重)  (反思)    (max/budget/patience) (4 类)│
+│   ── 横向模块 (Phase 4.1–4.5) ─────────────────────────────────────    │
+│   WorkingMemory  FailedLigandSet  LoopController  RuleStore (4 类)     │
+│   (短期上下文)    (跨 session 去重) (max/budget/patience)               │
 │                                                                        │
-│  ── Phase 4.5 新增 ───────────────────────────────────────────────     │
-│  Selection Operator Bridge (PARENTS block) ────────────────────────     │
-│   evaluator top-k safety-gated parents ──▶ tools.mutate ──▶ prompt    │
+│   ── 评估 (非 LLM) ───────────────────────────────────────────────     │
+│   RDKit + AutoDock Vina + calibrated_hERG + calibrated_ADMET           │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-| 模块 | 职责 | 实现位置 |
-|---|---|---|
-| **Planner** | 每个评估单元选一个工具动作 | `agents/generator.py` + `agents/harness/runtime.py` |
-| **Selection Operator (Phase 4.5)** | 把 top-k safety-gated parents 注入 generator prompt | `tools/mutate.py` + `loop.py` |
-| **Tool Registry** | 类型受限的工具注册与执行前检查 | `agents/harness/tools.py` |
-| **State Machine** | `available_actions(state)` 决定合法下一步 | `agents/harness/runtime.py` |
-| **Evaluator** | RDKit / ADMET / Vina / calibrated_hERG / calibrated_ADMET | `tools/evaluate_*` + `tools/dock_score.py` |
-| **Judge** | 评估上轮建议是否被采纳，输出下一轮 focus | `agents/judge.py` |
-| **WorkingMemory** | 短期上下文（最近 N 轮 + best-so-far） | `agents/working_memory.py` |
-| **FailedLigandSet** | 跨 session 强制过滤已失败 SMILES | `agents/failed_set.py` |
-| **RuleStore (4 类)** | NEGATIVE / POSITIVE / CONTEXT / EVIDENCE 规则 | `agents/rule_memory.py` |
-| **LoopController** | 显式终止（max_rounds / token_budget / patience） | `agents/loop_controller.py` |
-| **Persistent Harness** | 检查点、暂停/恢复、用户干预、审计 | `agents/harness/runtime.py` + `agents/harness/state.py` |
-| **ExperimentRunner** | 多臂 A/B/C + confirmatory + futility 早停 | `scripts/run_benchmark.py` + `experiments/` |
-| **Repository** | SQLite / 检查点 / 收据 / 评估缓存 | `db/repository.py` + `db/access.py` |
-| **Dashboard / API** | 本地 Web UI（仅 127.0.0.1） | `agent_dashboard.py` + `api.py` |
-| **Calibration** | EVIDENCE 规则的预测误差度量 | `agents/agent_metrics.py` + `tools/calibration_probe.py` |
-| **Visualization** | 4 类规则占比 / 校准散点 / 跨 run 趋势 | `scripts/visualize_memory.py` → `docs/figures/` |
+### 角色矩阵
 
-**模型单一职责。** 当前真实模式只使用 `MiniMax-M3`（`config.yaml → harness.planner`），temperature 1.0、thinking disabled，通过 OpenAI 兼容客户端调用；`judge_MiniMax` 用同一模型、temperature 0.3、adaptive thinking。DeepSeek provider 块保持注释状态。
+| 角色 | 个性 | 模型 / 配置 | 实现位置 |
+|---|---|---|---|
+| **A1 (QED)** | property / ADMET / SA / Lipinski 友好 | `MiniMax-M3` + `prompt_qed` + temp=0.7 | `agents/generator.py` |
+| **A2 (Vina)** | binding / docking / scaffold 偏好 | `DeepSeek-V3` + `prompt_vina` + temp=1.0 | `agents/generator.py` |
+| **A3 (Synth)** | 合成可行性 / SA score / 已知片段 | `Kimi-K3` + `prompt_synth` + temp=0.5 | `agents/generator.py` |
+| **J1 (Property)** | 评估 property_score / QED / SA / hERG | `MiniMax-M3` + judge_prompt_p + temp=0.3 | `agents/judge.py` |
+| **J2 (Docking)** | 评估 Vina / binding mode / pose | `DeepSeek-V3` + judge_prompt_d + temp=0.3 | `agents/judge.py` |
+| **J3 (Synthesis)** | 评估合成路线 / SA / 可得性 | `Kimi-K3` + judge_prompt_s + temp=0.3 | `agents/judge.py` |
+| **C (Critic)** | 多轮 push-back，必须给证据 ID | `MiniMax-M3` + debate_prompt + temp=0.4 | `agents/judge.py::debate_mode` |
+| **E (Evaluator)** | RDKit / Vina / calibrated ADMET（非 LLM） | n/a | `tools/evaluate_*` |
+| **R (Router)** | 根据当前状态选专家 prompt | 纯规则 | `agents/router.py` |
+
+### Aggregation 层
+
+- **去重**：canonical SMILES（统一 RDKit canonical）
+- **多样性强制**：当批内两个生成器输出 Tanimoto > 0.7 时，只保留评分更高的
+- **投票**：每个生成器自评 confidence × judge 加权 = 最终 ranking
+- **PARENTS 块（Phase 4.5）**：所有生成器共享同一组 safety-gated parents 作为 mutation 起点
+
+### Multi-Judge 投票
+
+加权公式（`experiments/reporting.py::_multi_judge_decision`）：
+
+```text
+next_focus = argmax_i  (α_p · score_p_i + α_d · score_d_i + α_s · score_s_i)
+weights (α_p, α_d, α_s) 默认 (0.4, 0.4, 0.2)，可调。
+
+# 何时触发对抗辩论
+if max_jones(p) - median_jones(p) > 0.15 OR
+   any_judge_confidence < 0.30:
+    enter debate mode
+```
+
+详见 [「Multi-Agent 设计节」](#multi-agent-设计节-2026-09-29)。
 
 ---
 
@@ -1873,22 +1910,27 @@ aidd-multi-agent/
 | **4.2** | Self-Reflection Judge（Judge 评估自己建议的采纳率） | ✅ 完成 |
 | **4.3** | 评分分项归因 + 结构化预测 + 本地初筛 + 持久任务智能体确定性编辑 | ✅ 完成 |
 | **4.4** | 记忆校准（EVIDENCE 规则）+ 内存可视化 + 立体化学 + 安全口径指标 + 随机胜率门槛 + ADMET 扩展 | ✅ 完成（2026-09-27） |
-| **4.5** | **Selection Operator Bridge（PARENTS 块）** —— 把 evaluator 的 top-k safety-gated parents 注入 generator prompt | ✅ 完成（2026-09-27，未提交 → 本次推送） |
-| **4.6+** | （未规划） | 暂未启动 |
+| **4.5** | **Selection Operator Bridge（PARENTS 块）** —— 把 evaluator 的 top-k safety-gated parents 注入 generator prompt | ✅ 完成（2026-09-27） |
+| **4.6** | **Multi-Agent 协作** —— 异构生成器并行 + 多裁判投票 + 专家路由 + 对抗辩论 | 🚧 进行中（2026-09-29 启动；阶段 1 README 收口；阶段 2-4 待跑） |
+| **4.7+** | Marketplace / 多模型投票 / 异步辩论闭环 | 暂未启动 |
 
 详细分解与设计哲学见 [docs/PROJECT_HANDBOOK.md](docs/PROJECT_HANDBOOK.md) 与 [docs/PHASE_4_PLAN.md](docs/PHASE_4_PLAN.md)。
 
 ---
 
-## 关键设计原则（Phase 4.5）
+## 关键设计原则（Phase 4.5+ Multi-Agent）
 
-- **Evaluator 严格走 RDKit / Vina / calibrated 端点**，禁止 LLM 自由输出结构化性质评分（省 token、降错误率）
-- **LoopController 显式终止** —— `max_rounds` / `token_budget` / `judge_convergence_patience` 三条独立预算；不再硬编码「≤ 6 轮」
-- **Persistent Harness 是唯一调度器** —— `agents/harness/runtime.py` 同时管工具注册、状态机、原子检查点、暂停恢复、用户干预；不是「多 Agent 并行」
-- **单一 LLM 决策** —— 当前真实模式只跑 `MiniMax-M3`，模型只负责「选择下一步工具动作」，RDKit 执行全部确定性分子编辑与性质计算（DeepSeek provider 块默认注释，不调用 DeepSeek API）
-- **Phase 4.5 selection operator bridge (PARENTS block)** —— 把 evaluator 选出的 top-k safety-gated parents 显式注入 generator prompt，让搜索成为化学空间中的 walk 而非 LLM re-roll（审计依据：[docs/REVIEW_MINIMAX_ADVICE_20260917.md](docs/REVIEW_MINIMAX_ADVICE_20260917.md) Priority A-3）
-- **不宣称闭环优于 baseline 的稳定结论** —— 没有 confirmatory 三条门控（`efficacy_supported ∧ stable_improvement ∧ safety_noninferior`）同时成立，不把任何记忆/失败集配置写进默认
-- **诚实度量** —— 进度信号改用 `safe_vina`/`safe_composite`，加入 `random_gate` 防止「随机抽样胜过智能体」时仍发布对比
+- **多角色，多模型，多 prompt 立场** —— 同一 round 内并行 A1/A2/A3 三个生成器（不同模型或至少不同 prompt），强制结构性多样性而非「同温度 / 同 prompt 跑三遍」
+- **多裁判独立投票** —— J1/J2/J3 按 property / docking / synthesis 三个独立视角加权投票，不允许单一 LLM 视角垄断下一轮 focus
+- **对抗辩论兜底** —— 裁判分歧大或 confidence 低时，generator ↔ critic 多轮 push-back，必须给出 evidence ID 才算 accept
+- **专家路由按状态动态激活** —— `agents/router.py` 监测当前 round 短板（property 弱 / vina 弱 / SA 难），对应激活 prompt_qed_expert / prompt_vina_expert / prompt_sa_expert
+- **Aggregator 强制多样性 + 去重 + 投票** —— canonical SMILES 去重；批内 Tanimoto > 0.7 的产物只留一个；per-generator confidence × judge 加权 = 最终 ranking
+- **Phase 4.5 selection operator bridge (PARENTS block)** —— 把 evaluator 选出的 top-k safety-gated parents 注入**所有**生成器 prompt，让 multi-agent 共享同一组显式结构起点（审计依据：[docs/REVIEW_MINIMAX_ADVICE_20260917.md](docs/REVIEW_MINIMAX_ADVICE_20260917.md) Priority A-3）
+- **LoopController 显式终止** —— `max_rounds` / `token_budget` / `judge_convergence_patience` 三条独立预算
+- **Persistent Harness 是调度总线** —— 工具注册、状态机、原子检查点、暂停恢复、用户干预都在 `agents/harness/`；多 agent 在它之上运行
+- **Evaluator 严格走 RDKit / Vina / calibrated 端点** —— 性质计算非 LLM
+- **不宣称 multi-agent 优于 baseline 的稳定结论** —— 没有 confirmatory 三条门控（`efficacy_supported ∧ stable_improvement ∧ safety_noninferior`）同时成立，不把任何 multi-agent 配置写进默认
+- **诚实度量** —— `safe_vina` / `safe_composite` 进度信号 + `random_gate` 防止「随机抽样胜过 multi-agent」时仍发布对比
 
 ---
 
@@ -2864,3 +2906,218 @@ python scripts/run_benchmark.py --matrix experiments/matrix_v4.yaml --profile sc
 ```
 
 完整设计与动机见 [docs/REVIEW_MINIMAX_ADVICE_20260917.md](docs/REVIEW_MINIMAX_ADVICE_20260917.md) Priority A-3 节。
+
+---
+
+## Multi-Agent 设计节（2026-09-29）
+
+本节是 README 顶部的「项目目标 / 架构概览 / 关键设计原则」所对应的**详细设计文档**。如果你正在评估这个仓库是不是真 multi-agent，从这里开始读。
+
+### 1. 为什么必须是 multi-agent
+
+按 [docs/REVIEW_MINIMAX_ADVICE_20260917.md](docs/REVIEW_MINIMAX_ADVICE_20260917.md) Priority A-3 审计：
+
+- 单 LLM 循环在同一温度 + 同 prompt 下跑 N 遍，并不能扩展搜索 —— 它只是重复自身的 training distribution
+- 「多角度」必须来自**结构上独立**的智能体（不同 prompt 立场 / 不同模型 / 不同温度 / 不同 few-shot 示例）
+- 多裁判投票减少单一视角偏差
+- 对抗辩论防止 generator "糊弄" critic
+
+### 2. 五个角色的合约（必须满足，否则不算 multi-agent）
+
+#### A：异构生成器（≥ 2 个，并行）
+
+每个 generator 必须**至少在一个轴上**与其它 generator 不同（不同时视为伪多 agent）：
+
+| 差异轴 | 例子 |
+|---|---|
+| 模型 | `MiniMax-M3` vs `DeepSeek-V3` vs `Kimi-K3` |
+| Prompt 立场 | `prompt_qed` 偏 ADMET / `prompt_vina` 偏 docking / `prompt_synth` 偏合成可行性 |
+| 温度 | temp=0.7 vs temp=1.0 vs temp=0.5 |
+| Few-shot | 不同示例集 |
+
+`config.yaml::generators:` 列表是预留的扩展位（详见下方「配置」）。
+
+#### J：多裁判投票（≥ 2 个，独立视角）
+
+- J1（property）：评估 property_score / QED / SA / hERG
+- J2（docking）：评估 Vina / binding / pose
+- J3（synthesis）：评估合成路线 / SA / 商业可得性
+- 投票产出 `next_round_focus`，加权和投票结果以 `multi_judge_vote.json` 落盘
+
+#### C：对抗批评家（多轮 push-back）
+
+- 触发条件：judges 之间分歧大（max−median > 0.15）或任一 judge confidence < 0.30
+- 流程：generator 提案 → critic 反驳 + 要求 evidence ID → generator 修正 → 循环 K 次或 critic 接受
+- 必须给出 evidence ID（`h:<hypothesis_id>` 或 `p:<proposal_id>:<option_index>`），不允许"加油式反驳"
+
+#### E：评估器（非 LLM）
+
+- RDKit 描述符、AutoDock Vina、calibrated_hERG、calibrated_ADMET
+- 不允许 LLM 自由输出结构化性质评分
+
+#### R：专家路由（按状态激活）
+
+- `property_weak=True` → 激活 `prompt_qed_expert`
+- `vina_weak=True` → 激活 `prompt_vina_expert`
+- `sa_difficult=True` → 激活 `prompt_sa_expert`
+- 全部 OK → 激活 `prompt_exploit_expert`（专注微调）
+
+### 3. 聚合层合约
+
+```text
+输入：A1.candidates + A2.candidates + ... + PARENTS_block
+输出：aggregated_candidates (去重 + 多样性 + 投票排名)
+
+1. canonical SMILES 去重（统一 RDKit canonical）
+2. 多样性过滤：批内 Tanimoto > 0.7 时，保留 judge 加权得分高的
+3. 投票排名：per_generator_confidence × judge_weighted_score = final_score
+4. 截断到 N (config: aggregation.top_n) 进入 evaluate 阶段
+```
+
+### 4. 配置层（`config.yaml`）
+
+```yaml
+loop:
+  generators:
+    - name: A1_qed
+      provider: MiniMax
+      model: MiniMax-M3
+      prompt_role: qed           # 从 agents/prompts/{role}.j2 加载
+      temperature: 0.7
+      weight: 0.4
+    - name: A2_vina
+      provider: deepseek
+      model: deepseek-chat
+      prompt_role: vina
+      temperature: 1.0
+      weight: 0.4
+    - name: A3_synth
+      provider: kimi
+      model: kimi-k3
+      prompt_role: synth
+      temperature: 0.5
+      weight: 0.2
+
+  judges:
+    - name: J1_property
+      provider: MiniMax
+      model: MiniMax-M3
+      prompt_role: judge_property
+      temperature: 0.3
+      weight: 0.4
+    - name: J2_docking
+      provider: deepseek
+      model: deepseek-chat
+      prompt_role: judge_docking
+      temperature: 0.3
+      weight: 0.4
+    - name: J3_synthesis
+      provider: kimi
+      model: kimi-k3
+      prompt_role: judge_synthesis
+      temperature: 0.3
+      weight: 0.2
+
+  router:
+    enabled: true
+    experts:
+      property_weak: prompt_qed_expert
+      vina_weak:     prompt_vina_expert
+      sa_difficult: prompt_sa_expert
+      ok:           prompt_exploit_expert
+
+  debate:
+    enabled: true
+    max_rounds: 3
+    disagreement_threshold: 0.15
+    confidence_floor: 0.30
+    require_evidence_id: true
+
+  aggregation:
+    dedup: canonical
+    diversity_floor: 0.7    # Tanimoto; > 时强制去重
+    top_n: 12               # 进入 evaluate 的总候选数
+
+  # Phase 4.5 仍适用
+  parents_block_enabled: true
+  parents_k: 3
+```
+
+### 5. 实测如何判断是不是真 multi-agent
+
+| 检查 | 通过条件 |
+|---|---|
+| 至少 2 个 generator 并行调用同一 round | log 显示 `[multi-agent] round 1: A1+A2+A3 parallel` |
+| 至少 2 个 judge 独立投票 | `multi_judge_vote.json` 含 ≥ 2 个 judge_scores |
+| Generator 与 critic 至少 1 次 push-back | log 含 `[debate] round X: A_i <-> C, debate_round=N` |
+| 不同 generator 的 prompt 立场不同 | `config.yaml::generators[*].prompt_role` 至少 2 个不同值 |
+| （可选）不同模型 | `config.yaml::generators[*].model` 至少 2 个不同值 |
+| aggregation 强制多样性 | log 含 `[aggregator] dropped X candidates due to Tanimoto > 0.7` |
+
+### 6. 不能说的（Multi-Agent 边界）
+
+1. **不能**声称 multi-agent 已证明优于 single-agent —— 真实 A/B 测（`--benchmark-id phase4_6_multi_agent`）尚未跑；当前仅离线 + 接线验证。
+2. **不能**把「同一个 LLM 跑 N 遍」当成 multi-agent —— 必须是模型 / prompt / 温度 / few-shot 至少一轴不同。
+3. **不能**让多裁判共享同一个 system prompt —— 三个 judge 必须各有独立的视角定义。
+4. **不能**让 aggregation 层只做"简单拼接" —— 必须有多样性过滤 + 投票加权，否则多样性被均值化。
+5. **不能**用 multi-agent 配置绕过 confirmatory 门控 —— `efficacy_supported ∧ stable_improvement ∧ safety_noninferior` 仍适用。
+6. 部署多模型增加 token 成本（每个 generator 平均 ~2-3K tokens / round）。如果 token 预算紧张，至少用 **同模型 + 多 prompt 立场**作为最低门槛。
+
+### 7. 复现命令
+
+```powershell
+# 1) 离线 smoke：multi-agent 接线
+python scripts/smoke_multi_agent.py
+
+# 2) 单 round multi-agent 真实运行（需要第二/第三个模型 API key）
+python scripts/run_multi_agent_round.py --round-id 1 --parents-block
+
+# 3) 完整 multi-agent 实验（>= 4 rounds, multi-model）
+python scripts/run_benchmark.py --matrix experiments/multi_agent_matrix.yaml --profile multi_agent --benchmark-id phase4_6_multi_agent
+
+# 4) 全量回归
+python -m pytest -q
+```
+
+### 8. 历史与一致性
+
+本仓库从一开始的设计目标就是 multi-agent（[PLAN.md](PLAN.md) 阶段 3 标题：扩展到 4-Agent）。中间实现进度暂时退化为单 agent 循环（AutoGPT/ReAct 风格），但**README 标题始终保留 `Multi-Agent Iterative Loop`**，**`config.yaml::generators:` 列表始终保留扩展位**。本设计节是 2026-09-29 的正式 multi-agent 实施规划，与现有 Phase 4.5 PARENTS 块正交 —— PARENTS 块是 selection operator，所有 multi-agent 生成器都共享同一组 parents。
+
+---
+
+## 2026-09-29：Phase 4.6 — Multi-Agent 实施规划
+
+把「README 上说 multi-agent」变成「代码上跑 multi-agent」。本节是路线图，**不是已经做完的事**。
+
+### 阶段 1（2026-09-29，本轮）✅
+
+- README 改回 multi-agent 叙事（标题 / 项目目标 / 架构 / 关键设计原则）
+- 新增「Multi-Agent 设计节」
+- 新增 `config.yaml::generators:` / `judges:` / `router:` / `debate:` / `aggregation:` 预留位
+- 新增 `agents/router.py`（专家路由骨架）
+
+### 阶段 2（待启动）
+
+- `loop.py` 实现真正的并行多生成器调用 + aggregation 层
+- `agents/judge.py` 支持 multi-judge 模式（独立视角投票）
+- 离线 multi-agent 测试（mock + 真实 mock generator）
+- 至少 2 个 generator（不同 prompt 立场），后续接 A/B
+
+### 阶段 3（待启动）
+
+- 接第二 / 第三个模型 provider（DeepSeek / Kimi / GLM 任选）通过 Volcengine Agent Plan
+- 真实 multi-agent 真实 run（A/B vs single-agent baseline）
+- 对抗辩论触发条件 + evidence ID 强校验
+- confirmatory 门控仍适用
+
+### 阶段 4（待启动）
+
+- 多模型 marketplace（market mechanism）：每个候选分子 = 一个 trader，根据评分"竞价"下一轮预算
+- 异构生成器的 N-of-N 投票机制
+
+### 不能说的
+
+1. **不能**在 multi-agent 没跑真实 A/B 之前声称优于 single-agent
+2. **不能**让"同模型 + 同 prompt"伪装成 multi-agent
+3. **不能**让多裁判共享同一个 system prompt
+4. **不能**让 aggregation 退化为简单拼接
