@@ -88,6 +88,36 @@ llm:
         thinking:
           type: adaptive
 
+    # ----- Phase 4.6: optional multi-model providers (commented by default) -----
+    # Uncomment any block below AND add it to loop.multi_agent.generators[]
+    # or loop.multi_agent.judges[] to enable real multi-model multi-agent.
+    # Each provider block MUST define base_url + api_key_env + model;
+    # the OpenAI-compatible client in agents/llm.py supports any of these.
+
+    # ----- generator A2: DeepSeek (Volcengine Agent Plan; strong reasoning) -----
+    # deepseek:
+    #   base_url: https://ark.cn-beijing.volces.com/api/plan/v3/chat/completions
+    #   api_key_env: VOLCENGINE_AGENT_API_KEY
+    #   model: deepseek-v4-flash
+    #   temperature: 1.0
+    #   max_tokens: 4096
+
+    # ----- generator A3 / judge J3: Kimi K3 (Volcengine Agent Plan; 1M context) -----
+    # kimi:
+    #   base_url: https://ark.cn-beijing.volces.com/api/plan/v3/chat/completions
+    #   api_key_env: VOLCENGINE_AGENT_API_KEY
+    #   model: kimi-k3
+    #   temperature: 0.5
+    #   max_tokens: 4096
+
+    # ----- generator A_alt: GLM 5.3 (Volcengine Agent Plan; cost-effective) -----
+    # glm:
+    #   base_url: https://ark.cn-beijing.volces.com/api/plan/v3/chat/completions
+    #   api_key_env: VOLCENGINE_AGENT_API_KEY
+    #   model: glm-5.3
+    #   temperature: 0.7
+    #   max_tokens: 4096
+
   # Which providers to use as generators (round-robin or parallel).
   # 2026-09-17: single-provider mode — DeepSeek provider block is
   # commented out above; only MiniMax is active. To bring DeepSeek back,
@@ -249,17 +279,26 @@ loop:
         prompt_role: qed         # loaded from agents/prompts/qed.j2 (Phase 4.6)
         temperature: 0.7
         weight: 1.0              # aggregation weight (per-generator confidence base)
-      # To enable true multi-agent, uncomment / add more generators:
+      # ----- Real multi-agent template (3 generators) -----
+      # Uncomment the block below (and the matching provider blocks at the
+      # top of llm.providers) to enable 3-generator multi-agent.
+      # All three MUST differ on prompt_role per README '5 roles' contract.
+      # - name: A1_qed
+      #   provider: MiniMax
+      #   model: MiniMax-M3
+      #   prompt_role: qed           # ADMET / QED / SA focus
+      #   temperature: 0.7
+      #   weight: 1.0
       # - name: A2_vina
       #   provider: deepseek
-      #   model: deepseek-chat
-      #   prompt_role: vina
+      #   model: deepseek-v4-flash
+      #   prompt_role: vina          # docking / binding / scaffold focus
       #   temperature: 1.0
       #   weight: 1.0
       # - name: A3_synth
       #   provider: kimi
       #   model: kimi-k3
-      #   prompt_role: synth
+      #   prompt_role: synth         # synthesis / SA / commercial focus
       #   temperature: 0.5
       #   weight: 1.0
 
@@ -271,16 +310,20 @@ loop:
         prompt_role: judge_property
         temperature: 0.3
         weight: 1.0
+      # ----- Real multi-judge template (3 judges) -----
+      # - name: J1_property
+      #   provider: judge_MiniMax
+      #   prompt_role: judge_property   # property / QED / SA / hERG
+      #   temperature: 0.3
+      #   weight: 1.0
       # - name: J2_docking
       #   provider: deepseek
-      #   model: deepseek-chat
-      #   prompt_role: judge_docking
+      #   prompt_role: judge_docking    # Vina / binding mode / pose
       #   temperature: 0.3
       #   weight: 1.0
       # - name: J3_synthesis
       #   provider: kimi
-      #   model: kimi-k3
-      #   prompt_role: judge_synthesis
+      #   prompt_role: judge_synthesis  # synthesis / SA / commercial
       #   temperature: 0.3
       #   weight: 1.0
 
