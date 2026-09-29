@@ -6,6 +6,19 @@ from .validate_mol import validate_smiles, validate_batch, lipinski_pass
 from .admet_score import estimate_admet, admet_batch
 from .diversity import get_scaffold, scaffold_diversity, batch_scaffolds
 from .dock_score import dock_smiles, dock_batch, is_vina_available
+# Phase 4.5 (2026-09-27, Priority A-3): selection operator library
+from .mutate import (
+    nearest_neighbors,
+    nearest_neighbors_with_meta,
+    brics_reassemble,
+    atom_substitution,
+    terminal_swap,
+    mutate,
+    format_parents_block,
+    offline_validation,
+    DEFAULT_TERMINALS,
+    PHARMA_SUBSTITUTIONS,
+)
 
 __all__ = [
     # validate_mol
@@ -23,6 +36,17 @@ __all__ = [
     "dock_smiles",
     "dock_batch",
     "is_vina_available",
+    # mutate (selection operators, Phase 4.5)
+    "nearest_neighbors",
+    "nearest_neighbors_with_meta",
+    "brics_reassemble",
+    "atom_substitution",
+    "terminal_swap",
+    "mutate",
+    "format_parents_block",
+    "offline_validation",
+    "DEFAULT_TERMINALS",
+    "PHARMA_SUBSTITUTIONS",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.4.5"

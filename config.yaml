@@ -205,6 +205,15 @@ loop:
   # manifest.json but deliberately kept OUT of `protocol_id` (evaluation caches
   # stay valid). Runs with different settings are not directly comparable.
   progress_signal: safe_vina
+  # Phase 4.5 (2026-09-27, Priority A-3): selection operator bridge.
+  # The PARENTS block injects the top-k safety-gated candidates (SMILES
+  # + vina + hERG + weakness) into the generator user prompt so the
+  # LLM has explicit structural anchors to mutate, instead of just
+  # re-sampling its training distribution. Without this, the audit
+  # numbers in docs/REVIEW_MINIMAX_ADVICE_20260917.md Section 0 apply
+  # (P(random beats agent) ~= 65.8%).
+  parents_block_enabled: true   # set to false to A/B test the LLM-only baseline
+  parents_k: 3                  # how many top safety-gated parents to surface
   output_dir: runs/
   memory_dir: memory/v2
   memory_namespace: default     # set a different name for each experiment arm

@@ -1624,55 +1624,105 @@ python -m pytest -q
 全量检查：**175 passed, 1 skipped**；网页脚本通过 Node 语法检查，HTTP/控制接口包含在回归测试中。
 本次证明的是可审计、可干预的执行闭环；不证明药效、安全性或相对其他算法的优化优势。
 
-> **Multi-Agent Iterative Loop for AI-Driven Drug Design (AIDD)**
-> LLM-generated molecules with RDKit / ADMET / Vina reflection.
+> **Reflective Single-Agent with Modular Memory for AI-Driven Drug Design (AIDD)**
+> LLM-generated molecules with RDKit / ADMET / Vina reflection + selection-operator bridge (Phase 4.5).
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](https://www.python.org/)
-[![Status](https://img.shields.io/badge/Status-Phase%203%20complete-blue)]()
+[![Status](https://img.shields.io/badge/Status-Phase%204.5%20complete-blue)]()
+[![Tools Version](https://img.shields.io/badge/tools-0.4.5-blue)]()
+
+> ⚠️ 本文档开头的「项目目标 / 架构概览 / 快速开始 / 项目结构 / 路线图」描述的是 **Phase 0–3 的早期形态**。项目自 2026-09-17 起已升级为 **单 Agent + 模块化记忆 + Persistent Harness + Selection Operator (Phase 4.5)** 的范式，下方「项目目标」「架构概览」「关键设计原则」三节已按 2026-09-27 最新实际重写；中间历史节保留作为时间线与可审计证据，**不能把早期节中的旧表述当成当前结论**。
 
 ---
 
-## 项目目标
+## 项目目标（2026-09-27 最新）
 
-构建一个**多 Agent 协作的分子优化闭环**，针对靶点蛋白（默认 **EGFR / PDB: 1M17**）实现：
+构建一个**受约束、有状态、能反思**的持久智能体分子优化闭环，针对靶点蛋白（默认 **EGFR / PDB: 1M17**）实现：
 
-> **LLM 生成候选分子 → 多工具打分 → 评判反馈 → 优化再生成**
+> **生成 → 评估 → 父子比较 → 假设核对 → 进度信号 → 策略选择 → 终止判断**
 
-迭代 5–6 轮后输出最有潜力的化合物集合。
+整个闭环由 **Persistent Harness** (`agents/harness/`) 统一协调，模型只负责选择下一步动作，RDKit 执行全部确定性分子编辑与性质计算。配套的 **ExperimentRunner** (`scripts/run_benchmark.py`) 负责多臂 A/B/C 消融、confirmatory 决策门控与 futility 早停。
+
+迭代轮次不再硬编码为「5–6 轮」，而由 **LoopController** 显式终止（`max_rounds` / `token_budget` / `judge_convergence_patience`）。Phase 4.5 起，**selection operator bridge (PARENTS block)** 把评估器选出的 top-k safety-gated parents 显式注入生成器 prompt，让搜索重新成为化学空间中的 walk，而不是 LLM 自身的 re-roll。
 
 ---
 
-## 架构概览（4-Agent 协作）
+## 架构概览（Phase 4.5 — Reflective Single-Agent）
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│  Orchestrator  (loop.py)                                     │
-│                                                              │
-│   ┌────────────┐    SMILES 列表    ┌──────────────┐          │
-│   │  Agent A   │ ───────────────▶ │   Agent B    │          │
-│   │ Generator  │                  │  Evaluator   │          │
-│   │ (LLM 双模型)│                  │  (B1/B2/B3)  │          │
-│   └─────▲──────┘                  └──────┬───────┘          │
-│         │ 优化指令                       │ 评估报告           │
-│         │                                ▼                    │
-│         │                          ┌──────────────┐           │
-│         └──────────────────────────│   Agent C    │           │
-│            反馈 + 新一轮 SMILES     │    Critic    │           │
-│                                    └──────────────┘           │
-└──────────────────────────────────────────────────────────────┘
+```text
+┌────────────────────────────────────────────────────────────────────────┐
+│  Persistent Harness  (agents/harness/runtime.py)                       │
+│                                                                        │
+│  ┌──────────────┐   1. 选择下一步动作   ┌────────────────────┐         │
+│  │   MiniMax-M3 │ ◀──────────────────── │   available_actions│         │
+│  │  (Planner)   │                       │   (state machine)  │         │
+│  │  + PARENTS   │                       └─────────┬──────────┘         │
+│  │    block     │                                 │                     │
+│  └──────▲───────┘                                 ▼                     │
+│         │                              ┌────────────────────┐           │
+│         │  假设核对 / 策略反馈         │   Tool Registry    │           │
+│         │                              │ ─ attach_fragment  │           │
+│         │                              │ ─ replace_subst.   │           │
+│         │                              │ ─ remove_terminal  │           │
+│         │                              │ ─ change_bond_order│           │
+│         │                              │ ─ evaluate_options │           │
+│         │                              │ ─ compare_p_c      │           │
+│         │                              │ ─ finish / choose_… │           │
+│         │                              └─────────┬──────────┘           │
+│         │                                        │ RDKit 确定性执行      │
+│         │                                        ▼                      │
+│         │                              ┌────────────────────┐           │
+│         │                              │   TaskState        │           │
+│         │                              │ + candidates       │           │
+│         │                              │ + strategies       │           │
+│         │                              │ + validation_hist. │           │
+│         │                              └─────────┬──────────┘           │
+│         │                                        │                      │
+│         │                              ┌─────────▼──────────┐           │
+│         │   progress_signal            │  Local  Repository │           │
+│         │   (safe_vina / safe_composite)│ (SQLite + JSON chkpt)│        │
+│         │                              └─────────┬──────────┘           │
+│         │                                        │                      │
+│         │                              ┌─────────▼──────────┐           │
+│         └──────────────────────────────│  FastAPI / Dashboard│          │
+│           (continue / rollback /      │  127.0.0.1:8765/8766 │          │
+│            switch_strategy / finish)  └────────────────────┘           │
+│                                                                        │
+│  ── 横向模块 (Phase 4.1–4.5) ───────────────────────────────────────    │
+│  WorkingMemory  FailedLigandSet    Judge     LoopController    RuleStore│
+│  (短期上下文)    (跨 session 去重)  (反思)    (max/budget/patience) (4 类)│
+│                                                                        │
+│  ── Phase 4.5 新增 ───────────────────────────────────────────────     │
+│  Selection Operator Bridge (PARENTS block) ────────────────────────     │
+│   evaluator top-k safety-gated parents ──▶ tools.mutate ──▶ prompt    │
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
-| Agent | 职责 | 实现 |
+| 模块 | 职责 | 实现位置 |
 |---|---|---|
-| **A 生成器** | 提候选分子 | MiniMax-M3（通过 OpenAI 兼容 API 调用；DeepSeek 模型未启用） |
-| **B1 化学评估** | 合法性 / Lipinski / SA | RDKit + sascorer |
-| **B2/B3 ADMET / Docking** | 多目标打分 | RDKit 描述符 + AutoDock Vina |
-| **C 裁判** | 汇总分歧 + 输出策略 | LLM (强模型) |
+| **Planner** | 每个评估单元选一个工具动作 | `agents/generator.py` + `agents/harness/runtime.py` |
+| **Selection Operator (Phase 4.5)** | 把 top-k safety-gated parents 注入 generator prompt | `tools/mutate.py` + `loop.py` |
+| **Tool Registry** | 类型受限的工具注册与执行前检查 | `agents/harness/tools.py` |
+| **State Machine** | `available_actions(state)` 决定合法下一步 | `agents/harness/runtime.py` |
+| **Evaluator** | RDKit / ADMET / Vina / calibrated_hERG / calibrated_ADMET | `tools/evaluate_*` + `tools/dock_score.py` |
+| **Judge** | 评估上轮建议是否被采纳，输出下一轮 focus | `agents/judge.py` |
+| **WorkingMemory** | 短期上下文（最近 N 轮 + best-so-far） | `agents/working_memory.py` |
+| **FailedLigandSet** | 跨 session 强制过滤已失败 SMILES | `agents/failed_set.py` |
+| **RuleStore (4 类)** | NEGATIVE / POSITIVE / CONTEXT / EVIDENCE 规则 | `agents/rule_memory.py` |
+| **LoopController** | 显式终止（max_rounds / token_budget / patience） | `agents/loop_controller.py` |
+| **Persistent Harness** | 检查点、暂停/恢复、用户干预、审计 | `agents/harness/runtime.py` + `agents/harness/state.py` |
+| **ExperimentRunner** | 多臂 A/B/C + confirmatory + futility 早停 | `scripts/run_benchmark.py` + `experiments/` |
+| **Repository** | SQLite / 检查点 / 收据 / 评估缓存 | `db/repository.py` + `db/access.py` |
+| **Dashboard / API** | 本地 Web UI（仅 127.0.0.1） | `agent_dashboard.py` + `api.py` |
+| **Calibration** | EVIDENCE 规则的预测误差度量 | `agents/agent_metrics.py` + `tools/calibration_probe.py` |
+| **Visualization** | 4 类规则占比 / 校准散点 / 跨 run 趋势 | `scripts/visualize_memory.py` → `docs/figures/` |
+
+**模型单一职责。** 当前真实模式只使用 `MiniMax-M3`（`config.yaml → harness.planner`），temperature 1.0、thinking disabled，通过 OpenAI 兼容客户端调用；`judge_MiniMax` 用同一模型、temperature 0.3、adaptive thinking。DeepSeek provider 块保持注释状态。
 
 ---
 
-## 快速开始
+## 快速开始（Phase 4.5）
 
 ### 1. 环境准备
 
@@ -1692,66 +1742,153 @@ conda install -c conda-forge vina  # 或从 GitHub release 下载二进制
 
 ```bash
 cp .env.example .env
-# 编辑 .env 填入 MiniMax_API_KEY（DeepSeek provider 块默认注释，不填也行）
+# 编辑 .env 填入 MiniMax_API_KEY（MiniMax Token Plan 1/2、Volcengine Agent/Coding Plan、Alibaba Cloud Token Plan 均可）
+# 可选：MiniMax_API_KEY_SECONDARY 双 key 自动 fallback（429 时切换）
+# DeepSeek provider 块默认注释，不会调用 DeepSeek 模型 API
 ```
 
-### 3. 跑通最小工具测试
+### 3. 离线烟雾（< 1 秒，验证接线）
 
-```bash
-python tests/test_tools.py
+```powershell
+# A. 工具层烟雾：确认 RDKit / ADMET / Vina / mutate / calibrate 全部可导入
+python -c "import tools; print('tools version:', tools.__version__)"
+
+# B. ExperimentRunner 烟雾：跑 mock 4 臂矩阵，确认 harness / runner 正确
+python scripts/run_benchmark.py --matrix experiments/matrix_v4.yaml --profile smoke --mock --no-dock --benchmark-id v4_smoke
+
+# C. Persistent Harness mock：跑通 agent_task 的 mock 模式（不调模型）
+python agent_task.py start --task-dir runs/quickstart_mock --goal "smoke test" --seed-smiles "Oc1ccccc1" --mock
 ```
 
-预期看到 4 个工具全部 PASS。
+### 4. 真实运行入口
+
+```powershell
+# A. 命令行 Persistent Harness（创建 → 暂停 → 改约束 → 恢复 → finish）
+python agent_task.py start  --task-dir runs/quickstart_real --goal "保留骨架，优化性质分" --seed-smiles "CCOc1ccccc1" --constraints-json '{"preserve_scaffold":true,"max_changed_atoms":4,"min_similarity":0.3,"require_safety_gate":true}' --max-steps 20 --steps 3
+python agent_task.py status --task-dir runs/quickstart_real
+
+# B. 本地 Web 控制台（推荐，需要交互式观察）
+python agent_dashboard.py
+# 打开 http://127.0.0.1:8765
+
+# C. Local FastAPI（让其它脚本/前端控制）
+uvicorn api:app --host 127.0.0.1 --port 8766
+
+# D. 实验矩阵（多臂 A/B/C + confirmatory）
+python scripts/run_benchmark.py --matrix experiments/matrix_v4.yaml --profile screening --benchmark-id real_ablation_v4
+python scripts/run_benchmark.py --matrix experiments/confirmatory_matrix_v4.yaml --profile confirmatory --benchmark-id confirmatory_v4
+```
+
+### 5. 全量回归测试
+
+```powershell
+python -m pytest -q
+# 预期：420 passed, 1 skipped（Phase 4.5 收口）
+# 历史：374 → 391（Phase 4.4 收口）→ 420（Phase 4.5 PARENTS 块 + tests/test_mutate.py）
+```
+
+> 早期 README 提到的 `python tests/test_tools.py`（4 个工具 smoke）已并入 `tools/__init__.py` 的导出层与 `pytest tests/test_tools*.py`（若存在），不再作为单一入口。
 
 ---
 
-## 项目结构
+## 项目结构（Phase 4.5）
 
 ```
 aidd-multi-agent/
-├─── README.md            # 本文件
-├─── PLAN.md              # 5 阶段实施路线图
+├─── README.md            # 本文件（顶部概要 + 中下部时间线）
+├─── PLAN.md              # 早期 5 阶段路线图（已 100% 完成；保留作为历史参考）
+├─── docs/                # 设计文档（PHASE_4_PLAN / PROJECT_HANDBOOK / REVIEW_* 等）
 ├─── LICENSE              # MIT
 ├─── .gitignore
 ├─── requirements.txt     # Python 依赖
-├─── config.yaml          # 靶点 / 模型 / 评分阈值配置
-├─── tools/               # Phase 1: 4 个独立工具
-│    ├─── validate_mol.py # SMILES 合法性 + Lipinski + SA score
-│    ├─── admet_score.py  # ADMET 多目标打分
-│    ├─── dock_score.py   # Vina 对接打分
+├─── config.yaml          # 靶点 / 模型 / 评分阈值 / Phase 4.5 PARENTS 开关
+├─── agent_dashboard.py   # 本地 Web 控制台（127.0.0.1:8765）
+├─── agent_task.py        # CLI 入口：start / pause / resume / constraints / status
+├─── api.py               # FastAPI 入口（uvicorn 127.0.0.1:8766）
+├─── loop.py              # Phase 4 主循环 + Phase 4.5 PARENTS 块注入
+├─── tools/               # 确定性 / RDKit 工具层（Phase 4.5 起含 mutate）
+│    ├─── validate_mol.py # SMILES 合法性 + Lipinski + SA + 立体化学
+│    ├─── admet_score.py  # ADMET 多目标打分（含 calibrated_admet 块）
+│    ├─── calibrated_herg.py / calibrated_admet.py
+│    │                     # 多特征 logistic + 主导贡献解释
+│    ├─── dock_score.py   # AutoDock Vina 对接打分
 │    ├─── diversity.py    # Bemis-Murcko 骨架多样性
-│    └─── __init__.py
-├─── agents/              # Phase 2-3: Agent 实现
-│    └─── __init__.py
-├─── loop.py              # Phase 2: 主循环
-├─── runs/                # 每轮 JSON 输出
-├─── tests/               # 单元测试
-└─── notebooks/           # 数据分析与可视化
+│    ├─── mutate.py        #  ★ Phase 4.5：selection operator (parents / brics / atom_subst / terminal_swap)
+│    ├─── calibration_probe.py / evaluation_cache.py / docking_cache.py / provenance.py / references.py
+│    └─── __init__.py     # __version__ = "0.4.5"
+├─── agents/              # 智能体核心模块
+│    ├─── generator.py    # LLM 单步生成 + PARENTS block 注入（Phase 4.5）
+│    ├─── evaluator.py    # 评估、帕累托、Pareto key
+│    ├─── judge.py        # 反思裁判
+│    ├─── llm.py          # OpenAI 兼容客户端 + key swap fallback
+│    ├─── working_memory.py / failed_set.py / rule_memory.py / agent_metrics.py
+│    │                     # WorkingMemory / FailedLigandSet / RuleStore (4 类) / 行为指标
+│    ├─── loop_controller.py / hitl.py / redaction.py
+│    └─── harness/        # Persistent Harness（agent_task / dashboard 的真正调度层）
+│         ├─── runtime.py / state.py / schema.py / tools.py
+│         │   # available_actions / 原子检查点 / schema 校验 / 工具注册
+│         ├─── editor.py / molecule_ops.py / planning.py
+│         │   # 确定性编辑 / 结构不变量 / 父子结构图 SVG
+│         ├─── attribution.py / evidence.py / screening.py
+│         │   # 评分分项归因 / 假设核对 / 本地初筛
+│         ├─── reliability.py   # ClientScope / 重试 / 错误分类
+│         ├─── dashboard.html / dashboard.py / presentation.py
+│         └─── __init__.py
+├─── db/                  # Repository（SQLite + 校验 + 索引）
+│    ├─── access.py / repository.py / schema.sql / patch_constraints.sql
+├─── experiments/         # ExperimentRunner + 矩阵 + 报告
+│    ├─── matrix.yaml / matrix_v4.yaml / confirmatory_matrix*.yaml / p3_signal_matrix.yaml
+│    ├─── contract.py / reporting.py / cross_version_compare.py
+│    ├─── inner_round_progression.py / summarize_ablation.py
+│    └─── profiles.yaml
+├─── scripts/             # 运行入口（CLI / runner / audit / calibration）
+│    ├─── run_benchmark.py / run_experiments.py / check_minimax_connectivity.py
+│    ├─── compare_2d_policies.py / compare_experiments.py / visualize_memory.py
+│    ├─── audit_pool_vs_random.py / validate_* / prepare_receptor.py
+│    └─── _test_memory.py / scout_parents.py / explain_score_history.py
+├─── benchmarks/          # 已运行的实验产物（local, git 忽略）
+├─── runs/                # 当前会话运行目录（local, git 忽略）
+├─── memory/              # WorkingMemory / FailedLigandSet / RuleStore 持久化（local, git 忽略）
+├─── tests/               # 单元测试（> 400 passed, 1 skipped）
+└─── notebooks/           # 数据分析与可视化脚本
 ```
 
 ---
 
-## 路线图（5 个阶段）
+## 路线图（实际里程碑 — Phase 0 → Phase 4.5）
 
-| Phase | 内容 | 周期 |
+> 下方路线图已按 **2026-09-29 实际状态** 重写。[PLAN.md](PLAN.md) 中早期「Phase 0–5」五阶段设计**已 100% 完成**，但实际项目继续推进到 **Phase 4.x 系列**（Persistent Harness + 模块化记忆 + 校准 + Selection Operator）。保留 [PLAN.md] 是作为时间线参考，不作为当前规划。
+
+| Phase | 内容 | 状态 |
 |---|---|---|
-| **0** | 环境准备 + API Key | 半天 |
-| **1** | 工具封装 + 单元测试 | 1–2 天 |
-| **2** | 2-Agent MVP 闭环 | 2–3 天 |
-| **3** | 扩展到 4-Agent | 2 天 |
-| **4** | 实验与图表 | 1–2 天 |
-| **5** | README 收尾 | 1 天 |
+| **0** | 环境准备 + API Key（RDKit / Meeko / Vina / MiniMax） | ✅ 完成（2026-09-13） |
+| **1** | 工具封装（validate_mol / admet_score / dock_score / diversity）+ 单元测试 | ✅ 完成 |
+| **1.5** | 第一阶段可信度修复（受体准备 / 对照身份 / 评分一致 / Mock 隔离） | ✅ 完成（[PHASE_1_CREDIBILITY.md](docs/PHASE_1_CREDIBILITY.md)） |
+| **2** | 2-Agent MVP 闭环（generate → evaluate → judge → repeat） | ✅ 完成 |
+| **2.5** | 持久 Harness（agent_task.py / Dashboard）+ 4 类别 RuleStore + WorkingMemory + FailedLigandSet | ✅ 完成 |
+| **3** | 实验矩阵：A/B/C 反馈-记忆消融（baseline / reflection / reflection_memory） | ✅ 完成（`benchmarks/real_ablation_v3_20260915`） |
+| **3.5** | Confirmatory 实验：n=10、Bonferroni、alpha=0.025、`do_not_approve` 决策 | ✅ 完成（`confirmatory_pareto_v3_1_20260916`） |
+| **4** | 工程收口 + Dashboard + API + 受控实验矩阵 v4（4 臂 + failed_set 隔离） | ✅ 完成 |
+| **4.1** | WorkingMemory + FailedLigandSet + LoopController + HITL | ✅ 完成 |
+| **4.2** | Self-Reflection Judge（Judge 评估自己建议的采纳率） | ✅ 完成 |
+| **4.3** | 评分分项归因 + 结构化预测 + 本地初筛 + 持久任务智能体确定性编辑 | ✅ 完成 |
+| **4.4** | 记忆校准（EVIDENCE 规则）+ 内存可视化 + 立体化学 + 安全口径指标 + 随机胜率门槛 + ADMET 扩展 | ✅ 完成（2026-09-27） |
+| **4.5** | **Selection Operator Bridge（PARENTS 块）** —— 把 evaluator 的 top-k safety-gated parents 注入 generator prompt | ✅ 完成（2026-09-27，未提交 → 本次推送） |
+| **4.6+** | （未规划） | 暂未启动 |
 
-详细分解见 [PLAN.md](PLAN.md)。
+详细分解与设计哲学见 [docs/PROJECT_HANDBOOK.md](docs/PROJECT_HANDBOOK.md) 与 [docs/PHASE_4_PLAN.md](docs/PHASE_4_PLAN.md)。
 
 ---
 
-## 关键设计原则
+## 关键设计原则（Phase 4.5）
 
-- **B1/B2/B3 严格走工具调用**，禁止靠 LLM 自由输出结构化信息（省 token、降错误率）
-- **循环 ≤ 6 轮**——避免上下文爆炸 + token 成本失控
-- **多专家独立打分**——降低单一模型偏差
-- **异构生成**——双 LLM 并行提高骨架多样性
+- **Evaluator 严格走 RDKit / Vina / calibrated 端点**，禁止 LLM 自由输出结构化性质评分（省 token、降错误率）
+- **LoopController 显式终止** —— `max_rounds` / `token_budget` / `judge_convergence_patience` 三条独立预算；不再硬编码「≤ 6 轮」
+- **Persistent Harness 是唯一调度器** —— `agents/harness/runtime.py` 同时管工具注册、状态机、原子检查点、暂停恢复、用户干预；不是「多 Agent 并行」
+- **单一 LLM 决策** —— 当前真实模式只跑 `MiniMax-M3`，模型只负责「选择下一步工具动作」，RDKit 执行全部确定性分子编辑与性质计算（DeepSeek provider 块默认注释，不调用 DeepSeek API）
+- **Phase 4.5 selection operator bridge (PARENTS block)** —— 把 evaluator 选出的 top-k safety-gated parents 显式注入 generator prompt，让搜索成为化学空间中的 walk 而非 LLM re-roll（审计依据：[docs/REVIEW_MINIMAX_ADVICE_20260917.md](docs/REVIEW_MINIMAX_ADVICE_20260917.md) Priority A-3）
+- **不宣称闭环优于 baseline 的稳定结论** —— 没有 confirmatory 三条门控（`efficacy_supported ∧ stable_improvement ∧ safety_noninferior`）同时成立，不把任何记忆/失败集配置写进默认
+- **诚实度量** —— 进度信号改用 `safe_vina`/`safe_composite`，加入 `random_gate` 防止「随机抽样胜过智能体」时仍发布对比
 
 ---
 
@@ -2594,3 +2731,136 @@ After:  391 passed, 1 skipped   (+17 tests)
 | schema_version 断言更新 | `tests/test_calibration_metrics.py` / `test_phase4_3.py` | — |
 
 完整设计文档见 [docs/PROJECT_HANDBOOK.md](docs/PROJECT_HANDBOOK.md) 第 42 章「Phase 4.4 收口 — 安全口径指标、随机胜率门槛、真实验收运行、ADMET 扩展」。
+
+
+---
+
+## 2026-09-27：Phase 4.5 — Selection Operator Bridge（PARENTS 块）
+
+本轮把「agent 在做什么」从「在 LLM 训练分布上 re-roll」翻译成「在化学空间里 walk」。单一新增组件是 `tools/mutate.py` + `loop.py` 中的 PARENTS 块注入，与之前所有 harness/记忆/校准层**正交**，可单独打开/关闭、单独 A/B 测。
+
+### 1. 为什么需要 selection operator
+
+按 [docs/REVIEW_MINIMAX_ADVICE_20260917.md](docs/REVIEW_MINIMAX_ADVICE_20260917.md) Priority A-3 审计：
+
+| 指标 | 历史观察 | 含义 |
+|---|---:|---|
+| `P(随机抽样胜过智能体)` | **65.8%** | 从确认池随机抽 8 个分子有 65.8% 概率胜过 agent |
+| `P(当轮最佳 = 全局最佳)` | **70%** | 多数轮次都在重新发现前几轮的同一个最佳 |
+| `P(连续轮最佳 Tanimoto > 0.6)` | **40.6%** | 多数相邻轮产物彼此不接近 |
+
+这些数字**不能**靠「加更多 LLM token」或「加更多轮次」改进——只能靠「给 generator 一个显式的 selection operator」。PARENTS 块就是这座桥：把 evaluator 选出的 top-k safety-gated parents（SMILES + Vina + hERG + weakness）注入 generator prompt，让模型有**显式的结构起点**去 mutate，而不是重新抽样自己的训练分布。
+
+### 2. 三块组件
+
+#### 2.1 Parent selection —— `tools.mutate.nearest_neighbors`
+
+ECFP4 Tanimoto（Morgan radius=2, 2048 bits）。给定 query SMILES，在 parents 池中找最相似的 k 个，返回 `[(smiles, similarity, rank)]`。**不**调用 LLM，**不**依赖外部数据库，单次 < 100 ms。
+
+#### 2.2 Mutation operators —— `tools.mutate.mutate`
+
+三个确定性、可种子化的 RDKit 操作：
+
+| 操作 | 函数 | 说明 |
+|---|---|---|
+| BRICS 重组 | `brics_reassemble(smi, n)` | 用 BRICS 键拆解后随机重组；产出 ≥ 1 个新分子 |
+| 原子替换 | `atom_substitution(smi, n)` | F↔Cl、芳香 H→F/OH、仲胺→醚（受邻居原子数约束以免打破价态） |
+| 末端基团替换 | `terminal_swap(smi, n)` | 在 15 个常见药效末端（`NCC`、`N1CCOCC1`、`OC(C)C` 等）之间随机 swap |
+
+每个操作都接受 `seed` 参数且 < 100 ms；整个 library 离线可测、离线可复现。
+
+#### 2.3 Prompt bridge —— `tools.mutate.format_parents_block`
+
+把 `loop.py::_select_safety_pareto_parents()` 选出的 top-k safety-gated candidates 渲染为**稳定的文本片段**注入 generator prompt：
+
+```text
+Local parents to mutate around (do NOT copy verbatim; make small
+structural changes such as swapping a terminal group, replacing
+an aromatic H with F/Cl, or rearranging BRICS fragments):
+
+[PARENT 1] smiles="CCNc1nc2c(n1)n(C)c3ccccc3n2" vina=-9.50 hERG=0.18 weakness="low solubility"
+[PARENT 2] smiles="COc1ccc(Nc2ncnc3[nH]cnc23)cc1" vina=-9.18 hERG=0.21 weakness="low metabolic stability"
+[PARENT 3] smiles="CCN(CC)c1ncnc2[nH]cnc12" vina=-8.91 hERG=0.14 weakness="rotatable bond count"
+```
+
+稳定合约：每个 parent 含 smiles + vina + hERG + weakness 4 字段；下游 `tests/test_mutate.py::test_format_parents_block_*` 用 schema 断言锁住字段顺序与符号。
+
+### 3. loop.py 的接入位置
+
+`config.yaml` 新增两个开关：
+
+```yaml
+loop:
+  progress_signal: safe_vina
+  # Phase 4.5 (2026-09-27, Priority A-3): selection operator bridge.
+  parents_block_enabled: true   # set false to A/B test the LLM-only baseline
+  parents_k: 3                  # how many top safety-gated parents to surface
+```
+
+`loop.py::run_loop` 在每轮调用 `generate_candidates(...)` 之前执行：
+
+1. `_select_safety_pareto_parents(enriched_history, k=parents_k)` —— 选 `safety_gate_pass is True` 且 `candidate_priority_key` 排名最高的 k 个（ties 时新候选胜出，使新改善能压过旧的同等排名）。
+2. `format_parents_block(parents_used, k=parents_k)` —— 渲染为 prompt 段。
+3. 把渲染结果作为 `parents_block` 参数传给 `agents.generator.generate_candidates(...)`，它最终进入 `USER_PROMPT_TEMPLATE.__PARENTS__` 占位符。
+
+**关键不变量**：`parents_block_enabled` 与 `parents_k` **不**进入 `protocol_id`（evaluation / docking 缓存保持有效）；它们写入 `manifest.json` 与每轮 `round_*.json`，下游审计可以回答「loop 真的见过 PARENTS 块吗」而无需重跑。
+
+### 4. agents/generator.py 的改动
+
+`generate_with_provider(...)` 新增 `parents_block: str = ""` 参数；`USER_PROMPT_TEMPLATE` 新增 `__PARENTS__` 占位符。`generate_candidates(...)` 在调用每个 provider 时都透传 `parents_block`，所以同一 batch 内所有 LLM 调用看到**同一组** structural anchors。
+
+### 5. 离线 smoke + 测试
+
+`tools/__init__.py` 导出所有 selection operator API，并把 `__version__` 从 `"0.1.0"` 升至 `"0.4.5"`。
+
+```text
+420 passed, 1 skipped in 89.48s
+```
+
+新增覆盖（基线 391 + 29 新增）：
+
+| 类别 | 测试文件 | 数量 |
+|---|---|---|
+| `format_parents_block` schema + field-order 锁住 | `tests/test_mutate.py` | 6 |
+| `nearest_neighbors` ECFP4 + threshold + invalid 输入 | `tests/test_mutate.py` | 5 |
+| `brics_reassemble` / `atom_substitution` / `terminal_swap` 确定性 + 种子 | `tests/test_mutate.py` | 10 |
+| `mutate` 集成（全部三种操作 + 异常恢复） | `tests/test_mutate.py` | 4 |
+| `offline_validation` 离线一致性 | `tests/test_mutate.py` | 4 |
+
+### 6. 不能说的（与 runtime 真实验收挂钩）
+
+1. **不能**声称 PARENTS 块已证明优于 LLM-only baseline —— A/B 真实运行（`--benchmark-id phase4_47_real_ablation`）尚未提交；当前仅完成离线 + 接线验证。
+2. **不能**说 `tools/mutate.py` 能替代 generator —— 它生成近邻池供 generator 装饰，不是 de novo 设计工具；`mutate(n_per_op=3)` 跑 100 call 预算给的是 focused neighbour-cloud，不是 diffusion tree。
+3. **不能**把 `parents_block` 写进 `protocol_id` —— 那是 evaluation cache 的 invalidation 边界；引入会让所有历史缓存失效。
+4. **不能**把 PARENTS block 与 EVALUATION 缓存键混淆 —— `manifest.json.parents_block_enabled` 与 `docking_cache.protocol_id` 是**独立**轴。
+5. Phase 4.5 收口后**仍**保留 futility / `random_gate` 等 Phase 4.4 门控 —— PARENTS 块不替代这些门控，只在「搜索」语义层做改造。
+6. `parents_k=3` 与 `parents_block_enabled=true` 是当前默认值，**真实 A/B 测**前不要直接发布「PARENTS 块让 agent 优于 random」之类的对比。
+
+### 7. 复现命令
+
+```powershell
+# 1) 离线 smoke：验证 mutate 库 + 接线
+python -c "import tools.mutate; print('mutate ready:', tools.mutate.__doc__.splitlines()[1])"
+
+# 2) 跑 mutate 自带的离线一致性（无 LLM，无 docking）
+python -c "from tools.mutate import offline_validation; print(offline_validation())"
+
+# 3) 全量回归
+python -m pytest -q
+# 420 passed, 1 skipped
+```
+
+### 8. 真实 A/B 验收命令（待运行）
+
+```powershell
+# 旧 LLM-only（parents_block_enabled=false）作为对照
+python scripts/run_benchmark.py --matrix experiments/matrix_v4.yaml --profile screening --benchmark-id phase4_47_llm_only
+
+# 新 PARENTS 块（parents_block_enabled=true）
+python scripts/run_benchmark.py --matrix experiments/matrix_v4.yaml --profile screening --benchmark-id phase4_47_parents
+
+# confirmatory 门控仍适用：需 efficacy_supported ∧ stable_improvement ∧ safety_noninferior 同时成立
+# 在确认结果之前，loop.py 的默认 config 保持 parents_block_enabled=true（现状），但不发布"A/B 胜出"对比
+```
+
+完整设计与动机见 [docs/REVIEW_MINIMAX_ADVICE_20260917.md](docs/REVIEW_MINIMAX_ADVICE_20260917.md) Priority A-3 节。

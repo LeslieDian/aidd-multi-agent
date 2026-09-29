@@ -55,6 +55,8 @@ __WEAKNESS__
 
 __MEMORY__
 
+__PARENTS__
+
 __FAILED__
 Return ONLY the JSON object.
 """
@@ -89,12 +91,20 @@ def generate_with_provider(
     weakness: str = "",
     memory_context: str = "",
     failed_prompt: str = "",
+    parents_block: str = "",
     use_mock: bool = False,
 ) -> dict:
     """Call one LLM provider once, return parsed JSON.
 
     Phase 4.1: memory_context (WorkingMemory) and failed_prompt (FailedLigandSet)
     are injected into the user prompt so the generator has context from prior rounds.
+
+    Phase 4.5: ``parents_block`` (from ``tools.mutate.format_parents_block``)
+    injects the top-k safety-gated parents + their weakness profile so the
+    generator has an explicit set of structural starting points to mutate.
+    Without this, the generator just re-samples its own distribution
+    (REVIEW_MINIMAX_ADVICE_20260917 Priority A-3 audit: P(random beats
+    agent)=72.7% on the historical pool).
 
     Returns: {"model": str, "provider": str, "smiles_list": [...], "rationale": str}
     Raises on parsing failure.
@@ -105,12 +115,19 @@ def generate_with_provider(
     focus_section = f"Focus this round on: {focus}" if focus else ""
     weakness_section = f"Address this structural weakness: {weakness}" if weakness else ""
     memory_section = f"Context from prior rounds: {memory_context}" if memory_context else ""
+    parents_section = (
+        f"Local parents to mutate around (do NOT copy verbatim; make small "
+        f"structural changes such as swapping a terminal group, replacing "
+        f"an aromatic H with F/Cl, or rearranging BRICS fragments):\n"
+        f"{parents_block}"
+    ) if parents_block else ""
     user = (
         USER_PROMPT_TEMPLATE
         .replace("__N__", str(n))
         .replace("__FOCUS__", focus_section)
         .replace("__WEAKNESS__", weakness_section)
         .replace("__MEMORY__", memory_section)
+        .replace("__PARENTS__", parents_section)
         .replace("__FAILED__", failed_prompt)
     )
     from tools.references import load_references, format_sar_for_prompt
@@ -140,8 +157,6 @@ def generate_with_provider(
     return result
 
 
-# ---------- Parallel multi-provider call ----------
-
 def generate_candidates(
     config: dict,
     providers: Iterable[str] | None = None,
@@ -150,6 +165,7 @@ def generate_candidates(
     weakness: str = "",
     memory_context: str = "",
     failed_prompt: str = "",
+    parents_block: str = "",
     use_mock: bool = False,
     max_workers: int = 4,
     max_attempts_per_provider: int = 1,
@@ -157,6 +173,8 @@ def generate_candidates(
     """Generate candidates from multiple providers in parallel.
 
     Phase 4.1: memory_context and failed_prompt are passed to every provider.
+    Phase 4.5: parents_block is passed to every provider so each call sees
+    the same set of structural starting points.
 
     Returns one dict per provider call. Failed calls are returned with
     `error` field instead of raising, so the loop can continue.
@@ -175,7 +193,7 @@ def generate_candidates(
             try:
                 result = generate_with_provider(
                     provider, config, n_per_provider, focus, weakness,
-                    memory_context, failed_prompt, use_mock,
+                    memory_context, failed_prompt, parents_block, use_mock,
                 )
             except Exception as exc:
                 result = {

@@ -34,6 +34,10 @@ import yaml
 
 from agents.generator import generate_candidates
 from agents.evaluator import evaluate_candidates, summarize_round, assign_pareto_metadata
+# Phase 4.5 (2026-09-27, Priority A-3): selection operator bridge.
+# Used to render the top-k safety-gated parents as a prompt segment so
+# the LLM generator has explicit structural starting points to mutate.
+from tools.mutate import format_parents_block
 from agents.judge import judge_round
 # Phase 4.1
 from agents.loop_controller import LoopController, LoopState, LoopConfig
@@ -234,6 +238,49 @@ def evaluate_candidates_with_cache(
     return ordered, stats
 
 
+# ============================ Phase 4.5 selection operator bridge ============================
+
+def _select_safety_pareto_parents(
+    enriched_history: list[list[dict]],
+    *,
+    k: int,
+) -> list[dict]:
+    """Pick the top-k safety-gated parents across the session's history.
+
+    Selection rule: ``safety_gate_pass is True``, ranked by
+    ``candidate_priority_key`` (``safety_gate_pass`` already True so the
+    leading tuple component is constant; ties break on Pareto rank then
+    composite score). The newest candidates win on rank ties so a fresh
+    improvement outranks an older equally-ranked one.
+
+    Returns at most ``k`` enriched candidate dicts. May be empty if no
+    candidate has passed the safety gate so far - the caller is expected
+    to handle that case (the PARENTS block is omitted from the prompt).
+    """
+    if k < 1:
+        raise ValueError("k must be >= 1")
+    flat: list[dict] = []
+    seen: set[str] = set()
+    for round_list in enriched_history:
+        for cand in round_list:
+            if not isinstance(cand, dict):
+                continue
+            if cand.get("safety_gate_pass") is not True:
+                continue
+            smi = cand.get("smiles")
+            if not smi or smi in seen:
+                continue
+            seen.add(smi)
+            flat.append(cand)
+    if not flat:
+        return []
+    # Import here to avoid a circular import (evaluator imports cache
+    # helpers at module load time).
+    from agents.evaluator import candidate_priority_key
+    flat.sort(key=candidate_priority_key, reverse=True)
+    return flat[:k]
+
+
 def run_loop(
     config: dict,
     output_dir: str = "runs",
@@ -343,6 +390,16 @@ def run_loop(
                     "docking_cache_enabled": docking_cache.enabled,
                     "docking_protocol_id": docking_protocol_id,
                     "docking_cache_dir": str(docking_cache.directory.resolve()),
+                    # Phase 4.5 (Priority A-3): selection operator
+                    # bridge - explicit structural anchors injected into
+                    # the generator prompt. NOT in protocol_id so the
+                    # evaluation / docking caches remain valid; recorded
+                    # in manifest so cross-version comparisons can
+                    # explicitly exclude or include this signal.
+                    "parents_block_enabled": bool(
+                        loop_cfg_dict.get("parents_block_enabled", True)
+                    ),
+                    "parents_k": int(loop_cfg_dict.get("parents_k", 3)),
                 },
                 "llm": {name: {k: v for k, v in settings.items() if k != "api_key_env" and "key" not in k.lower()}
                         for name, settings in llm_cfg.get("providers", {}).items()},
@@ -444,6 +501,33 @@ def run_loop(
         previous_summary = summary_history[-1] if summary_history else None
         previous_enriched = enriched_history[-1] if enriched_history else None
 
+        # ----- Phase 4.5: build the PARENTS block (selection operator) -----
+        # The PARENTS block is the *bridge* between the evaluator (which
+        # knows which molecules are best so far) and the generator (which
+        # would otherwise just re-sample its own training distribution).
+        # Without this, the audit numbers in REVIEW_MINIMAX_ADVICE_20260917
+        # Section 0 apply: random sampling beats the agent 65.8% of the
+        # time because the LLM is given no explicit structural anchors.
+        parents_block_enabled = bool(
+            loop_cfg_dict.get("parents_block_enabled", True)
+        )
+        parents_k = int(loop_cfg_dict.get("parents_k", 3))
+        parents_block = ""
+        parents_used: list[dict] = []
+        if parents_block_enabled and enriched_history:
+            parents_used = _select_safety_pareto_parents(
+                enriched_history, k=parents_k,
+            )
+            if parents_used:
+                parents_block = format_parents_block(parents_used, k=parents_k)
+        if verbose:
+            if parents_block:
+                print(f"  [parents] injecting {len(parents_used)} "
+                      f"safety-gated parents into generator prompt")
+            elif parents_block_enabled:
+                print(f"  [parents] no safety-gated candidates yet; "
+                      f"PARENTS block empty (round 0)")
+
         # ----- Agent A: generate (with WorkingMemory + FailedLigandSet) -----
         if verbose:
             print(f"  [A] generating with {provider_names}...")
@@ -456,6 +540,8 @@ def run_loop(
             # Phase 4.1: pass memory context + failed-smiles prompt
             memory_context=(memory.compress_for_generator() if memory_enabled else ""),
             failed_prompt=(failed_set.format_for_prompt() if failed_set_enabled else ""),
+            # Phase 4.5: explicit structural anchors for the generator
+            parents_block=parents_block,
             use_mock=use_mock,
             max_attempts_per_provider=generation_max_attempts,
         )
@@ -676,6 +762,14 @@ def run_loop(
             "candidates": enriched,
             "summary": summary,
             "judgment": judgment,
+            # Phase 4.5 (Priority A-3): record which parents + which block
+            # were injected into the generator for this round. Downstream
+            # audits can answer "did the loop actually see the PARENTS
+            # block?" without re-running the loop.
+            "parents_block_enabled": parents_block_enabled,
+            "parents_k": parents_k,
+            "parents_block_text": parents_block,
+            "parents_used_smiles": [c.get("smiles") for c in parents_used],
             "memory_snapshot": {
                 "recent_rounds": [
                     {
