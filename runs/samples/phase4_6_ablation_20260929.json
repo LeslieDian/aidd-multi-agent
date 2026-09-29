@@ -1,0 +1,85 @@
+{
+  "timestamp": 1790694522.9414585,
+  "n_per_generator": 1,
+  "max_rounds": 1,
+  "config_path": "D:\\vs project\\AIDD agent\\config.yaml",
+  "single_agent": {
+    "name": "single_agent",
+    "n_generators": 1,
+    "n_judges": 1,
+    "n_rounds": 1,
+    "elapsed_ms": 24526.5,
+    "last_round_aggregation_stats": {
+      "n_input": 1,
+      "n_after_dedup": 1,
+      "n_dropped_diversity": 0,
+      "n_kept": 1,
+      "per_generator_count": {
+        "single": 1
+      }
+    },
+    "last_round_judges": [
+      {
+        "name": "single_judge",
+        "score": 0.0,
+        "rationale_preview": ""
+      }
+    ],
+    "last_round_combined_score": 0.0,
+    "last_round_dispersion": 0.0,
+    "last_round_debate_triggered": false,
+    "last_round_expert": "",
+    "last_round_next_focus_preview": ""
+  },
+  "multi_agent": {
+    "name": "multi_agent",
+    "n_generators": 3,
+    "n_judges": 3,
+    "n_rounds": 1,
+    "elapsed_ms": 652544.4,
+    "last_round_aggregation_stats": {
+      "n_input": 3,
+      "n_after_dedup": 3,
+      "n_dropped_diversity": 1,
+      "n_kept": 2,
+      "per_generator_count": {
+        "A1_qed": 1,
+        "A2_vina": 1,
+        "A3_synth": 1
+      }
+    },
+    "last_round_judges": [
+      {
+        "name": "J1_property",
+        "score": 0.0,
+        "rationale_preview": ""
+      },
+      {
+        "name": "J2_docking",
+        "score": 0.0,
+        "rationale_preview": ""
+      },
+      {
+        "name": "J3_synthesis",
+        "score": 0.0,
+        "rationale_preview": ""
+      }
+    ],
+    "last_round_combined_score": 0.0,
+    "last_round_dispersion": 0.0,
+    "last_round_debate_triggered": true,
+    "last_round_expert": "prompt_exploit_expert",
+    "last_round_next_focus_preview": "Replace the piperidinylethoxy tail on candidate [1] with morpholinopropoxy (gefitinib's exact C7 tail); the morpholine oxygen reduces basicity vs piperidine, sh"
+  },
+  "qualitative_notes": [
+    "single-agent elapsed=24526.5ms vs multi-agent elapsed=652544.4ms (delta=628017.9ms)",
+    "single-agent combined_score=0.0 vs multi-agent combined_score=0.0",
+    "single-agent dispersion=0.0 vs multi-agent dispersion=0.0",
+    "multi-agent debate_triggered=True, single-agent debate_triggered=False"
+  ],
+  "honest_caveats": [
+    "This is a CHEAP smoke (1 round, n=1 per generator). It is not statistically meaningful on its own. Use Phase 4.6 stage 12 follow-up (replicate>=3) for any A/B claim.",
+    "multi-agent elapsed time is N_generators x single-agent in the absence of parallelism; absolute wall-time difference is not a quality signal here.",
+    "Judge confidence 0.0 from MockLLMClient is the placeholder; real judge confidence (e.g. 0.85 / 0.78 from Round 1 of run_full_multi_agent.py) requires use_mock=False and a non-placeholder judge prompt_role wiring (see TODO)."
+  ]
+}
