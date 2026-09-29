@@ -29,6 +29,28 @@ def positive(value, name, upper):
     return value
 
 
+def _is_multi_agent(config: dict) -> bool:
+    """Return True iff the config has loop.multi_agent.enabled=true."""
+    loop_cfg = config.get("loop") or {}
+    ma = loop_cfg.get("multi_agent") or {}
+    return bool(ma.get("enabled", False))
+
+
+def _read_multi_agent_log(task_dir: Path) -> dict | None:
+    """Read the per-task multi-agent log JSON if present.
+
+    Written by scripts/run_multi_agent_for_dashboard.py.
+    Returns None if absent.
+    """
+    p = Path(task_dir) / "multi_agent_log.json"
+    if not p.is_file():
+        return None
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return None
+
+
 class Dashboard:
     def __init__(self, task_root, config_path):
         self.root = Path(task_root).resolve()
@@ -64,6 +86,15 @@ class Dashboard:
         state = store.load()
         view = task_view(state, active)
         view["name"] = task
+        # Phase 4.6 stage 9: attach multi-agent log if any (independently
+        # of the legacy Harness path). The multi-agent worker writes its
+        # own log JSON next to the task's task.json.
+        try:
+            ma_log = _read_multi_agent_log(store.directory)
+            if ma_log is not None:
+                view["multi_agent"] = ma_log
+        except (ValueError, OSError, TypeError):
+            pass
         if active and state.status not in {"completed", "cancelled"}:
             view["status_label"] = "执行中"
         if state.pending and view["needs_recovery"]:
@@ -104,7 +135,7 @@ class Dashboard:
         goal = data.get("goal")
         if not isinstance(goal, str) or not goal.strip() or len(goal) > 5000:
             raise ValueError("请输入 1–5000 字的任务目标")
-        for flag in ("mock", "dock"):
+        for flag in ("mock", "dock", "multi_agent"):
             if type(data.get(flag, flag == "mock")) is not bool:
                 raise ValueError("运行模式必须是布尔值")
         steps = positive(data.get("steps", 2), "本次步数", 100)
@@ -135,8 +166,22 @@ class Dashboard:
             add_seed_candidates(state, seeds, source="dashboard")
         task = "task_" + uuid4().hex[:12]
         store = CheckpointStore(self.root / task)
+        multi_agent_requested = bool(data.get("multi_agent", False))
+        if multi_agent_requested and not _is_multi_agent(config):
+            raise ValueError(
+                "请求了 multi_agent 模式但 config.yaml 未启用 "
+                "loop.multi_agent.enabled=true。请先在配置中启用并填好 "
+                "generators[] / judges[]，或在请求中关闭 multi_agent。"
+            )
         with store.lock():
             store.save(state)
+        # If multi_agent requested, write the flag into a sidecar file so
+        # the launched worker (scripts/run_multi_agent_for_dashboard.py)
+        # can read it from disk without depending on TaskState schema.
+        if multi_agent_requested:
+            (store.directory / "multi_agent.flag").write_text(
+                "enabled\n", encoding="utf-8",
+            )
         self.launch(task, steps)
         return {"name": task}
 
@@ -153,9 +198,23 @@ class Dashboard:
                 raise ValueError("任务当前不能继续，请查看停止原因")
             if view["needs_recovery"] and not acknowledge:
                 raise ValueError("上次工具调用结果不确定，请先勾选恢复确认")
-            command = [sys.executable, str(ROOT / "agent_task.py"), "resume", "--task-dir", str(store.directory), "--steps", str(steps)]
-            if acknowledge:
-                command.append("--ack-interrupted")
+            # Phase 4.6 stage 9: if the task has a multi_agent.flag, launch
+            # the multi-agent worker instead of the legacy single-agent
+            # Harness. The worker writes its own multi_agent_log.json next
+            # to the task.json.
+            flag = store.directory / "multi_agent.flag"
+            if flag.is_file():
+                command = [
+                    sys.executable,
+                    str(ROOT / "scripts" / "run_multi_agent_for_dashboard.py"),
+                    "--task-dir", str(store.directory),
+                    "--config", str(self.config_path),
+                ]
+            else:
+                command = [sys.executable, str(ROOT / "agent_task.py"), "resume",
+                           "--task-dir", str(store.directory), "--steps", str(steps)]
+                if acknowledge:
+                    command.append("--ack-interrupted")
             with (store.directory / "worker.log").open("ab") as log:
                 self.processes[task] = subprocess.Popen(
                     command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,

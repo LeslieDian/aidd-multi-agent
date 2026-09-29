@@ -62,6 +62,24 @@ Return ONLY the JSON object.
 """
 
 
+# Short prompt mode (Phase 4.6 stage 11): a stripped-down system prompt
+# for models that burn all max_tokens on reasoning when given the full
+# EGFR brief (e.g. glm-5.3-flash, verified 2026-09-29). Keeps only the
+# JSON contract and one-sentence design brief; drops the reference
+# inhibitor list and curated SAR block. Triggered when the provider's
+# config carries ``prompt_mode: "short"``.
+SHORT_SYSTEM_PROMPT = """You are a medicinal chemist. Reply with STRICT JSON only:
+{{"smiles_list": ["SMILES1", "SMILES2", ...], "rationale": "..."}}.
+Provide exactly __N__ SMILES. Every SMILES must be RDKit-parseable.
+"""
+
+
+SHORT_USER_PROMPT_TEMPLATE = """Generate __N__ diverse SMILES that bind EGFR (PDB 1M17).
+__FOCUS__ __WEAKNESS__
+Return ONLY the JSON object.
+"""
+
+
 # ---------- Validation ----------
 
 def _extract_json(text: str) -> dict:
@@ -112,30 +130,49 @@ def generate_with_provider(
     from .llm import get_client
 
     client = get_client(provider_name, config, mock=use_mock)
-    focus_section = f"Focus this round on: {focus}" if focus else ""
-    weakness_section = f"Address this structural weakness: {weakness}" if weakness else ""
-    memory_section = f"Context from prior rounds: {memory_context}" if memory_context else ""
-    parents_section = (
-        f"Local parents to mutate around (do NOT copy verbatim; make small "
-        f"structural changes such as swapping a terminal group, replacing "
-        f"an aromatic H with F/Cl, or rearranging BRICS fragments):\n"
-        f"{parents_block}"
-    ) if parents_block else ""
-    user = (
-        USER_PROMPT_TEMPLATE
-        .replace("__N__", str(n))
-        .replace("__FOCUS__", focus_section)
-        .replace("__WEAKNESS__", weakness_section)
-        .replace("__MEMORY__", memory_section)
-        .replace("__PARENTS__", parents_section)
-        .replace("__FAILED__", failed_prompt)
+    provider_cfg = ((config.get("llm") or {}).get("providers") or {}).get(
+        provider_name, {},
     )
-    from tools.references import load_references, format_sar_for_prompt
-    references = "\n".join(f"- {name}: {row['smiles']} (PubChem CID {row['CID']})"
-                           for name, row in load_references().items())
-    sar_block = format_sar_for_prompt()
-    references_block = references + ("\n\n" + sar_block if sar_block else "")
-    system = SYSTEM_PROMPT.replace("__N__", str(n)).replace("__REFERENCES__", references_block)
+    # Phase 4.6 stage 11: short prompt mode for models that burn all
+    # tokens on reasoning under the long EGFR brief (verified
+    # 2026-09-29 against glm-5.3-flash). Trigger via the provider
+    # config's `prompt_mode: "short"`.
+    use_short = str(provider_cfg.get("prompt_mode", "")).lower() == "short"
+    if use_short:
+        focus_section = focus or ""
+        weakness_section = f" ({weakness})" if weakness else ""
+        user = (
+            SHORT_USER_PROMPT_TEMPLATE
+            .replace("__N__", str(n))
+            .replace("__FOCUS__", focus_section)
+            .replace("__WEAKNESS__", weakness_section)
+        )
+        system = SHORT_SYSTEM_PROMPT.replace("__N__", str(n))
+    else:
+        focus_section = f"Focus this round on: {focus}" if focus else ""
+        weakness_section = f"Address this structural weakness: {weakness}" if weakness else ""
+        memory_section = f"Context from prior rounds: {memory_context}" if memory_context else ""
+        parents_section = (
+            f"Local parents to mutate around (do NOT copy verbatim; make small "
+            f"structural changes such as swapping a terminal group, replacing "
+            f"an aromatic H with F/Cl, or rearranging BRICS fragments):\n"
+            f"{parents_block}"
+        ) if parents_block else ""
+        user = (
+            USER_PROMPT_TEMPLATE
+            .replace("__N__", str(n))
+            .replace("__FOCUS__", focus_section)
+            .replace("__WEAKNESS__", weakness_section)
+            .replace("__MEMORY__", memory_section)
+            .replace("__PARENTS__", parents_section)
+            .replace("__FAILED__", failed_prompt)
+        )
+        from tools.references import load_references, format_sar_for_prompt
+        references = "\n".join(f"- {name}: {row['smiles']} (PubChem CID {row['CID']})"
+                               for name, row in load_references().items())
+        sar_block = format_sar_for_prompt()
+        references_block = references + ("\n\n" + sar_block if sar_block else "")
+        system = SYSTEM_PROMPT.replace("__N__", str(n)).replace("__REFERENCES__", references_block)
 
     raw = client.chat(system=system, user=user, json_mode=True)
     result = {

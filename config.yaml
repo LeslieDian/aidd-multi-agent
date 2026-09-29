@@ -129,12 +129,16 @@ llm:
     # Used in scripts/check_all_api_keys.py probe (status=ok).
     # Coding Plan endpoint (api/coding/v3) accepts the GLM key;
     # the Agent Plan endpoint (api/plan/v3) returns 401.
+    # Phase 4.6 stage 11: prompt_mode: "short" strips the long EGFR
+    # brief that otherwise causes glm-5.3-flash to burn all max_tokens
+    # on reasoning and return empty content (verified 2026-09-29).
     glm_volcengine_coding:
       base_url: https://ark.cn-beijing.volces.com/api/coding/v3
       api_key_env: GLM_API_KEY
       model: glm-5.3-flash
       temperature: 0.7
       max_tokens: 4096
+      prompt_mode: short
 
     # ----- A3 / judge J_alt: Qwen 3.8 Flash via Alibaba Cloud Token Plan -----
     # Used in scripts/check_all_api_keys.py probe (status=ok).
@@ -310,48 +314,46 @@ loop:
   multi_agent:
     enabled: true               # 2026-09-29: master switch ON (verified providers)
     generators:
-      # ----- 2-generator multi-agent (verified live 2026-09-29) -----
-      # All differ on prompt_role per README '5 roles' contract.
-      # Note: glm-5.3-flash burns all tokens on reasoning and returns
-      # empty content (verified 2026-09-29); kept in the provider
-      # registry but NOT enabled as a generator until a shorter prompt
-      # path is added. See scripts/check_all_api_keys.py for the probe.
+      # ----- 3-generator multi-agent (verified live 2026-09-29) -----
+      # All three differ on prompt_role per README '5 roles' contract.
+      # GLM (A2_vina) is now usable via the `prompt_mode: short` path
+      # added in stage 11 (verified 2026-09-29).
       - name: A1_qed
         provider: MiniMax
         model: MiniMax-M3
         prompt_role: qed           # ADMET / QED / SA focus
         temperature: 0.7
         weight: 1.0
-      - name: A2_synth
+      - name: A2_vina
+        provider: glm_volcengine_coding
+        model: glm-5.3-flash
+        prompt_role: vina          # binding / scaffold focus
+        temperature: 1.0
+        weight: 1.0
+      - name: A3_synth
         provider: qwen_aliyun
         model: qwen3.8-flash
         prompt_role: synth         # synthesis / SA / commercial focus
         temperature: 0.5
         weight: 1.0
-      # - name: A3_vina        # disabled: glm-5.3-flash reasoning burn
-      #   provider: glm_volcengine_coding
-      #   model: glm-5.3-flash
-      #   prompt_role: vina
-      #   temperature: 1.0
-      #   weight: 1.0
 
     judges:
-      # ----- 2-judge multi-agent (verified live 2026-09-29) -----
+      # ----- 3-judge multi-agent (verified live 2026-09-29) -----
       - name: J1_property
         provider: judge_MiniMax
         prompt_role: judge_property   # property / QED / SA / hERG
         temperature: 0.3
         weight: 1.0
-      - name: J2_synthesis
+      - name: J2_docking
+        provider: glm_volcengine_coding
+        prompt_role: judge_docking    # Vina / binding mode / pose
+        temperature: 0.3
+        weight: 1.0
+      - name: J3_synthesis
         provider: qwen_aliyun
         prompt_role: judge_synthesis  # synthesis / SA / commercial
         temperature: 0.3
         weight: 1.0
-      # - name: J3_docking       # disabled: glm-5.3-flash reasoning burn
-      #   provider: glm_volcengine_coding
-      #   prompt_role: judge_docking
-      #   temperature: 0.3
-      #   weight: 1.0
 
     router:
       enabled: true              # 2026-09-29: ON

@@ -462,6 +462,54 @@ def maybe_debate(
     return True, reason, critic_text
 
 
+def debate_recall_generators(
+    *,
+    config: dict,
+    generators: list[dict],
+    n_per_generator: int,
+    base_focus: str,
+    base_weakness: str,
+    critic_text: str,
+    memory_context: str,
+    parents_block: str,
+    use_mock: bool,
+    max_rounds: int,
+) -> dict[str, list[dict]]:
+    """Re-call generators with the critic's push-back injected into the prompt.
+
+    Phase 4.6 stage 10 (debate generator re-call): when should_enter_debate
+    triggers, this function calls each generator ONE more time in the
+    same round, with a new focus that includes `critic_text`. The
+    returned candidates are appended to the round's pool before the
+    final diversity ranking.
+
+    Failure mode: if the underlying call_multi_generators raises (e.g.
+    a model 5xx), this returns {} so the main loop can still record
+    the round without crashing. Callers detect the empty dict via
+    `if debate_per_gen:` and skip re-aggregation.
+    """
+    debate_focus = (
+        f"REVISION REQUEST FROM CRITIC:\n{critic_text}\n\n"
+        f"Previous focus was: {base_focus}"
+    ).strip()
+    try:
+        return call_multi_generators(
+            config=config,
+            generators=generators,
+            n_per_generator=n_per_generator,
+            focus=debate_focus,
+            weakness=base_weakness,
+            memory_context=memory_context,
+            failed_prompt="",
+            parents_block=parents_block,
+            use_mock=use_mock,
+            max_attempts_per_provider=max_rounds,
+        )
+    except Exception as exc:
+        log.warning("[multi_agent] debate re-call failed: %s", exc)
+        return {}
+
+
 # ============================================================
 # Evaluation glue (Phase 4.6 stage 7 - end-to-end wiring)
 # ============================================================
@@ -764,12 +812,52 @@ def run_multi_agent_loop(
         })
 
         if debate_triggered and debate_cfg.get("enabled", False):
-            # Synthesize a single debate round for the run log; a real
-            # implementation would call generators again with the
-            # critic's push-back. Currently we only emit one round and
-            # fall through to the next loop iteration with debate_critique
-            # folded into per_focus on the next round.
-            pass
+            # Stage 10: actually re-call each generator with the critic's
+            # push-back injected into the prompt. New candidates are
+            # merged into the per-generator pool and re-aggregated.
+            try:
+                debate_per_gen = debate_recall_generators(
+                    config=config,
+                    generators=gens,
+                    n_per_generator=n_per_generator,
+                    base_focus=focus,
+                    base_weakness=weakness,
+                    critic_text=critic_text,
+                    memory_context="",
+                    parents_block=parents_block,
+                    use_mock=use_mock,
+                    max_rounds=debate_cfg.get("max_rounds", 3),
+                )
+            except Exception as exc:
+                log.warning("[multi_agent] debate re-call failed: %s", exc)
+                debate_per_gen = {}
+            # Merge into the existing per-generator pool.
+            for gen_name, items in (debate_per_gen or {}).items():
+                per_gen.setdefault(gen_name, []).extend(items)
+            # Re-aggregate with the expanded pool so the debate
+            # revisions can win the diversity ranking.
+            agg, agg_stats = aggregate_round(per_gen, aggregation_cfg=aggregation_cfg)
+            if verbose:
+                print(f"  [debate] re-aggregated: input={agg_stats['n_input']} "
+                      f"after_dedup={agg_stats['n_after_dedup']} "
+                      f"kept={agg_stats['n_kept']}")
+            # Re-flatten enriched / candidates for downstream evaluate.
+            enriched, summary = evaluate_aggregated_candidates(
+                candidates=[
+                    {
+                        "smiles": c.smiles,
+                        "candidate_id": f"ma:r{round_num}:c{i}:debate",
+                        "multi_agent_sources": list(c.sources),
+                        "multi_agent_score": c.score,
+                    }
+                    for i, c in enumerate(agg)
+                ],
+                config=config,
+            )
+            if verbose and summary:
+                print(f"  [debate] re-evaluate: n_total={summary.get('n_total')} "
+                      f"n_valid={summary.get('n_valid')} "
+                      f"best_property={summary.get('best_property')}")
 
     return {
         "mode": "multi_agent",
