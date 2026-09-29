@@ -1,0 +1,42 @@
+{
+  "timestamp": 1790687127.7813694,
+  "elapsed_ms": 209269.1,
+  "n_generators": 2,
+  "n_per_generator": 2,
+  "per_generator": {
+    "A1_qed": [
+      "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCN1CCCCC1",
+      "C#Cc1cccc(Nc2ncnc3cc(OCCN4CCOCC4)c(OCCOC)cc23)c1"
+    ],
+    "A2_synth": [
+      "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCO",
+      "COc1c(OCCCN2CCOCC2)c2ncnc(Nc3ccc(F)c(Cl)c3)c2cn1"
+    ]
+  },
+  "aggregation_stats": {
+    "n_input": 4,
+    "n_after_dedup": 4,
+    "n_dropped_diversity": 1,
+    "n_kept": 3,
+    "per_generator_count": {
+      "A1_qed": 2,
+      "A2_synth": 2
+    }
+  },
+  "aggregated_smiles": [
+    "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCN1CCCCC1",
+    "C#Cc1cccc(Nc2ncnc3cc(OCCN4CCOCC4)c(OCCOC)cc23)c1",
+    "COc1ncc2c(Nc3ccc(F)c(Cl)c3)ncnc2c1OCCCN1CCOCC1"
+  ],
+  "aggregated_sources": [
+    [
+      "A1_qed"
+    ],
+    [
+      "A1_qed"
+    ],
+    [
+      "A2_synth"
+    ]
+  ]
+}

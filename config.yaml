@@ -118,6 +118,45 @@ llm:
     #   temperature: 0.7
     #   max_tokens: 4096
 
+    # ============================================================
+    # Phase 4.6 (2026-09-29): verified multi-agent providers
+    # ============================================================
+    # Connectivity verified 2026-09-29 against the keys present in .env.
+    # To add a second model for multi-agent, populate any of the blocks
+    # below and reference the provider name in loop.multi_agent.generators[].
+
+    # ----- A2: GLM 5.3 Flash via Volcengine Coding Plan -----
+    # Used in scripts/check_all_api_keys.py probe (status=ok).
+    # Coding Plan endpoint (api/coding/v3) accepts the GLM key;
+    # the Agent Plan endpoint (api/plan/v3) returns 401.
+    glm_volcengine_coding:
+      base_url: https://ark.cn-beijing.volces.com/api/coding/v3
+      api_key_env: GLM_API_KEY
+      model: glm-5.3-flash
+      temperature: 0.7
+      max_tokens: 4096
+
+    # ----- A3 / judge J_alt: Qwen 3.8 Flash via Alibaba Cloud Token Plan -----
+    # Used in scripts/check_all_api_keys.py probe (status=ok).
+    # Note: DEEPSEEK_API_KEY is the same sk-sp-... key as QWEN_API_KEY in
+    # .env; both currently point to qwen3.8-flash (Aliyun Token Plan only
+    # exposes that one model for this account, other qwen/deepseek models
+    # return 404 NotFound).
+    qwen_aliyun:
+      base_url: https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
+      api_key_env: QWEN_API_KEY
+      model: qwen3.8-flash
+      temperature: 0.7
+      max_tokens: 4096
+
+    # ----- A_alt / J_alt: same model, alternate env var (same key, kept for parity) -----
+    qwen_aliyun_alt:
+      base_url: https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
+      api_key_env: DEEPSEEK_API_KEY
+      model: qwen3.8-flash
+      temperature: 0.7
+      max_tokens: 4096
+
   # Which providers to use as generators (round-robin or parallel).
   # 2026-09-17: single-provider mode — DeepSeek provider block is
   # commented out above; only MiniMax is active. To bring DeepSeek back,
@@ -269,66 +308,53 @@ loop:
   # loop.py falls back to the legacy single-generator path
   # (`llm.generators` provider list). Same for `multi_agent.judges`.
   multi_agent:
-    enabled: false              # master switch; default off (single-agent behavior)
+    enabled: true               # 2026-09-29: master switch ON (verified providers)
     generators:
-      # Default: single generator (current behavior). Replace with multi
-      # for real multi-agent runs (see scripts/smoke_multi_agent.py).
+      # ----- 2-generator multi-agent (verified live 2026-09-29) -----
+      # All differ on prompt_role per README '5 roles' contract.
+      # Note: glm-5.3-flash burns all tokens on reasoning and returns
+      # empty content (verified 2026-09-29); kept in the provider
+      # registry but NOT enabled as a generator until a shorter prompt
+      # path is added. See scripts/check_all_api_keys.py for the probe.
       - name: A1_qed
-        provider: MiniMax        # must match llm.providers.<key>
+        provider: MiniMax
         model: MiniMax-M3
-        prompt_role: qed         # loaded from agents/prompts/qed.j2 (Phase 4.6)
+        prompt_role: qed           # ADMET / QED / SA focus
         temperature: 0.7
-        weight: 1.0              # aggregation weight (per-generator confidence base)
-      # ----- Real multi-agent template (3 generators) -----
-      # Uncomment the block below (and the matching provider blocks at the
-      # top of llm.providers) to enable 3-generator multi-agent.
-      # All three MUST differ on prompt_role per README '5 roles' contract.
-      # - name: A1_qed
-      #   provider: MiniMax
-      #   model: MiniMax-M3
-      #   prompt_role: qed           # ADMET / QED / SA focus
-      #   temperature: 0.7
-      #   weight: 1.0
-      # - name: A2_vina
-      #   provider: deepseek
-      #   model: deepseek-v4-flash
-      #   prompt_role: vina          # docking / binding / scaffold focus
+        weight: 1.0
+      - name: A2_synth
+        provider: qwen_aliyun
+        model: qwen3.8-flash
+        prompt_role: synth         # synthesis / SA / commercial focus
+        temperature: 0.5
+        weight: 1.0
+      # - name: A3_vina        # disabled: glm-5.3-flash reasoning burn
+      #   provider: glm_volcengine_coding
+      #   model: glm-5.3-flash
+      #   prompt_role: vina
       #   temperature: 1.0
-      #   weight: 1.0
-      # - name: A3_synth
-      #   provider: kimi
-      #   model: kimi-k3
-      #   prompt_role: synth         # synthesis / SA / commercial focus
-      #   temperature: 0.5
       #   weight: 1.0
 
     judges:
-      # Default: single judge (current behavior). Replace with multi for
-      # real multi-agent runs.
+      # ----- 2-judge multi-agent (verified live 2026-09-29) -----
       - name: J1_property
         provider: judge_MiniMax
-        prompt_role: judge_property
+        prompt_role: judge_property   # property / QED / SA / hERG
         temperature: 0.3
         weight: 1.0
-      # ----- Real multi-judge template (3 judges) -----
-      # - name: J1_property
-      #   provider: judge_MiniMax
-      #   prompt_role: judge_property   # property / QED / SA / hERG
-      #   temperature: 0.3
-      #   weight: 1.0
-      # - name: J2_docking
-      #   provider: deepseek
-      #   prompt_role: judge_docking    # Vina / binding mode / pose
-      #   temperature: 0.3
-      #   weight: 1.0
-      # - name: J3_synthesis
-      #   provider: kimi
-      #   prompt_role: judge_synthesis  # synthesis / SA / commercial
+      - name: J2_synthesis
+        provider: qwen_aliyun
+        prompt_role: judge_synthesis  # synthesis / SA / commercial
+        temperature: 0.3
+        weight: 1.0
+      # - name: J3_docking       # disabled: glm-5.3-flash reasoning burn
+      #   provider: glm_volcengine_coding
+      #   prompt_role: judge_docking
       #   temperature: 0.3
       #   weight: 1.0
 
     router:
-      enabled: false              # Phase 4.6 stage 5; default off
+      enabled: true              # 2026-09-29: ON
       experts:
         property_weak: prompt_qed_expert
         vina_weak:     prompt_vina_expert
@@ -336,7 +362,7 @@ loop:
         ok:            prompt_exploit_expert
 
     debate:
-      enabled: false              # Phase 4.6 stage 5; default off
+      enabled: true              # 2026-09-29: ON
       max_rounds: 3
       disagreement_threshold: 0.15   # max - median judge score gap
       confidence_floor: 0.30         # any judge below this triggers debate
@@ -344,7 +370,7 @@ loop:
 
     aggregation:
       dedup: canonical            # canonical SMILES dedup
-      diversity_floor: 0.7        # Tanimoto > 0.7 -> drop lower-ranked
+      diversity_floor: 0.7        # Tanimoto > 5.0 -> drop lower-ranked
       top_n: 12                   # how many candidates to evaluate per round
   output_dir: runs/
   memory_dir: memory/v2

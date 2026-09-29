@@ -1,0 +1,200 @@
+{
+  "probed_at": 1790685430.2457757,
+  "n_total": 4,
+  "n_ok": 3,
+  "results": [
+    {
+      "env": "DEEPSEEK_API_KEY",
+      "ok": false,
+      "working": null,
+      "attempts": [
+        {
+          "label": "deepseek-direct",
+          "base_url": "https://api.deepseek.com/v1",
+          "model": "deepseek-chat",
+          "status": "auth_error",
+          "http_status": 401,
+          "latency_ms": 1072.846,
+          "response_received": false,
+          "schema_valid": false,
+          "response_preview": "",
+          "error": "Error code: 401 - {'error': {'message': 'Authentication Fails, Your api key: ****s8yw is invalid (request_id: c583bfa2-6"
+        },
+        {
+          "label": "volcengine-plan-deepseek-flash",
+          "base_url": "https://ark.cn-beijing.volces.com/api/plan/v3",
+          "model": "deepseek-v4-flash",
+          "status": "auth_error",
+          "http_status": 401,
+          "latency_ms": 417.312,
+          "response_received": false,
+          "schema_valid": false,
+          "response_preview": "",
+          "error": "Error code: 401 - {'error': {'code': 'AuthenticationError', 'message': 'The API key format is incorrect. Request id: 021"
+        },
+        {
+          "label": "volcengine-plan-deepseek-pro",
+          "base_url": "https://ark.cn-beijing.volces.com/api/plan/v3",
+          "model": "deepseek-v4-pro",
+          "status": "auth_error",
+          "http_status": 401,
+          "latency_ms": 388.49,
+          "response_received": false,
+          "schema_valid": false,
+          "response_preview": "",
+          "error": "Error code: 401 - {'error': {'code': 'AuthenticationError', 'message': 'The API key format is incorrect. Request id: 021"
+        },
+        {
+          "label": "volcengine-coding-deepseek-flash",
+          "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
+          "model": "deepseek-v4-flash",
+          "status": "auth_error",
+          "http_status": 401,
+          "latency_ms": 413.253,
+          "response_received": false,
+          "schema_valid": false,
+          "response_preview": "",
+          "error": "Error code: 401 - {'error': {'code': 'AuthenticationError', 'message': 'The API key format is incorrect. Request id: 021"
+        }
+      ]
+    },
+    {
+      "env": "GLM_API_KEY",
+      "ok": true,
+      "working": {
+        "label": "volcengine-coding-glm53flash",
+        "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
+        "model": "glm-5.3-flash",
+        "status": "ok",
+        "http_status": 200,
+        "latency_ms": 3365.823,
+        "response_received": true,
+        "schema_valid": true,
+        "response_preview": "{\"status\":\"ok\",\"sequence\":7}",
+        "error": ""
+      },
+      "attempts": [
+        {
+          "label": "zhipu-glm4flash",
+          "base_url": "https://open.bigmodel.cn/api/paas/v4",
+          "model": "glm-4-flash",
+          "status": "auth_error",
+          "http_status": 401,
+          "latency_ms": 416.99,
+          "response_received": false,
+          "schema_valid": false,
+          "response_preview": "",
+          "error": "Error code: 401 - {'error': {'code': '401', 'message': '令牌已过期或验证不正确'}}"
+        },
+        {
+          "label": "zhipu-glm4plus",
+          "base_url": "https://open.bigmodel.cn/api/paas/v4",
+          "model": "glm-4-plus",
+          "status": "auth_error",
+          "http_status": 401,
+          "latency_ms": 432.914,
+          "response_received": false,
+          "schema_valid": false,
+          "response_preview": "",
+          "error": "Error code: 401 - {'error': {'code': '401', 'message': '令牌已过期或验证不正确'}}"
+        },
+        {
+          "label": "volcengine-plan-glm53",
+          "base_url": "https://ark.cn-beijing.volces.com/api/plan/v3",
+          "model": "glm-5.3",
+          "status": "auth_error",
+          "http_status": 401,
+          "latency_ms": 447.857,
+          "response_received": false,
+          "schema_valid": false,
+          "response_preview": "",
+          "error": "Error code: 401 - {'error': {'code': 'AuthenticationError', 'message': 'The API key or AK/SK in the request is missing o"
+        },
+        {
+          "label": "volcengine-plan-glm53flash",
+          "base_url": "https://ark.cn-beijing.volces.com/api/plan/v3",
+          "model": "glm-5.3-flash",
+          "status": "auth_error",
+          "http_status": 401,
+          "latency_ms": 421.572,
+          "response_received": false,
+          "schema_valid": false,
+          "response_preview": "",
+          "error": "Error code: 401 - {'error': {'code': 'AuthenticationError', 'message': 'The API key or AK/SK in the request is missing o"
+        },
+        {
+          "label": "volcengine-coding-glm53flash",
+          "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
+          "model": "glm-5.3-flash",
+          "status": "ok",
+          "http_status": 200,
+          "latency_ms": 3365.823,
+          "response_received": true,
+          "schema_valid": true,
+          "response_preview": "{\"status\":\"ok\",\"sequence\":7}",
+          "error": ""
+        }
+      ]
+    },
+    {
+      "env": "MINIMAX_API_KEY",
+      "ok": true,
+      "working": {
+        "label": "minimax-tokenplan-direct",
+        "base_url": "https://api.minimaxi.com/v1",
+        "model": "MiniMax-M3",
+        "status": "ok",
+        "http_status": 200,
+        "latency_ms": 1663.428,
+        "response_received": true,
+        "schema_valid": true,
+        "response_preview": "<think>The user wants a strict JSON response with exact keys",
+        "error": ""
+      },
+      "attempts": [
+        {
+          "label": "minimax-tokenplan-direct",
+          "base_url": "https://api.minimaxi.com/v1",
+          "model": "MiniMax-M3",
+          "status": "ok",
+          "http_status": 200,
+          "latency_ms": 1663.428,
+          "response_received": true,
+          "schema_valid": true,
+          "response_preview": "<think>The user wants a strict JSON response with exact keys",
+          "error": ""
+        }
+      ]
+    },
+    {
+      "env": "QWEN_API_KEY",
+      "ok": true,
+      "working": {
+        "label": "aliyun-tokenplan-qwen38flash",
+        "base_url": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+        "model": "qwen3.8-flash",
+        "status": "ok",
+        "http_status": 200,
+        "latency_ms": 2253.607,
+        "response_received": true,
+        "schema_valid": true,
+        "response_preview": "{\"status\":\"ok\",\"sequence\":7}",
+        "error": ""
+      },
+      "attempts": [
+        {
+          "label": "aliyun-tokenplan-qwen38flash",
+          "base_url": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+          "model": "qwen3.8-flash",
+          "status": "ok",
+          "http_status": 200,
+          "latency_ms": 2253.607,
+          "response_received": true,
+          "schema_valid": true,
+          "response_preview": "{\"status\":\"ok\",\"sequence\":7}",
+          "error": ""
+        }
+      ]
+    }
+  ]
+}
