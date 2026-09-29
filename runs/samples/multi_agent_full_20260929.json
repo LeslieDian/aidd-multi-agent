@@ -1,0 +1,147 @@
+{
+  "timestamp": 1790688829.7555792,
+  "elapsed_ms": 153487.4,
+  "n_per_generator": 1,
+  "max_rounds": 2,
+  "mock": false,
+  "n_generators": 2,
+  "n_judges": 2,
+  "rounds_log": [
+    {
+      "round": 0,
+      "expert_prompt": "prompt_exploit_expert",
+      "router_fingerprint": {
+        "property_weak": false,
+        "vina_weak": false,
+        "sa_difficult": false
+      },
+      "per_generator_counts": {
+        "A1_qed": 1,
+        "A2_synth": 1
+      },
+      "aggregation_stats": {
+        "n_input": 2,
+        "n_after_dedup": 2,
+        "n_dropped_diversity": 1,
+        "n_kept": 1,
+        "per_generator_count": {
+          "A1_qed": 1,
+          "A2_synth": 1
+        }
+      },
+      "n_candidates": 1,
+      "n_enriched": 1,
+      "summary_keys": [
+        "avg_admet",
+        "best_safe_composite",
+        "best_safe_smiles",
+        "best_safe_vina",
+        "best_smiles",
+        "best_vina",
+        "funnel_enabled",
+        "n_complete",
+        "n_docked",
+        "n_docked_safe",
+        "n_fast_docked",
+        "n_promoted_to_full_dock",
+        "n_safety_pass",
+        "n_screened_out",
+        "n_total",
+        "n_unique_scaffolds",
+        "n_valid",
+        "pareto_front_size",
+        "safe_pareto_front_size",
+        "safety_pass_rate",
+        "top_candidates",
+        "valid_ratio"
+      ],
+      "judges": [
+        {
+          "name": "J1_property",
+          "score": 0.0,
+          "rationale_preview": ""
+        },
+        {
+          "name": "J2_synthesis",
+          "score": 0.0,
+          "rationale_preview": ""
+        }
+      ],
+      "judge_combined": 0.0,
+      "judge_dispersion": 0.0,
+      "next_focus": "Replace the terminal piperidine (N1CCCCC1) on candidate [0]'s 7-ethoxy tail with morpholine (N1CCOCC1); should drop logP ~0.7 and pull hERG-risk below 0.5 by removing a strongly basic tertiary amine.",
+      "debate_triggered": true,
+      "debate_reason": "low_confidence(min=0.000<0.3)",
+      "debate_critique_preview": ""
+    },
+    {
+      "round": 1,
+      "expert_prompt": "prompt_exploit_expert",
+      "router_fingerprint": {
+        "property_weak": false,
+        "vina_weak": false,
+        "sa_difficult": false
+      },
+      "per_generator_counts": {
+        "A1_qed": 1,
+        "A2_synth": 1
+      },
+      "aggregation_stats": {
+        "n_input": 2,
+        "n_after_dedup": 1,
+        "n_dropped_diversity": 0,
+        "n_kept": 1,
+        "per_generator_count": {
+          "A1_qed": 1,
+          "A2_synth": 1
+        }
+      },
+      "n_candidates": 1,
+      "n_enriched": 1,
+      "summary_keys": [
+        "avg_admet",
+        "best_safe_composite",
+        "best_safe_smiles",
+        "best_safe_vina",
+        "best_smiles",
+        "best_vina",
+        "funnel_enabled",
+        "n_complete",
+        "n_docked",
+        "n_docked_safe",
+        "n_fast_docked",
+        "n_promoted_to_full_dock",
+        "n_safety_pass",
+        "n_screened_out",
+        "n_total",
+        "n_unique_scaffolds",
+        "n_valid",
+        "pareto_front_size",
+        "safe_pareto_front_size",
+        "safety_pass_rate",
+        "top_candidates",
+        "valid_ratio"
+      ],
+      "judges": [
+        {
+          "name": "J1_property",
+          "score": 0.62,
+          "rationale_preview": "Prior morpholine-for-piperidine swap was adopted (logP 5.04→3.89, ADMET 0.737→0."
+        },
+        {
+          "name": "J2_synthesis",
+          "score": 0.0,
+          "rationale_preview": ""
+        }
+      ],
+      "judge_combined": 0.31,
+      "judge_dispersion": 0.31,
+      "next_focus": "Replace the morpholine on candidate [0]'s 7-ethoxy tail with a 2-hydroxyethoxy group (-OCH2CH2OH) to remove the basic tertiary amine; should drop hERG-risk below 0.5 while keeping the 3-Cl-4-F-aniline",
+      "debate_triggered": true,
+      "debate_reason": "low_confidence(min=0.000<0.3)",
+      "debate_critique_preview": "Prior morpholine-for-piperidine swap was adopted (logP 5.04→3.89, ADMET 0.737→0.786) but hERG-risk still 0.674 > 0.5; pi"
+    }
+  ],
+  "warnings": [],
+  "note": "Stage 7 wiring: per-generator prompt_role + router dispatch + evaluate + multi-judge vote + debate trigger. Generator re-call after debate is left as a follow-up (the debate critique is folded into the next round's focus instead)."
+}

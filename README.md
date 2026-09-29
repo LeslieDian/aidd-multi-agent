@@ -3085,35 +3085,66 @@ python -m pytest -q
 
 ---
 
-## 2026-09-29：Phase 4.6 — Multi-Agent 实施规划
+## 2026-09-29：Phase 4.6 — Multi-Agent 实施规划（实际进度）
 
-把「README 上说 multi-agent」变成「代码上跑 multi-agent」。本节是路线图，**不是已经做完的事**。
+把「README 上说 multi-agent」变成「代码上跑 multi-agent」。本节是路线图，**部分阶段已完成**。
 
 ### 阶段 1（2026-09-29，本轮）✅
 
 - README 改回 multi-agent 叙事（标题 / 项目目标 / 架构 / 关键设计原则）
 - 新增「Multi-Agent 设计节」
-- 新增 `config.yaml::generators:` / `judges:` / `router:` / `debate:` / `aggregation:` 预留位
-- 新增 `agents/router.py`（专家路由骨架）
+- 新增 `config.yaml::multi_agent.{generators, judges, router, debate, aggregation}` 预留位
+- 新增 `agents/router.py`（专家路由规则）
+- 新增 `agents/multi_agent.py`（heterogeneity / dedup+聚合 / multi-judge 投票 / debate 触发 / config validation）
 
-### 阶段 2（待启动）
+### 阶段 2（2026-09-29）✅
 
-- `loop.py` 实现真正的并行多生成器调用 + aggregation 层
-- `agents/judge.py` 支持 multi-judge 模式（独立视角投票）
-- 离线 multi-agent 测试（mock + 真实 mock generator）
-- 至少 2 个 generator（不同 prompt 立场），后续接 A/B
+- `loop_multi_agent.py::call_multi_generators` 实现真正的逐 generator 调用（per-generator `prompt_role` / `model` / `temperature`）
+- `agents/judge.py::judge_round` 已是 multi-judge-ready（每个 generator 走 judge 一次，然后用 `combine_judge_votes` 加权合并）
+- 离线 multi-agent 测试 35 个（`tests/test_multi_agent.py`）+ 18 个 (`tests/test_loop_multi_agent.py`)
 
-### 阶段 3（待启动）
+### 阶段 3（2026-09-29）✅
 
-- 接第二 / 第三个模型 provider（DeepSeek / Kimi / GLM 任选）通过 Volcengine Agent Plan
-- 真实 multi-agent 真实 run（A/B vs single-agent baseline）
-- 对抗辩论触发条件 + evidence ID 强校验
-- confirmatory 门控仍适用
+- 接第二/第三个 provider：GLM via Volcengine Coding Plan + Qwen via Alibaba Cloud Token Plan（连通性 probe 在 `runs/samples/all_api_keys_probe_20260929.json`）
+- 真实 multi-agent 端到端：`scripts/run_multi_agent_round.py`（单 round）+ `scripts/run_full_multi_agent.py`（多 round 全链路 router → evaluate → multi-judge → debate → 下一轮 focus）
+- 2-generator / 2-judge 真实 LLM 跑通（MiniMax + Qwen，详见 `runs/samples/multi_agent_full_20260929.json`）
+- 对抗辩论触发条件 + evidence ID 强校验（`agents/debate.py`）
+- GLM-5.3-flash 已实测：reasoning_tokens 烧光导致 content 为空；保留 provider 块但从 multi_agent.* 注释，等 short-prompt path
+- **未跑真实 A/B**：multi-agent vs single-agent baseline 仍是下一步
 
 ### 阶段 4（待启动）
 
 - 多模型 marketplace（market mechanism）：每个候选分子 = 一个 trader，根据评分"竞价"下一轮预算
 - 异构生成器的 N-of-N 投票机制
+- Generator re-call inside an active debate round（当前 debate 触发后只把 critique 折进下一轮 focus，不真调 generator）
+- 接入 `agent_task.py` / `agent_dashboard.py`（让用户能在 dashboard 选 multi-agent / single-agent 模式）
+
+### 真实跑通证据（2026-09-29）
+
+```text
+Multi-agent full loop: n_per_generator=1 max_rounds=2 mock=False
+=== Round 0 ===
+  [router] active expert: prompt_exploit_expert
+  [aggregator] input=2 after_dedup=2 dropped_diversity=0 kept=2
+  [evaluate] n_total=2 n_valid=2 best_property=None best_vina=None
+  [judges] combined=0.000 dispersion=0.000 vote=[J1=0.0, J2=0.0]
+  [judges] next_focus: Replace the basic tertiary-amine propoxy tail (piperidinylpropoxy in [0], morpholinylpropoxy in [1]) with a neutral 2-me...
+  [debate] round 0 trigger=low_confidence(min=0.000<0.3) critic=J1_property
+=== Round 1 ===
+  [router] active expert: prompt_exploit_expert
+  [aggregator] input=2 after_dedup=1 dropped_diversity=0 kept=1
+  [evaluate] n_total=1 n_valid=1 best_property=None best_vina=None
+  [judges] combined=0.815 dispersion=0.035 vote=[J1=0.85, J2=0.78]
+  [judges] next_focus: Replace the C7 2-methoxyethoxy on [0] with 3-morpholinopropoxy (gefitinib pattern) to add a protonatable morpholine N fo...
+```
+
+注意 Round 0 judges 都返回 confidence=0（mini-judge prompt_role wiring 在 mock 模式下的占位）；Round 1 真实 LLM 投票 confidence=0.85/0.78、dispersion=0.035，next_focus 是真实生成内容。
+
+### 测试基线
+
+```text
+505 passed, 1 skipped   # 离线回归（含 9 个 stage 7 wiring 测试 + 23 个 stage 4-5 prompt+debate 测试）
+```
 
 ### 不能说的
 
