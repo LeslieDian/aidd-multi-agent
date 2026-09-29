@@ -214,6 +214,95 @@ loop:
   # (P(random beats agent) ~= 65.8%).
   parents_block_enabled: true   # set to false to A/B test the LLM-only baseline
   parents_k: 3                  # how many top safety-gated parents to surface
+
+  # ============================================================
+  # Phase 4.6 (2026-09-29): Multi-Agent Collaboration
+  # ============================================================
+  # README narrative and code now target real multi-agent:
+  #   - multi_agent.generators[] : heterogeneous generators (different
+  #                    provider / model / prompt_role / temperature /
+  #                    few_shot) running in parallel each round. They MUST
+  #                    differ on at least one axis; otherwise the run
+  #                    degrades to single-agent (and a warning is logged).
+  #   - multi_agent.judges[]     : multi-judge vote (different prompt_role).
+  #                    Each judge produces its own score; the aggregator
+  #                    combines them via weighted vote. Different views =
+  #                    different prompts.
+  #   - multi_agent.router       : expert router activates prompt templates
+  #                    based on the current round state.
+  #   - multi_agent.debate       : adversarial generator <-> critic loop
+  #                    when judges disagree or confidence is low.
+  #   - multi_agent.aggregation  : dedup + diversity floor + voting +
+  #                    top_n cutoff.
+  #
+  # Backwards compatible: if `multi_agent.generators` is empty or missing,
+  # loop.py falls back to the legacy single-generator path
+  # (`llm.generators` provider list). Same for `multi_agent.judges`.
+  multi_agent:
+    enabled: false              # master switch; default off (single-agent behavior)
+    generators:
+      # Default: single generator (current behavior). Replace with multi
+      # for real multi-agent runs (see scripts/smoke_multi_agent.py).
+      - name: A1_qed
+        provider: MiniMax        # must match llm.providers.<key>
+        model: MiniMax-M3
+        prompt_role: qed         # loaded from agents/prompts/qed.j2 (Phase 4.6)
+        temperature: 0.7
+        weight: 1.0              # aggregation weight (per-generator confidence base)
+      # To enable true multi-agent, uncomment / add more generators:
+      # - name: A2_vina
+      #   provider: deepseek
+      #   model: deepseek-chat
+      #   prompt_role: vina
+      #   temperature: 1.0
+      #   weight: 1.0
+      # - name: A3_synth
+      #   provider: kimi
+      #   model: kimi-k3
+      #   prompt_role: synth
+      #   temperature: 0.5
+      #   weight: 1.0
+
+    judges:
+      # Default: single judge (current behavior). Replace with multi for
+      # real multi-agent runs.
+      - name: J1_property
+        provider: judge_MiniMax
+        prompt_role: judge_property
+        temperature: 0.3
+        weight: 1.0
+      # - name: J2_docking
+      #   provider: deepseek
+      #   model: deepseek-chat
+      #   prompt_role: judge_docking
+      #   temperature: 0.3
+      #   weight: 1.0
+      # - name: J3_synthesis
+      #   provider: kimi
+      #   model: kimi-k3
+      #   prompt_role: judge_synthesis
+      #   temperature: 0.3
+      #   weight: 1.0
+
+    router:
+      enabled: false              # Phase 4.6 stage 5; default off
+      experts:
+        property_weak: prompt_qed_expert
+        vina_weak:     prompt_vina_expert
+        sa_difficult:  prompt_sa_expert
+        ok:            prompt_exploit_expert
+
+    debate:
+      enabled: false              # Phase 4.6 stage 5; default off
+      max_rounds: 3
+      disagreement_threshold: 0.15   # max - median judge score gap
+      confidence_floor: 0.30         # any judge below this triggers debate
+      require_evidence_id: true
+
+    aggregation:
+      dedup: canonical            # canonical SMILES dedup
+      diversity_floor: 0.7        # Tanimoto > 0.7 -> drop lower-ranked
+      top_n: 12                   # how many candidates to evaluate per round
   output_dir: runs/
   memory_dir: memory/v2
   memory_namespace: default     # set a different name for each experiment arm
