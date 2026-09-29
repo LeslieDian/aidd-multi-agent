@@ -152,33 +152,43 @@ def call_multi_generators(
     parents_block: str = "",
     use_mock: bool = False,
     max_attempts_per_provider: int = 1,
+    per_generator_focus: dict[str, str] | None = None,
+    per_generator_weakness: dict[str, str] | None = None,
 ) -> dict[str, list[dict]]:
     """Call each generator sequentially (parallelism is the LLM client's job).
 
     Returns: {generator_name: [{smiles, confidence, ...}, ...]}
 
-    Notes:
-    - We do NOT run providers in parallel here because the existing
-      `generate_candidates` is already parallel within a single batch.
-      Per-generator iteration is sequential so that all generators see
-      the *same* parents_block / memory / focus at the start of the round.
-    - Confidence is taken from `result.get("confidence", 1.0)` if present;
-      otherwise 1.0 (placeholder until Phase 4.6 generator updates).
+    Phase 4.6 stage 7: per_generator_focus / per_generator_weakness let each
+    generator see a *different* prompt_role framing even when they share
+    the same base focus / weakness from the prior round's judge. This is
+    the wiring that turns multi-agent into a real "5 roles" contract:
+    A1_qed sees QED focus, A2_vina sees Vina focus, A3_synth sees
+    synthesis focus. Without this dict, all generators see the same
+    focus string and behave identically (still heterogeneous on
+    model/prompt_role, but the role is not visible to the model).
+
+    Confidence is taken from `result.get("confidence", 1.0)` if present;
+    otherwise 1.0 (placeholder).
     """
     outputs: dict[str, list[dict]] = {}
+    per_generator_focus = per_generator_focus or {}
+    per_generator_weakness = per_generator_weakness or {}
     for g in generators:
         name = g.get("name") or g.get("provider")
         provider = g.get("provider")
         if not provider:
             outputs[name] = []
             continue
+        gen_focus = per_generator_focus.get(name, focus)
+        gen_weakness = per_generator_weakness.get(name, weakness)
         try:
             results = generate_candidates(
                 config=config,
                 providers=[provider],
                 n_per_provider=n_per_generator,
-                focus=focus,
-                weakness=weakness,
+                focus=gen_focus,
+                weakness=gen_weakness,
                 memory_context=memory_context,
                 failed_prompt=failed_prompt,
                 parents_block=parents_block,
@@ -340,6 +350,172 @@ def maybe_route(
 
 
 # ============================================================
+# Per-generator focus helper (Phase 4.6 stage 7 wiring)
+# ============================================================
+
+from agents.prompts import load as load_prompt, render as render_prompt
+
+
+def build_per_generator_focus(
+    generators: list[dict],
+    base_focus: str,
+    base_weakness: str,
+    expert_prompt: str,
+    debate_critique: str = "",
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Compose a per-generator focus / weakness overlay.
+
+    For each generator, render its prompt_role template with the
+    available context. The result is a different `focus` string per
+    generator even when the upstream judge returned a single string.
+
+    Args:
+        generators: list of generator configs (must each carry a
+            prompt_role or default).
+        base_focus: focus string from the previous round's judge (may
+            be empty on round 0).
+        base_weakness: weakness string from the previous round's judge.
+        expert_prompt: name of the expert template activated by the
+            router (may be empty).
+        debate_critique: when adversarial debate is in progress, the
+            critic's most recent push-back to fold into the focus.
+
+    Returns:
+        (per_generator_focus, per_generator_weakness)
+    """
+    per_focus: dict[str, str] = {}
+    per_weakness: dict[str, str] = {}
+    for g in generators:
+        name = g.get("name") or g.get("provider")
+        role = g.get("prompt_role") or "default"
+        # Use the expert template if router activated one, otherwise
+        # the role-specific template.
+        template_name = expert_prompt if expert_prompt else role
+        try:
+            rendered = render_prompt(
+                template_name,
+                {
+                    "n": "1",
+                    "focus": base_focus,
+                    "weakness": base_weakness,
+                    "memory": "",
+                    "parents_block": "",
+                    "failed_prompt": "",
+                },
+            )
+        except Exception:
+            rendered = base_focus
+        per_focus[name] = f"{rendered}\n{debate_critique}".strip()
+        per_weakness[name] = base_weakness
+    return per_focus, per_weakness
+
+
+# ============================================================
+# Adversarial debate glue (Phase 4.6 stage 7)
+# ============================================================
+
+from agents.debate import (
+    DebateTurn,
+    extract_evidence_ids,
+    run_debate as debate_run,
+    should_terminate_debate,
+    validate_critic_turn,
+)
+
+
+def maybe_debate(
+    *,
+    judge_verdicts,
+    debate_cfg: dict,
+    initial_generator_text: str,
+    round_num: int,
+    verbose: bool = False,
+) -> tuple[bool, str, str]:
+    """If debate is enabled AND disagreement / low-confidence triggers,
+    run a synthetic single-round debate.
+
+    In live multi-agent runs the "critic" text is the highest-confidence
+    judge's critique. The "generator" response is the LLM-generated
+    SMILES list from this round.
+
+    Returns:
+        (should_debate, reason, critic_text)
+    """
+    if not debate_cfg.get("enabled", False):
+        return False, "debate_disabled", ""
+    should, reason = should_enter_debate(
+        judge_verdicts,
+        disagreement_threshold=debate_cfg["disagreement_threshold"],
+        confidence_floor=debate_cfg["confidence_floor"],
+    )
+    if not should:
+        return False, reason, ""
+    # Pick the highest-confidence judge's rationale as the critic push-back.
+    if judge_verdicts:
+        best = max(judge_verdicts, key=lambda v: v.score)
+        critic_text = f"{best.rationale}".strip()
+    else:
+        critic_text = ""
+    if verbose:
+        print(f"  [debate] round {round_num} trigger={reason} "
+              f"critic={best.judge_name if judge_verdicts else '(none)'}")
+    return True, reason, critic_text
+
+
+# ============================================================
+# Evaluation glue (Phase 4.6 stage 7 - end-to-end wiring)
+# ============================================================
+
+def evaluate_aggregated_candidates(
+    *,
+    candidates: list[dict],
+    config: dict,
+) -> tuple[list[dict], dict]:
+    """Evaluate aggregated multi-agent candidates using agents.evaluator.
+
+    This is the multi-agent equivalent of `loop.evaluate_candidates_with_cache`.
+    We intentionally do NOT wire evaluation caches (memory/evaluation_cache)
+    in this stage so multi-agent value can be measured against the
+    single-agent baseline without confounding variables.
+
+    Args:
+        candidates: aggregated candidates from run_multi_agent_loop's
+            aggregator (each carries SMILES + multi_agent_sources +
+            multi_agent_score).
+        config: full project config.
+
+    Returns:
+        (enriched, summary_dict)
+        enriched: candidates annotated with property / ADMET / safety.
+        summary_dict: best_property / best_vina / best_safe_vina / etc.
+    """
+    try:
+        from agents.evaluator import evaluate_candidates, summarize_round
+    except ImportError as exc:
+        log.warning("[multi_agent] evaluator import failed: %s", exc)
+        return candidates, {}
+    scoring = (config.get("scoring") or {})
+    target = (config.get("target") or {})
+    # Legacy loop uses dock_enabled env var to decide whether to call Vina.
+    import os as _os
+    dock_enabled = str(_os.environ.get("AIDD_DOCK_ENABLED", "0")).lower() in (
+        "1", "true", "yes",
+    )
+    try:
+        enriched = evaluate_candidates(
+            candidates=candidates,
+            scoring_config=scoring,
+            target_config=target,
+            dock_enabled=dock_enabled,
+        )
+    except Exception as exc:
+        log.warning("[multi_agent] evaluate_candidates failed: %s", exc)
+        return candidates, {}
+    summary = summarize_round(enriched)
+    return enriched, summary
+
+
+# ============================================================
 # Top-level multi-agent loop (new entry point)
 # ============================================================
 
@@ -411,15 +587,17 @@ def run_multi_agent_loop(
     summary_history: list[dict] = []
     focus = ""
     weakness = ""
+    debate_critique = ""
     best_property_history: list[float] = []
     best_vina_history: list[float] = []
     recent_sa_scores: list[float] = []
+    debate_cfg = read_debate(loop_cfg)
 
     for round_num in range(max_rounds):
         if verbose:
             print(f"\n=== [multi_agent] Round {round_num} ===")
 
-        # Router (may be a no-op)
+        # 1. Router dispatch (may be a no-op).
         expert_prompt, fp = maybe_route(
             loop_cfg=loop_cfg,
             best_property_history=best_property_history,
@@ -429,12 +607,11 @@ def run_multi_agent_loop(
         if verbose and expert_prompt:
             print(f"  [router] active expert: {expert_prompt}")
 
-        # Build PARENTS block (Phase 4.5 selection operator still applies)
+        # 2. Build PARENTS block (Phase 4.5 selection operator still applies).
         parents_block_enabled = bool(loop_cfg.get("parents_block_enabled", True))
         parents_k = int(loop_cfg.get("parents_k", 3))
         parents_block = ""
         if parents_block_enabled and enriched_history:
-            # Reuse the loop helper if importable; otherwise inline minimal version
             try:
                 from loop import _select_safety_pareto_parents
                 parents_used = _select_safety_pareto_parents(enriched_history, k=parents_k)
@@ -443,20 +620,31 @@ def run_multi_agent_loop(
             if parents_used:
                 parents_block = format_parents_block(parents_used, k=parents_k)
 
-        # Call each generator
+        # 3. Per-generator focus / weakness overlays (real "5 roles" wiring).
+        per_focus, per_weakness = build_per_generator_focus(
+            generators=gens,
+            base_focus=focus,
+            base_weakness=weakness,
+            expert_prompt=expert_prompt,
+            debate_critique=debate_critique,
+        )
+
+        # 4. Call each generator (heterogeneous, sequential per-gen).
         per_gen = call_multi_generators(
             config=config,
             generators=gens,
             n_per_generator=n_per_generator,
             focus=focus,
             weakness=weakness,
-            memory_context="",       # multi-agent path uses legacy loop's memory via subsequent call
+            memory_context="",
             failed_prompt="",
             parents_block=parents_block,
             use_mock=use_mock,
+            per_generator_focus=per_focus,
+            per_generator_weakness=per_weakness,
         )
 
-        # Aggregate
+        # 5. Aggregate (dedup + diversity + voting + top_n).
         agg, agg_stats = aggregate_round(per_gen, aggregation_cfg=aggregation_cfg)
         if verbose:
             print(f"  [aggregator] input={agg_stats['n_input']} "
@@ -469,7 +657,7 @@ def run_multi_agent_loop(
                 print(f"  [!] no candidates produced; stopping multi-agent loop")
             break
 
-        # Flatten aggregated -> candidate dicts for downstream evaluate
+        # 6. Flatten aggregated -> candidate dicts.
         candidates: list[dict] = []
         for i, c in enumerate(agg):
             candidates.append({
@@ -479,6 +667,71 @@ def run_multi_agent_loop(
                 "multi_agent_score": c.score,
             })
 
+        # 7. Evaluate (RDKit + ADMET + safety gate; no Vina unless env says so).
+        enriched, summary = evaluate_aggregated_candidates(
+            candidates=candidates,
+            config=config,
+        )
+        if verbose and summary:
+            print(f"  [evaluate] n_total={summary.get('n_total')} "
+                  f"n_valid={summary.get('n_valid')} "
+                  f"best_property={summary.get('best_property')} "
+                  f"best_vina={summary.get('best_vina')} "
+                  f"best_safe_vina={summary.get('best_safe_vina')}")
+
+        # 8. Multi-judge vote (independent judges).
+        judges = read_judges(loop_cfg)
+        if judges:
+            judge_result = call_multi_judges(
+                enriched=enriched,
+                config=config,
+                round_num=round_num,
+                judges=judges,
+                previous_focus=focus,
+                previous_summary=summary_history[-1] if summary_history else None,
+                previous_enriched=enriched_history[-1] if enriched_history else None,
+                use_mock=use_mock,
+            )
+            focus = judge_result.next_focus
+            weakness = ""  # weakness is recorded per-judge; top-weighted wins
+            if verbose:
+                print(f"  [judges] combined={judge_result.combined_score:.3f} "
+                      f"dispersion={judge_result.dispersion:.3f} "
+                      f"vote={[(v.judge_name, round(v.score,3)) for v in judge_result.verdicts]}")
+                print(f"  [judges] next_focus: {focus[:120]}")
+        else:
+            judge_result = None
+            if verbose:
+                print(f"  [judges] none configured; focus unchanged")
+
+        # 9. Adversarial debate trigger.
+        debate_triggered, debate_reason, critic_text = maybe_debate(
+            judge_verdicts=judge_result.verdicts if judge_result else [],
+            debate_cfg=debate_cfg,
+            initial_generator_text=focus or "",
+            round_num=round_num,
+            verbose=verbose,
+        )
+        debate_critique = critic_text if debate_triggered else ""
+
+        # 10. Track histories (for router + audit).
+        if summary:
+            bp = summary.get("best_property")
+            if isinstance(bp, (int, float)):
+                best_property_history.append(float(bp))
+            bv = summary.get("best_vina")
+            if isinstance(bv, (int, float)):
+                best_vina_history.append(float(bv))
+            recent_sa_scores = [
+                c.get("sa_score") for c in enriched
+                if isinstance(c.get("sa_score"), (int, float))
+            ][:5]
+
+        enriched_history.append(enriched)
+        if summary:
+            summary_history.append(summary)
+
+        # 11. Record round log.
         rounds_log.append({
             "round": round_num,
             "expert_prompt": expert_prompt,
@@ -490,7 +743,47 @@ def run_multi_agent_loop(
             "per_generator_counts": agg_stats.get("per_generator_count", {}),
             "aggregation_stats": agg_stats,
             "n_candidates": len(candidates),
+            "n_enriched": len(enriched),
+            "summary_keys": sorted(summary.keys()) if summary else [],
+            "judges": [
+                {
+                    "name": v.judge_name,
+                    "score": round(v.score, 4),
+                    "rationale_preview": v.rationale[:80],
+                }
+                for v in (judge_result.verdicts if judge_result else [])
+            ],
+            "judge_combined": round(judge_result.combined_score, 4)
+                if judge_result else None,
+            "judge_dispersion": round(judge_result.dispersion, 4)
+                if judge_result else None,
+            "next_focus": focus[:200],
+            "debate_triggered": debate_triggered,
+            "debate_reason": debate_reason,
+            "debate_critique_preview": critic_text[:120],
         })
+
+        if debate_triggered and debate_cfg.get("enabled", False):
+            # Synthesize a single debate round for the run log; a real
+            # implementation would call generators again with the
+            # critic's push-back. Currently we only emit one round and
+            # fall through to the next loop iteration with debate_critique
+            # folded into per_focus on the next round.
+            pass
+
+    return {
+        "mode": "multi_agent",
+        "n_generators": len(gens),
+        "n_judges": len(read_judges(loop_cfg)),
+        "rounds_log": rounds_log,
+        "warnings": warns,
+        "note": (
+            "Stage 7 wiring: per-generator prompt_role + router dispatch "
+            "+ evaluate + multi-judge vote + debate trigger. "
+            "Generator re-call after debate is left as a follow-up (the "
+            "debate critique is folded into the next round's focus instead)."
+        ),
+    }
 
     return {
         "mode": "multi_agent",

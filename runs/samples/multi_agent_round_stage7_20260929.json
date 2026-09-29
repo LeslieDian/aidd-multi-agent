@@ -1,0 +1,32 @@
+{
+  "timestamp": 1790688198.2573278,
+  "elapsed_ms": 31342.3,
+  "n_generators": 2,
+  "n_per_generator": 1,
+  "per_generator": {
+    "A1_qed": [
+      "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCN1CCCC1"
+    ],
+    "A2_synth": [
+      "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCN(C)C"
+    ]
+  },
+  "aggregation_stats": {
+    "n_input": 2,
+    "n_after_dedup": 2,
+    "n_dropped_diversity": 1,
+    "n_kept": 1,
+    "per_generator_count": {
+      "A1_qed": 1,
+      "A2_synth": 1
+    }
+  },
+  "aggregated_smiles": [
+    "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCN1CCCC1"
+  ],
+  "aggregated_sources": [
+    [
+      "A1_qed"
+    ]
+  ]
+}
