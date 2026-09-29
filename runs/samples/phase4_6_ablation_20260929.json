@@ -1,5 +1,5 @@
 {
-  "timestamp": 1790694522.9414585,
+  "timestamp": 1790694966.0326715,
   "n_per_generator": 1,
   "max_rounds": 1,
   "config_path": "D:\\vs project\\AIDD agent\\config.yaml",
@@ -8,7 +8,7 @@
     "n_generators": 1,
     "n_judges": 1,
     "n_rounds": 1,
-    "elapsed_ms": 24526.5,
+    "elapsed_ms": 12555.7,
     "last_round_aggregation_stats": {
       "n_input": 1,
       "n_after_dedup": 1,
@@ -29,22 +29,22 @@
     "last_round_dispersion": 0.0,
     "last_round_debate_triggered": false,
     "last_round_expert": "",
-    "last_round_next_focus_preview": ""
+    "last_round_next_focus_preview": "Replace the C7 pyrrolidinylethoxy tail with a morpholinopropoxy (gefitinib-style OCH2CH2CH2N-morpholine); removes basic amine and should drop logP ~0.7 and hERG"
   },
   "multi_agent": {
     "name": "multi_agent",
     "n_generators": 3,
     "n_judges": 3,
     "n_rounds": 1,
-    "elapsed_ms": 652544.4,
+    "elapsed_ms": 683136.3,
     "last_round_aggregation_stats": {
-      "n_input": 3,
-      "n_after_dedup": 3,
+      "n_input": 2,
+      "n_after_dedup": 2,
       "n_dropped_diversity": 1,
-      "n_kept": 2,
+      "n_kept": 1,
       "per_generator_count": {
         "A1_qed": 1,
-        "A2_vina": 1,
+        "A2_vina": 0,
         "A3_synth": 1
       }
     },
@@ -69,10 +69,10 @@
     "last_round_dispersion": 0.0,
     "last_round_debate_triggered": true,
     "last_round_expert": "prompt_exploit_expert",
-    "last_round_next_focus_preview": "Replace the piperidinylethoxy tail on candidate [1] with morpholinopropoxy (gefitinib's exact C7 tail); the morpholine oxygen reduces basicity vs piperidine, sh"
+    "last_round_next_focus_preview": "Replace the lipophilic piperidinylethoxy C7-tail on candidate [0] with a morpholinopropoxy group (gefitinib pattern); should drop logP by ~0.8, lower hERG-risk "
   },
   "qualitative_notes": [
-    "single-agent elapsed=24526.5ms vs multi-agent elapsed=652544.4ms (delta=628017.9ms)",
+    "single-agent elapsed=12555.7ms vs multi-agent elapsed=683136.3ms (delta=670580.6000000001ms)",
     "single-agent combined_score=0.0 vs multi-agent combined_score=0.0",
     "single-agent dispersion=0.0 vs multi-agent dispersion=0.0",
     "multi-agent debate_triggered=True, single-agent debate_triggered=False"

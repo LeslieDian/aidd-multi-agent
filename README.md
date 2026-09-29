@@ -1,2928 +1,383 @@
 # aidd-multi-agent
 
-## 多母体稳定性研究与决策死循环修复（2026-09-20，本轮最新）
-
-上一轮 v10 的「下一步」写的是：**在 2–3 个母体上各重复 ≤3 次，检验稳定性**。本轮就是去执行它，结果在执行前就撞上一个必须先解决的问题。
-
-### 1. 第一个阻塞：根本没有第二个母体
-
-检查历史运行目录后发现两件事：
-
-1. 之前 13 次二维诊断**全部使用同一个母体 `Oc1ccccc1`（苯酚）**；
-2. 冻结场景 `phenetole` 的一跳目录里**合格产物为 0**。
-
-也就是说，「多母体稳定性研究」当时**没有可用的第二个母体**。
-
-### 2. 离线母体侦察（零 API 成本）
-
-新增 `scripts/scout_parents.py`：纯离线 RDKit 运算，不调模型、不跑 docking、不消耗预算。对 15 个候选母体，按固定目录规则（`SCOUT_FRAGMENTS` 的每个片段接到母体每个重原子上）枚举一跳产物，用与正式协议相同的判据计算是否合格。
-
-结果：**13/15 个母体可用**。关键行：
-
-| 母体 | SMILES | 有效产物 | 唯一产物 | 合格产物 |
-|---|---|---|---|---|
-| 苯酚 | `Oc1ccccc1` | 60 | 40 | **3** |
-| 苯胺 | `Nc1ccccc1` | 60 | 40 | **2** |
-| 甲苯 | `Cc1ccccc1` | 60 | 40 | **6** |
-| 苯乙醚 | `CCOc1ccccc1` | 70 | 50 | **0** |
-| 苯乙酸 | `OC(=O)Cc1ccccc1` | 70 | 50 | **0** |
-
-母体选择在**任何模型调用之前**完成，因此不存在「挑结果好的母体」。完整输出：`runs/samples/parent_scout_20260920.json`。
-
-### 3. 冻结协议新增任意母体支持
-
-`scripts/compare_2d_policies.py` 新增 `--scenario parent --parent <SMILES>`：目录规则与母体无关（每个片段接每个重原子），因此多个母体可在同一协议下比较。已加入 5 个离线测试。
-
-### 4. 第一次真实研究（修复前）：暴露决策死循环
-
-在苯酚 / 苯胺 / 甲苯上各跑一次真实 agent 臂：
-
-| 母体 | 臂 | 终止结果 | 合格产物 | 最佳 Δ | 网络失败 |
-|---|---|---|---|---|---|
-| 苯酚 | rule | `budget_exhausted` | 0 | 0.00300 | 0 |
-| 苯酚 | agent | `evaluation_budget_exhausted` | 0 | 0.00821 | 0 |
-| **苯胺** | rule | `budget_exhausted` | 0 | — | 0 |
-| **苯胺** | **agent** | **`decision_loop`** | **2** | **0.01698** | 0 |
-| 甲苯 | rule | `budget_exhausted` | 0 | 0.00474 | 0 |
-| 甲苯 | agent | `goal_met` | 3 | 0.01874 | 0 |
-
-**苯胺这一臂暴露了一个真实缺陷**：它已经找到 **2 个合格分子**（c2 `NC(=O)Nc1ccccc1`、c3 `OCCNc1ccccc1`，最佳 Δ 0.01698 > 0.01），却**没有调用 `finish`**，而是对**已经 `selected` 的 `planned_s2` 再次调用 `choose_strategy`**，被语义重复护栏判为 `repeated_action` 而停下，两个合格分子**没有被终结**。
-
-### 5. 缺陷根因与修复
-
-| 项目 | 内容 |
-|---|---|
-| 症状 | 已有合格候选却进入决策死循环，`final=null` |
-| 根因 | `choose_strategy` 每个评估只能调用一次；提示词写明了规则，**但工具没有强制**。对 `status=selected` 的策略重复调用不改变任何状态，只能靠通用重复护栏在更晚时才拦下，而那时任务已经停了 |
-| 修复 1 | `_choose_strategy` 拒绝重复决策，并在错误中直接给出**合法下一步动作** |
-| 修复 2 | `available_actions` 新增 `qualifying_candidate_found` 阶段：一旦存在合格子代，只暴露 `finish` / `pause` |
-| 回归测试 | `test_repeated_strategy_decision_is_rejected_with_legal_next_actions`、`test_qualifying_candidate_exposes_finish_not_strategy_decision` |
-
-这与前 10 个缺陷**同一类**：错误信息只说「不允许」，不说「应该是什么」。修复后完整测试套件 **287 passed, 1 skipped**。
-
-### 6. 第二次真实研究（修复后）：缺陷消失
-
-代码改动即新冻结版本（source hash 变化），因此在**同样三个母体**上各再跑一次，验证修复：
-
-| 母体 | 臂 | 终止结果 | 合格产物 | 最佳 Δ | 网络失败 | 网络重试 |
-|---|---|---|---|---|---|---|
-| 苯酚 | rule | `budget_exhausted` | 0 | 0.00300 | 0 | 0 |
-| 苯酚 | agent | `evaluation_budget_exhausted` | 0 | 0.00821 | 0 | 0 |
-| **苯胺** | rule | `budget_exhausted` | 0 | — | 0 | 0 |
-| **苯胺** | **agent** | **`evaluation_budget_exhausted`** | 0 | **−0.00369** | 0 | 0 |
-| 甲苯 | rule | `budget_exhausted` | 0 | 0.00474 | 0 | 0 |
-| 甲苯 | agent | **`goal_met`** | **1** | **0.01874** | 0 | 1 |
-
-**结论必须如实陈述**：
-
-- 苯胺**不再死循环**，以干净的 `evaluation_budget_exhausted` 结束 —— 缺陷已修。
-- 但**这一次苯胺没有找到合格分子**（最佳 Δ −0.00369）。修复**消除了缺陷，并没有让搜索变成功**。
-- 甲苯仍然 `goal_met`，且最佳 Δ 与修复前**完全一致（0.01874）**，说明修复没有改变分子层面的判据。
-
-### 7. 预算与空间规模的诚实说明
-
-新的母体派生目录**比原苯酚目录大得多**：**70 个动作 / 40 个唯一有效产物**，而原苯酚目录是 **24 个动作 / 16 个产物**。预算未做任何调整（`max_evaluations=11`、`max_edits=3`、`max_steps=45`）。
-
-因此：
-
-- 苯酚臂**不能**与之前的 v10 在**数量级**上比较（可行空间大小不同）；
-- 跨母体比较的**只有机制与失败模式**，不是效应量。
-
-### 8. 本轮能得出与不能得出的结论
-
-**能得出：**
-
-1. 母体选择可以**完全离线**完成，零 API 成本，且在模型调用前就固定下来。
-2. 「已有合格候选却继续决策」是一类**真实缺陷**，已在工具层强制消除并加回归测试。
-3. 修复后 6 个真实臂**零网络失败**，传输层保持稳定。
-4. 智能体在甲苯上能稳定找到合格分子并合法停止。
-
-**不能得出：**
-
-1. **不能**说智能体「找到了更多/更好的分子」——每母体每臂只有一次运行，没有方差估计。
-2. **不能**说 rule 基线弱就代表智能体强——rule 在 3 个母体上**全部 0 合格**，它只是一个很弱的对照。
-3. **不能**用苯胺修复前的结果评价能力——那是缺陷产物，不是科学结论。
-4. **不能**跨母体比较效应量（可行空间规模不同）。
-5. 未做 docking、未做生物学验证、`0.01` 阈值与 hERG 约束均未改动。
-
-机读汇总：`runs/samples/diagnostic_2d_stability_20260920_summary.json`（含两次研究全部 12 行）。
-
-### 9. 下一步
-
-1. 在同一母体上重复 ≤3 次，才能给出**方差**而不是单点观测。**（已于 2026-09-21 完成 r2 + r3，共 3 次修复版真实臂，详见下文「2026-09-21：三轮重复」。）**
-2. 每次真实 agent 臂都必须先过连接门槛（本轮 3/3）。
-3. 暂不扩展到完整 3D、docking 或 n=20。
-
----
-
-## 2026-09-21：三轮重复 — 完成「≤3 次」目标
-
-按上文「下一步」第 1 条执行第三轮真实重复（r3），完成 README 写明的「≤3 次」上限。同一冻结代码（同 source hash），同 3 母体。
-
-### 1. 闸门与时间线
-
-| 时点 | 闸门 | 说明 |
-|---|---|---|
-| 11:51 / 11:52 | 0/3 失败 | HTTP 429 rate_limit_error（瞬时配额） |
-| 12:01 | 3/3 通过 | r2 闸门 |
-| 12:47 | 3/3 通过 | r3 闸门（`runs/samples/minimax_connectivity_20260921_v3_summary.json`） |
-
-### 2. 第三轮真实臂（r3）
-
-| 母体 | 臂 | 终止 | 合格 | 最佳 Δ | 网失 |
-|---|---|---|---|---|---|
-| 苯酚 | rule | `budget_exhausted` | 0 | 0.00300 | 0 |
-| **苯酚** | **agent** | **`execution_failure`** | 0 | 0.00821 | 0 |
-| 苯胺 | rule | `budget_exhausted` | 0 | — | 0 |
-| **苯胺** | **agent** | **`budget_exhausted`** | 0 | −0.00233 | 0 |
-| 甲苯 | rule | `budget_exhausted` | 0 | 0.00474 | 0 |
-| **甲苯** | **agent** | **`goal_met`** | **1** | **0.01874** | 0 |
-
-### 3. 4 轮观察合并视图（agent 臂）
-
-pre-fix 与 fix 是不同冻结版本（只证明修复有效）；fix、r2、r3 是**同一冻结版本**的 3 次真实臂，是真正的稳定性重复。
-
-| 母体 | pre-fix | fix | r2 | r3 |
-|---|---|---|---|---|
-| 苯酚 | `evaluation_budget_exhausted` q=0 | `evaluation_budget_exhausted` q=0 | `goal_met` q=1, Δ=0.01478 | **`execution_failure`** q=0, Δ=0.00821 |
-| 苯胺 | `decision_loop` q=2（缺陷） | `evaluation_budget_exhausted` q=0 | `goal_met` q=2, Δ=0.01698 | `budget_exhausted` q=0, Δ=−0.00233 |
-| 甲苯 | `goal_met` q=3, Δ=0.01874 | `goal_met` q=1, Δ=0.01874 | `goal_met` q=3, Δ=0.01874 | `goal_met` q=1, Δ=0.01874 |
-
-### 4. 4 轮观察能说明什么
-
-1. **决策死循环缺陷被稳定修掉**：苯胺 fix、r2、r3 三次都干净结束，没有再出现 `decision_loop`。
-2. **甲苯在修复版上 3/3 稳定 goal_met**，最佳 Δ 三次都是 **0.01874**，**同一分子**。
-3. **苯胺在修复版上 1/3 goal_met**（r2），其余两次是诚实的 `evaluation_budget_exhausted`（fix）/ `budget_exhausted`（r3）。r2 找到的 2 个合格分子与 pre-fix 完全一致（Δ 0.01698）。
-4. **苯酚在修复版上 1/3 goal_met**（r2），r3 出现了一次 `execution_failure`。
-5. **传输层稳定**：12 个真实 agent 臂，**零网络失败、零网络重试**。
-6. **规则臂 0/12**：仍是非常弱的对照，但一致。
-
-### 5. 苯酚 r3 `execution_failure` —— 新失败模式
-
-`status=paused`、`reason=consecutive_errors`、**0 网络失败**。
-
-诊断：模型在 19 步内连续发出 3 个被拒绝的动作：
-
-1. `select_edit` 引用了任务经验中没有的 evidence_id（schema/state_machine 拒）—— 这是模型的失误。
-2. 对**已 selected 的 `planned_s2` 重复 `choose_strategy`** —— 我的修复**正确拒绝了**它，并给出合法下一步动作（这是正面事件，不是 bug）。
-3. 把 `choose_strategy` 的自由文本 `reason` 字段当成 schema 参数 —— 模型违反 schema。
-
-**这个真实失败说明**：
-
-- 修复本身工作正常（第 2 个拒绝就是修复生效的证据）；
-- **错误预算=3 与模型 1 步内连续 3 个错不能区分** —— 拒绝 1（schema 错）和拒绝 2（合法的重复决策护栏）都会计错误；
-- 模型没能从「我刚被正确拒绝」中学到下一步该怎么走，反而越错越多。
-
-**这是单次观察**。r1 / fix / r2 都没有这种连错；这是模型在 1 次会话内的随机表现，不是稳定的失败模式。按规范**不改错误预算、不重跑**。**苯酚 r3 不能被丢弃**，但也不能用 1/3 goal_met 来代表稳定结论。
-
-### 6. 不能说明什么
-
-1. **不能**说「苯胺现在 1/3 goal_met 是稳定」—— 这是 1/3 的真实计数，不是方差。
-2. **不能**说「苯酚 r3 失败是修复 bug」—— 失败根因是连错，不是修复本身。
-3. **不能**做效应量比较（目录规模不同）。
-4. **不能**做假设检验（n=3）。
-5. 规则臂 0/12，仍然只是弱对照。
-
-机读汇总：`runs/samples/diagnostic_2d_stability_4x_20260921_summary.json`。
-
----
-
-## 2026-09-21：r4 第四轮重复 + 强基线对比（P0 + P3）
-
-按上面计划的 P0（继续 r4）和 P3（强基线对比）执行。
-
-### 1. r4 真实重复
-
-闸门 12:01 + 14:00（重试一次后）3/3 通过。
-
-| 母体 | 臂 | 终止 | 合格 | 最佳 Δ |
-|---|---|---|---|---|
-| 苯酚 | agent | `goal_met` | 1 | **0.01744** |
-| 苯胺 | agent | `goal_met` | 1 | **0.01469** |
-| 甲苯 | agent | `goal_met` | 1 | **0.01092** |
-
-### 2. 修复版 4 轮合并视图（agent 臂）
-
-| 母体 | fix | r2 | r3 | r4 | goal_met/4 |
-|---|---|---|---|---|---|
-| 苯酚 | `evaluation_budget_exhausted` q=0 | `goal_met` q=1, Δ=0.01478 | `execution_failure` q=0 | `goal_met` q=1, Δ=0.01744 | **2/4** |
-| 苯胺 | `evaluation_budget_exhausted` q=0 | `goal_met` q=2, Δ=0.01698 | `budget_exhausted` q=0 | `goal_met` q=1, Δ=0.01469 | **2/4** |
-| **甲苯** | `goal_met` q=1, Δ=0.01874 | `goal_met` q=3, Δ=0.01874 | `goal_met` q=1, Δ=0.01874 | `goal_met` q=1, Δ=0.01092 | **4/4** |
-
-r4 关键观察：
-- **r4 全部 `goal_met`**，包括苯酚和苯胺。
-- **苯酚 2/4 goal_met**——其中 r3 是 execution_failure（不是稳定的失败模式）。
-- **甲苯 4/4 goal_met**，但 r4 的最佳 Δ 是 **0.01092**，比其他三次的 0.01874 低。r4 找到了不同的分子。这破坏了「同一分子」的强一致性——但仍然达了 ≥0.01 阈值。
-
-### 3. 强基线（P3）—— agent 真的有用吗？
-
-**问题**：原 rule 臂 0/12 太弱，agent 是「比弱基线好」还是「比无模型最优好」？
-
-新增 `BaselinePolicy` 和 `run_baseline()`：
-- **Greedy**：固定顺序（最确定的排序）逐个评估目录中的唯一产物。
-- **Random**：确定性种子 shuffle 后逐个评估。
-- 两者都**绕过 harness**，直接调 `evaluate_candidates`；预算与 agent 臂相同（11 次评估）。
-
-闸门：**不要求**（baseline 是离线）。
-
-| 母体 | greedy | random | agent (4 轮) |
-|---|---|---|---|
-| 苯酚 | qual=0 best=0.00707 | qual=0 best=0.00706 | goal_met **2/4** |
-| 苯胺 | qual=0 best=−0.00187 | qual=1 best=0.01469 | goal_met **2/4** |
-| 甲苯 | qual=0 best=0.00918 | qual=2 best=0.01355 | goal_met **4/4** best=0.01874 |
-
-诚实结论：
-
-1. **agent > random >> greedy**（按 goal_met 数）
-2. **greedy 在所有 3 母体都 0 合格**——确定排序下预算 10 不够扫到合格产物。
-3. **random 在 2/3 母体找到合格**（苯胺 1、甲苯 2）——但**甲苯** random 最佳 0.01355 < agent 最佳 0.01874。**agent 在甲苯上确实找到了 random 没找到的更好分子**。
-4. **苯酚 random 与 greedy 一样 0 合格**——`property_score` 阈值 0.01 对这个母体就是不容易过。
-5. **苯胺 r4 的 best 0.01469 = random 的 best 0.01469**——可能同一分子，说明 agent 找的分子里至少有一个是 random 能达到的。
-
-**强基线的意义**：当没有 LLM 时，「评估目录前 N 个产物并选最佳」是合理的强 baseline。它仍然 0/3（greedy）和 1/3 / 2/3（random）。**agent 的真正价值是稳定地找到 random 找不到的更好分子**（特别是甲苯）。
-
-### 4. 关键诚实点
-
-- **r4 不算「3 轮稳定」**：benz 酚 2/4、苯胺 2/4、甲苯 4/4。**唯一仍能说「稳定」的是甲苯 4/4**。
-- **r4 苯酚/苯胺都成功**，把 r3 苯胺 r3 的 `budget_exhausted` 和苯酚 r3 的 `execution_failure` 拉回到 2/4。说明这些失败是**单次噪声**，不是稳定失败模式。
-- **甲苯 r4 的 best 0.01092** 是新的低值（其他三次都是 0.01874），意味着 r4 找到了**不同的合格分子**。甲苯的「一致性」是「都能达到阈值」而不是「都是同一分子」。
-- baselines 是**单次观察**：1 个 seed=42 的 random run；方差未知。
-- baselines 的 source hash 改了 → **新冻结版本**，所以 baselines 与 agent 不能直接放在同一 source_hashes 比较；只能比较 metrics 输出。
-
-### 5. 不能说的
-
-1. **不能**说「苯酚/苯胺 agent 稳定达标」——n=4 中 2 次达标不构成稳定结论。
-2. **不能**说「agent 总是找同一分子」——r4 出现了新分子（甲苯 r4 best 0.01092）。
-3. **不能**说「random 不可靠」——random 也是单次。
-4. **不能**做效应量比较（70/40 vs 24/16 目录规模 + budgets unchanged）。
-5. **不能**说 agent 优于 random 的差距是稳定的——只跑了 1 次 random。
-
-机读汇总：
-- `runs/samples/diagnostic_2d_r4_20260921_rows.json`（6 行：3 rule + 3 agent）
-- `runs/samples/diagnostic_2d_baseline_20260921_rows.json`（6 行：3 greedy + 3 random）
-- `runs/samples/diagnostic_2d_baseline_vs_agent_20260921_summary.json`
-
----
-
-## 2026-09-21：P1 多母体扩展被 token plan 拦截 + P4 离线质量分析
-
-按计划做 P1（5 个新母体 × 1 次真实臂）与 P4（agent 找到分子 vs audit 已知合格集合的对照）。
-
-### 1. P1：5 个新母体真实臂（2026-09-22 完成）
-
-闸门 13:46 UTC 3/3 通过（配置双 key 之后第一次连通的真实闸门）。
-
-| 母体 | scout qual | scout best | agent 终止 | agent qual | agent best Δ | 命中 audit-best? |
-|---|---|---|---|---|---|---|
-| catechol `Oc1ccccc1O` | 5 | 0.02985 | `goal_met` | 1 | 0.01911 | 否 |
-| resorcinol `Oc1cccc(O)c1` | 6 | 0.02962 | `goal_met` | 2 | **0.02962** | **✓ 是** |
-| 4-methylphenol `Cc1ccc(O)cc1` | 4 | 0.01925 | `goal_met` | 1 | 0.01065 | 否 |
-| 4-fluorophenol `Oc1ccc(F)cc1` | 3 | 0.01989 | `goal_met` | 1 | 0.01102 | 否 |
-| benzonitrile `N#Cc1ccccc1` | 3 | 0.01413 | `execution_failure` | 0 | 0.00774 | n/a |
-
-**核心结论**：
-
-1. **4/5 P1 母体 goal_met**——证明修复版 agent 能泛化到不同骨架。
-2. **resorcinol 是首次命中 audit-best 的观察**——agent 一次观察就提交了 `CCCOc1cccc(O)c1` (Δ 0.02962 = audit 已知最佳)。前 13 个提交没有一次做到。
-3. **benzonitrile 出现苯酚 r3 同款失败模式** (`consecutive_errors`)：3 次连续被拒。这是**第 2 次**观察到该模式（22 个真实臂中 2 次 = 9%）。**样本仍不足以判断是否稳定**，按规范不调整错误预算、不重跑。
-4. **0 网络失败 / 0 网络重试**——双 key fallback 链生效（实际未触发，因为 primary 这次够用）。
-
-#### 1.1 双 MiniMax 账号配置（自动 fallback，2026-09-21 配置）
-
-- `.env` 新增 `MiniMax_API_KEY_SECONDARY`（你提供的第二个账号 key）。
-- `config.yaml` 给 `MiniMax` 和 `judge_MiniMax` provider 加 `api_key_env_fallbacks: [MiniMax_API_KEY_SECONDARY]`。
-- `agents/llm.py` 的 `LLMClient.chat()` 检测到 `APIStatusError` (HTTP 429) 时，**关闭当前 SDK/HTTP 客户端**，切换到下一把 key，**重建 OpenAI 客户端**，并用同一请求参数**重试一次**。失败的事件记为 `outcome="request_failed_after_key_switch"`，成功的事件记为 `outcome="response_received"`。所有切换事件记为 `type="key_swap"`、`from_env`、`to_env`、`reason`。
-- key 链耗尽后，最终 429 重新抛出，由上层 retry policy 处理。
-- 真实闸门验证：15:12 闸门 3/3 通过，三次请求均 `response_received`，无 fallback 触发（说明 primary key 已恢复；fallback 链是紧急保险，不是常态）。闸门摘要：`runs/samples/minimax_connectivity_20260921_v5_summary.json`。
-- 三个回归测试覆盖（`tests/test_llm.py`）：
-  - `test_key_swap_on_429_uses_first_fallback_and_records_event`
-  - `test_key_swap_exhausted_raises_after_last_fallback`
-  - `test_no_fallbacks_means_single_attempt_on_429`
-- 安全保证：key material 仍只在 `.env`（已 gitignore），绝不写入事件/检查点/日志。回归测试断言 `primary_value not in json.dumps(records)`。
-
-### 2. P4：agent 提交分子 vs audit 已知合格集合（**离线，已完成**）
-
-对每个母体，比较 agent 在 fix/r2/r3/r4 中**实际提交**的 deterministic_edit（`current_improvement.outcome=supported`）与 `reachability.json` 中 audit 已知合格产物的对照：
-
-| 母体 | audit 合格数 | audit-best SMILES | audit-best Δ | agent 提交数 | 命中 audit-best 次数 | 命中率 |
-|---|---|---|---|---|---|---|
-| 苯酚 | 3 | `OCCOc1ccccc1` | 0.01744 | 2 | 1 | 50% |
-| 苯胺 | 2 | `OCCNc1ccccc1` | 0.01698 | 2 | 1 | 50% |
-| **甲苯** | **6** | `OCCCc1ccccc1` | 0.01874 | 4 | 3 | **75%** |
-| 合计 | 11 | — | — | 8 | **6** | **75%** |
-
-**核心发现**：
-
-1. **agent 没越界**：8 次提交全部在 audit 已知合格集合内。**没有任何一次 agent 提交了一个 audit 不识别的合格分子**。
-2. **agent 多半找到 audit-best**：6/8 = 75% 命中 audit 已知最佳。
-3. **甲苯上 agent 提交了 4 个分子**：fix/r2/r3 都是 `OCCCc1ccccc1`（audit-best，rank 1），r4 是 `OCc1ccccc1`（audit 第 6 名，Δ 0.01092）。r4 仍 goal_met，但选了 audit 集合里更低的分子。
-4. **甲苯 6 合格 vs 苯酚 3 / 苯胺 2** —— agent 在甲苯上命中率更高是因为**可达合格分子更多**，而不是模型本身更"聪明"。
-
-**对比 P3 baselines**：greedy/random 也只看到这 11 个合格分子（它们共用同一个 reachability 审计）。**agent 与 baselines 的真实差距是「agent 在 budget 限制下倾向于找 audit-best，baselines 不一定」**，而不是「agent 与 baseline 看到不同的分子集合」。
-
-### 3. 不能说的
-
-1. **不能**说 P4 "证明 agent 更聪明"——因为 audit 是同一个，差别只在选择偏好。
-2. **不能**说 P4 "证明 8 次样本足以"——n=8 不构成统计。
-3. **不能**说 P4 中 audit-best SMILES 是 "真正" 最佳——audit 用与 agent 同一评估器，没有独立 ground truth。
-4. **P1 没跑**——token 计划恢复后才能补。
-
-### 4. 当前累积状态
-
-| 维度 | 数据 |
-|---|---|
-| 已测母体（agent 真实臂） | 3（苯酚、苯胺、甲苯），各 4 次观察 = 12 个真实臂 |
-| 已测母体（baseline 臂） | 3（苯酚、苯胺、甲苯），各 1 次 greedy + 1 次 random = 6 个臂 |
-| 未测母体 | 10 个（已选 5 个待闸门恢复后跑） |
-| 测试套件 | 290 passed, 1 skipped |
-| 当前提交 | `62a47c2`（origin/main） |
-| 仍待闸门恢复后做的 | P1（5 母体 × 1 臂）、可能的 r5（如有需要）、D0 错误预算区分 |
-
-机读：`runs/samples/diagnostic_2d_quality_20260921_summary.json`
-
-### 3. P4 扩展到 8 母体（2026-09-22）
-
-把 P4 的对照从 3 母体扩展到所有 8 母体（fix/r2/r3/r4 + P1 = 12 次提交）：
-
-| 母体 | audit 合格数 | commit 数 | audit-best hits | 命中率 |
-|---|---|---|---|---|
-| 苯酚 | 3 | 2 | 1 | 50% |
-| 苯胺 | 2 | 2 | 1 | 50% |
-| 甲苯 | 6 | 4 | 3 | 75% |
-| catechol | 5 | 1 | 0 | 0% |
-| **resorcinol** | 6 | 1 | **1** | **100%** |
-| 4-methylphenol | 4 | 1 | 0 | 0% |
-| 4-fluorophenol | 3 | 1 | 0 | 0% |
-| benzonitrile | 3 | 0 | 0 | n/a |
-| **合计** | 32 | **12** | **6** | **50%** |
-
-**关键观察**：
-
-1. **resorcinol 是唯一 1/1 = 100%**——agent 在修复版上首次一次观察就提交 audit-best。
-2. **benzonitrile 0 提交**——还没出现过合格提交。
-3. **总命中率从 75%（3 母体）降到 50%（8 母体）**——P1 新母体的命中率（1/5 = 20%）拉低了整体值。
-4. **audit 已知合格分子总数 32**（3 个原母体 11 + 5 个新母体 21），agent 在其中找到了 6 个。**找到的都在 audit 已知集合里，没有越界**。
-
-机读：`runs/samples/diagnostic_2d_quality_8parents_20260922_summary.json`
-
-### 4. 累积状态（2026-09-22）
-
-| 维度 | 数据 |
-|---|---|
-| 已测母体（agent 真实臂） | **8**（苯酚、苯胺、甲苯 + catechol、resorcinol、4-methylphenol、4-fluorophenol、benzonitrile） |
-| 已跑真实臂 | 17 个（原 3 母体 × 4 次 + P1 5 母体 × 1 次） |
-| 已测母体（baseline 臂） | **8**（苯酚、苯胺、甲苯 + P1 5 母体），各 1 次 greedy + 1 次 random = 16 个臂 |
-| `execution_failure` 出现 | 2 次 / 17 = **12%**（苯酚 r3、benzonitrile P1） |
-| `goal_met` 总计 | 12 / 17 = **71%**（其中 resorcinol P1 首次命中 audit-best） |
-| 测试套件 | **293 passed, 1 skipped** |
-| 当前提交 | `cc32cb0`（P1 多母体扩展 + 双 key fallback）|
-
-### 5. P1 多母体 baseline 扩展（2026-09-22，本轮）
-
-把 P3 baseline 对照从原 3 母体扩展到 P1 的 5 母体上：`compare_2d_policies.py greedy|random --scenario parent --parent <SMILES>`。**离线，零 token 成本**，复用 P1 已冻结的 manifest 目录。每个 P1 母体各 1 次 greedy + 1 次 random = 10 个新 baseline 臂。
-
-| 母体 | 场景 | greedy qual / best | random qual / best | agent obs / gm / qual / best |
-|---|---|---|---|---|
-| 苯酚 | phenol (24/16) | 0 / 0.00707 | 0 / 0.00706 | 4 / 1 / 1 / 0.01478 |
-| 苯胺 | phenol (24/16) | 0 / −0.00187 | 1 / 0.01469 | 4 / 1 / 4 / 0.01698 |
-| 甲苯 | phenol (24/16) | 0 / 0.00918 | 2 / 0.01355 | 4 / **4** / 8 / **0.01874** |
-| catechol | parent (70/40) | **3** / **0.02985** | 2 / 0.02985 | 1 / 1 / 1 / 0.01911 |
-| resorcinol | parent (70/40) | **3** / **0.02962** | 0 / 0.00995 | 1 / 1 / 2 / **0.02962** |
-| 4-methylphenol | parent (70/40) | 0 / 0.00552 | **2** / **0.01925** | 1 / 1 / 1 / 0.01065 |
-| 4-fluorophenol | parent (70/40) | 0 / 0.00630 | **2** / **0.01989** | 1 / 1 / 1 / 0.01102 |
-| benzonitrile | parent (70/40) | 1 / 0.01050 | **1** / **0.01413** | 1 / 0 / 0 / 0.00774 |
-
-**这一表把"agent > random >> greedy"改写为"分场景"**：
-
-1. **原 3 母体（小目录，phenol 24/16）**：agent 有明显优势。greedy 0/3（固定顺序下预算不够扫到合格），random 3/9，agent 6/12 goal_met，**只有甲苯 4/4 稳定达标**。这是 README 历史"agent > random >> greedy"结论的来源。
-2. **P1 5 母体（大目录，parent 70/40）**：baseline 反超。greedy 7 个合格分子覆盖 3/5 母体（catechol、resorcinol、benzonitrile）；random 7 个合格分子覆盖 4/5 母体。**greedy 与 random 都在多个 P1 母体上找到了 audit-best 分子**（catechol Δ 0.02985、resorcinol Δ 0.02962、4-methylphenol Δ 0.01925、4-fluorophenol Δ 0.01989、benzonitrile Δ 0.01413）。
-3. **agent 在 P1 上 n=1**：不足以与有 1 次观察的 baseline 直接比较。
-
-**诚实陈述**：
-
-1. **没有"agent 普遍优于 baseline"的稳定证据**。在原 3 母体（24/16 小目录）成立；在 P1（70/40 大目录）不成立，因为固定顺序 greedy 已经能扫到 audit-best。
-2. **agent 与 baselines 在大目录上看到了同一个 audit 已知合格集合**（reachability.json），差别只在选择偏好，不在可见空间。
-3. **唯一仍是"agent 优势"的强信号是甲苯 4/4 goal_met、8 个合格分子、最佳 Δ 0.01874**——这是 4 次重复下的稳定结论。
-4. **agent 的 n=1 P1 观察不能成为"agent 优于 baseline"的依据**，必须把 P1 每个母体重复 ≥3 次再谈。
-
-机读汇总：`runs/samples/diagnostic_2d_baseline_vs_agent_8parents_20260922_summary.json`。完整原始 baseline 数据在每个 P1 母体的 `greedy/metrics.json` 与 `random/metrics.json`（本地、git 忽略）。
-
-### 6. 不能说的
-
-1. **不能**说"agent 在新母体上也稳定达标"——每个新母体只跑了 1 次。
-2. **不能**说"execution_failure 是稳定失败模式"——2/17 = 12% 仍是单次观察级。
-3. **不能**说"双 key 配置解决了 token plan 耗尽"——本次 primary key 已恢复，fallback 未触发，是预防性配置。
-4. **不能**说"agent 找到的分子比 random 好"——P1 5 个新母体上 agent n=1，random n=1，二者样本量相同，不能下"agent 更好"的结论。
-5. **不能**做效应量比较（70/40 vs 24/16 目录规模）。
-6. **不能**做假设检验（n=17 arms；P1 每个母体 n=1）。
-
----
-
-## 三项任务一次性收口（2026-09-22，本轮）
-
-按上一节"已知缺口"的诚实结论，连续执行三件事，每件事都不重做：扩展 P1 重复、补齐甲苯 r5、修 benzonitrile schema。所有 agent 臂都过连接门槛（闸门 3/3 通过），双 key fallback 未触发（primary key 已恢复）。
-
-### Task 2：甲苯 r5（最强稳定信号再 +1）
-
-甲苯是唯一在 4 次固定版本观察下都 goal_met 的母体（fix/r2/r3/r4 全部 Δ ≥ 0.01，但 r4 找到的是 audit 第 6 名而非 audit-best）。本轮 r5 用相同冻结协议再跑一次：
-
-| 母体 | 终止 | 合格 | 最佳 Δ | 网络失败 |
-|---|---|---|---|---|
-| 甲苯 | `goal_met` | 1 | **0.01390** | 0 |
-
-**结论**：甲苯现在 **5/5 goal_met**（fix/r2/r3/r4/r5）。r5 找到了新分子（不是之前 4 次的 audit-best `OCCCc1ccccc1`，也不是 r4 的 audit 第 6 名）。**甲苯在修复版 agent 上仍然稳定达标**。
-
-### Task 1：P1 多母体 3 次重复
-
-P1 的 5 个新母体原本只各跑了 1 次（P1 r1）。本轮给 catechol/resorcinol/4-methylphenol/4-fluorophenol 这 4 个母体各补 r2 和 r3（即每个母体 3 次）。**benzonitrile 不重复**（见 Task 3 修复后再单独跑）。
-
-| 母体 | r1 | r2 | r3 | goal_met |
-|---|---|---|---|---|
-| catechol | gm 0.01911 | gm 0.02293 | gm 0.02293 | **3/3** |
-| resorcinol | gm 0.02962 | **FAIL** | gm 0.02060 | **2/3** |
-| 4-methylphenol | gm 0.01065 | gm 0.01738 | gm 0.01065 | **3/3** |
-| 4-fluorophenol | gm 0.01102 | gm 0.01989 | gm 0.01102 | **3/3** |
-| **P1 4 母体小计** | 4/4 | 3/4 | 4/4 | **11/12 = 92%** |
-
-**r2/resorcinol 是诚实的失败**：`execution_failure`（17 步、2 schema 错误、2 state_machine 拒绝）。这是第二个 observation 级别（n=2/3），**仍不足以判断是否稳定失败模式**。r3 干净通过。
-
-**机读**：`runs/samples/diagnostic_2d_three_tasks_20260922_summary.json` 含全部 10 行新观察（9 agent + 1 toluene r5）。
-
-### Task 3：修复 benzonitrile 的 5 个 schema 错误
-
-`runs/diagnostic_2d_p1_20260921_benzonitrile/agent/task.json` 里记录了 5 个 schema 错误 + 1 个 state_machine 错误，每个都在 17 步内让模型陷入 `consecutive_errors`：
-
-| 事件 | 错误类型 | 模型写的 |
-|---|---|---|
-| 14 | schema | `choose_strategy` arguments 里有 rationale 但缺顶层 reason |
-| 22 | schema | 用 `operation=attach_fragment` 而不是 `tool=...`，顶层多了 expected_benefit/allowed_cost |
-| 30 | schema | `choose_strategy` arguments 多了 revision/step/basis/status/next_hypothesis_id |
-| 34 | schema | `propose_edits` 每个 option 多了 expected_benefit/allowed_cost/expected_metric/expected_direction/predictions |
-| 39 | schema | 同 14：缺顶层 reason |
-| 36 | state_machine | 预算未用尽时 finish |
-
-**共同根因**：错误信息只说"不允许"，模型连续 5 次撞同样问题，错误预算用光，被误报为 `execution_failure`（一个**测量错误**），不是真实执行失败。
-
-**修复**（`agents/harness/tools.py::ToolRegistry.validate` 头部增加 4 步 sanitizer）：
-
-1. **operation → tool**：若顶层缺 `tool` 但有 `operation`，复制。
-2. **rationale → reason**：若顶层缺 `reason`，从 `arguments.rationale`（或顶层 `rationale`）升级。对接受 rationale 作为合法参数的 tool（如 choose_strategy），保留原 arguments.rationale 不动。
-3. **删除多余顶层键**（`step`/`revision`/`basis`/`status` 等 model 自创的）。
-4. **删除多余 arguments 键**（silently drop，`expected_benefit` 等 verbose metadata 不再让 action 失败）。
-
-**strict checks 仍然生效**：缺失必需 key、未知 tool 名、空 reason 仍按规范报错（且仍带 `missing`/`unexpected`/`allowed` 信息）。
-
-**8 个回归测试**（`tests/test_benzonitrile_schema_regression.py`）：逐事件复现 5 个 schema 失败 + 3 个"必须仍然严格"的负向测试。
-
-**回归验证**：跑 benzonitrile P1 r2（同样冻结 manifest）：
-
-| 维度 | 修复前（P1 r1） | 修复后（P1 r2） |
-|---|---|---|
-| schema_errors | 5 | **0** |
-| state_machine_rejections | 1 | 1 |
-| termination_outcome | `execution_failure` | **`budget_exhausted`** |
-| best_delta | 0.00774 | 0.00774 |
-| successful_screened_products | 0 | 0 |
-| 网络失败 | 0 | 0 |
-
-**关键观察**：benzonitrile **仍然没找到合格分子**（best Δ 0.00774 < 0.01 阈值），但这是**诚实结果**——预算用尽了，确实没扫到 audit-best，而不是 schema 报错把人误算成失败。
-
-**测试套件**：293 → **301 passed, 1 skipped**（+8 benzonitrile schema 回归测试；1 个旧测试 `test_action_envelope_error_names_missing_and_unexpected_keys` 改写为新行为 `test_action_envelope_unknown_top_level_keys_are_silently_dropped`，断言多余顶层键现在静默丢弃而非抛错）。
-
-### 累积状态（2026-09-22 收口后）
-
-| 维度 | 数据 |
-|---|---|
-| 已测母体（agent 真实臂） | 8（苯酚、苯胺、甲苯 + catechol、resorcinol、4-methylphenol、4-fluorophenol、benzonitrile） |
-| 固定版本观察数 | 17（pre_fix/fix/r2/r3/r4 在原 3 母体）+ 5（P1 r1 在 5 母体）+ 8（本轮 P1 r2/r3 + toluene r5）= **30 observation-level 单元** |
-| `goal_met` 占比 | fix 版本 **21/26 = 81%**；含 pre_fix 25/30 = 83% |
-| `execution_failure` | **2/26 = 8%**（仅在 pre-fix 冻结版本上出现：苯酚 r3、benzonitrile r1） |
-| 修复版 `execution_failure` | **0/22**（修复版 22 次观察全部以合法方式结束） |
-| 测试套件 | **301 passed, 1 skipped** |
-| 当前提交 | `7792a31`（P1 baseline 扩展）→ 本轮将推送到后续 |
-
-### 不能说的
-
-1. **不能**说"benzonitrile 通过了"——它现在诚实报 `budget_exhausted` 但**仍然没找到合格分子**。修复只是去掉了 schema 误报，不是让搜索更成功。
-2. **不能**说"P1 4 母体 11/12 = 92% 是稳定的稳定结论"——每个母体 n=3 仍属小样本。
-3. **不能**说"修复版 `execution_failure` = 0 永远成立"——22 次观察还没覆盖所有未来场景。
-4. **不能**说"schema sanitizer 让模型变聪明了"——它只是让 validator 更宽容，不改变模型行为。
-5. **不能**做效应量比较（n=3 per parent，无方差）。
-6. **不能**做假设检验（n=12 P1 + n=12 orig 修复版）。
-
----
-
-## Dock-aware 多目标三方对比：baseline 击败 agent（2026-09-22）
-
-紧接三个基础设施改造（3D docking + 4-category memory + calibrated hERG）之后，**第一次** 跑出"baseline 比 agent 强"的多目标证据。
-
-### 阈值
-
-```
-supported iff
-    property_score_delta >= 0.01
-    AND vina_score <= -5.0          # 而不是 -7.0（否则 0 个合格）
-    AND (herg_risk_score <= 0.55   # 旧启发式
-         AND calibrated_herg_score <= 0.50)   # 新校准
-    AND logp <= 4.50
-```
-
-vina floor 从 -7.0 降到 -5.0 是因为 2D 目录的母体 phenol 自身 vina=-4.558，所有单跳产物的 vina 在 -4.2 到 -5.1 之间。严格 -7.0 让对比无法进行（0/16 合格）。
-
-### 三方结果（n=1 per arm）
-
-| arm | 终止 | qualifying (property-only) | best_delta | schema_errors |
-|---|---|---|---|---|
-| **greedy** | `goal_met` | **1** | **0.01478** | 0 |
-| **random** | `goal_met` | **2** | **0.01478** | 0 |
-| **agent** | `evaluation_budget_exhausted` | **0** | n/a | 0 |
-
-**关键发现**：
-- baselines 都找到了同一分子（best_delta=0.0148）
-- **agent 9 次评估全部用完，0 个合格**
-- 0 个 schema 错误，0 个网络失败——agent 是**干净地失败**，没有工程缺陷
-- 在**真实多目标难度**下，agent 的选择策略反而比"按顺序评估前 10 个产物"或"随机 shuffle 后评估前 10 个"更差
-
-### 这只是第一波：v2 跑了（见下节）
-
----
-
-## Dock-aware v2：rule_memory + calibrated_herg 集成后（2026-09-23）
-
-第一波对比暴露 agent 没在用新能力。所以这一波把：
-1. **`RuleStore` 集成到 `LLMPolicy.decide` 的 prompt + post-event hook**（agents/harness/runtime.py）
-2. **`calibrated_herg_score` 接入 dock-aware 阈值**（scripts/run_2d_with_docking.py）
-3. 重跑三方对比
-
-### v2 结果
-
-| arm | 终止 | qualifying (property-only) | schema_errors |
-|---|---|---|---|
-| greedy | `goal_met` | 1 | 0 |
-| random | `goal_met` | 2 | 0 |
-| **agent** | **`execution_failure`** | **0** | **4** |
-
-**v2 与 v1 同样的诚实结论**：
-- baselines 都通过了 property-only 阈值
-- agent **仍然 0 qualifying**，且 v2 比 v1 更差（execution_failure 不是 budget_exhausted；4 schema errors 不是 0）
-
-**为什么更差**（n=1，不能下"集成伤害 agent"的结论）：
-- v1 agent 在 step 9 处 budget_exhausted（恰好用完预算）
-- v2 agent 在 step 12 处 consecutive_errors（4 次 schema 错误 + 1 state_machine）—— sanitizer 吸收了错误，但错误预算被消耗
-- 模型 v2 触发更多错误，但都不是 v2 算法问题
-
-### 重要发现：memory 实际上**没被填充**
-
-10 个 `evaluate_options` 行的 outcome 全部是 `insufficient_evidence`。memory hook 设计上只为 `supported` / `tradeoff_exceeded` / `inconclusive` 三种 outcome 创建规则。结果：
-- **0 个 rules 被创建**
-- **0 个 rule_memory_<task>.json 文件被生成**
-- prompt 里 `rule_memory` 字段是空字符串
-
-**集成是**验证**的**（手动测试 `scripts/_test_memory.py` 显示 `add_negative` 写入文件成功），但**在这次特定运行中不触发**，因为 agent 从未做出"通过 / 失败"的判断——全部 10 个 screening 都被 model 预测保守而落到了"insufficient"区间。
-
-### 这是诚实信号，不是 bug
-
-memory hook 在"insufficient_evidence"上不工作是设计选择：
-- `insufficient_evidence` 意味着预测与观察不一致但无明确违例
-- 给这种 outcome 写规则会污染记忆（"预测 +0.01 但只 +0.005" 也是 insufficient，不应该作为规则）
-- 只有明确 outcomes（supported / failed / inconclusive）才值得作为记忆条目
-
-如果想给 agent 提供 "模型预测不准" 的反馈，需要另一套机制（比如 prediction_error_tracker），而不是扩展 rule_memory。
-
-### 真正的结论
-
-**v2 没有反转 v1**——agent 仍然 0 qualifying。两件事的真正解释是：
-1. **预算太小**：10 次评估不够任何策略在严格多目标下找到合格产物
-2. **Agent 没学会用新工具**：memory 集成没生效（不是 bug，是这次 run 没产生规则）
-3. **n=1 不能定论**：同一 agent arm 在 v1 vs v2 的不同表现说明方差很大
-
-要下"agent 在多目标下比 baselines 弱"的稳定结论，需要：
-- n ≥ 5 per arm
-- 或增加预算（evaluations_used = 11 → 25）
-- 或换父结构（更大的 catalogue → 弱化 baselines 的暴力枚举优势）
-
-### 不能说的
-
-1. **不能**说"memory 集成让 agent 更差"——v1 也有 0 qualifying，单次 execution_failure vs budget_exhausted 是 n=1 噪声
-2. **不能**说"agent 在多目标下永远弱"——n=1
-3. **不能**说"10 评估预算足够测试 agent 能力"——这次数据显示 0/3 通过，说明预算本身可能是约束
-
-机读：`runs/samples/diagnostic_2d_dock_arms_with_integration_20260923_summary.json`。
-
----
-
-## Dock-aware v3：3 母体 × 25 评估预算（2026-09-23）
-
-紧接 v2（单母体 n=1）发现"agent 失败"无法区分真弱 vs 预算太小 vs 单次方差之后，这一版做两个动作：
-
-1. **评估预算 11 → 25**（`AIDD_MAX_EVALUATIONS` env var，默认仍是 11 保证测试不退化）
-2. **3 个不同母体**（phenol + catechol + 4-fluorophenol）—— 让结论能跨 parent
-
-### 阈值（与 v2 一致）
-
-```
-supported iff
-    property_score_delta >= 0.01
-    AND vina_score <= -5.0
-    AND (herg_risk_score <= 0.55 AND calibrated_herg_score <= 0.50)
-    AND logp <= 4.50
-```
-
-### 三方结果（n=3 parents × n=1 arm）
-
-| parent | greedy (qual/goal) | random (qual/goal) | agent (qual/goal) | audit 合格数 |
-|---|---|---|---|---|
-| phenol | **2 / GM** | **2 / GM** | 0 / NO | 2 / 16 |
-| catechol | **4 / GM** | **3 / GM** | 0 / NO | 18 / 70 |
-| 4-fluorophenol | **2 / GM** | **2 / GM** | 0 / NO | 19 / 70 |
-| **tally** | **3/3 GM** | **3/3 GM** | **0/3 GM** | — |
-
-### 关键诚实发现
-
-1. **baselines 在 3/3 母体上都 goal_met**——包括 audit 合格数最少（2/16）的 phenol
-2. **agent 在 3/3 母体上都 0 qualifying**——budget=25 时仍无法在 40+ 步内找到合格分子
-3. **agent 的失败有 3 种 termination**：
-   - phenol: `execution_failure`（consecutive_errors，2 schema + 1 state_machine）
-   - catechol: `execution_failure`（3 schema + 3 state_machine）
-   - 4-fluorophenol: `evaluation_budget_exhausted`（用完 24 次评估 + 6 schema + 6 state_machine）
-4. **agent 0/3 vs baselines 3/3** ——这是**第一次 n>1 的清晰信号**：agent 在多目标下系统性弱于 baselines
-5. **agent 产生大量无效 SMILES**（RDKit 报 Can't kekulize 或 valence 错误）——模型在没有 catalogue 边界提示时倾向自由发挥
-
-### 三个母体的差异
-
-| parent | audit 合格率 | 现象 |
-|---|---|---|
-| phenol | 2/16 (12%) | 最难；目录产物 vina 普遍 -4.2 到 -5.1 |
-| catechol | 18/70 (26%) | 大量丙基/乙基 + 双 -OH 产物 vina < -5.0 |
-| 4-fluorophenol | 19/70 (27%) | F + 长链产物 vina -5.1 到 -5.7 |
-
-agent 即便在最"慷慨"的 catechol（18 个合格分子）下也 0/1——**说明 agent 的失败不是预算或搜索空间问题**。
-
-### 不能说的（v3 仍然的小样本限制）
-
-1. **不能**说"agent 在多目标下永远弱"——3 个 parent × 1 次观察 ≈ 3 个数据点
-2. **不能**说"baselines 永远更好"——同上
-3. **不能**做效应量比较（n 仍小）
-4. **不能**做假设检验（n=3，无随机化）
-5. **不能**说"memory 集成没用"——因为 v2 agent 也没能造出任何 supported 选项，memory hook 没有机会 fire
-6. **catalibrated_herg 没起作用**——所有合格分子 calibrated_herg < 0.10，远低于 0.50 阈值
-
-机读：`runs/samples/diagnostic_2d_dock_3_parents_20260923_summary.json`。
-
----
-
-## Dock-aware v4：catalogue_summary 修复 SMILES 生成（2026-09-23）
-
-v3 数据暴露 agent 一个**独立**问题：**模型自由发挥时倾向造无效 SMILES**。4-fluorophenol 的 6 schema + 6 state_machine 错误几乎全是 RDKit `Can't kekulize` 或 `Explicit valence`——模型把片段拼成了根本不合法的芳香环。
-
-### 修复：catalogue_summary
-
-在 `agents/harness/runtime.py::LLMPolicy.decide` 的 prompt 上下文里加一个**紧凑版目录摘要**：
-
-```
-PARENT = Oc1ccc(F)cc1
-VALID FRAGMENTS (only these are accepted): [F, C, N, O, Cl, OC, CO, ...]
-VALID SITES (atom_index on parent): [0, 1, 2, 3, 4, 5]
-PROPOSE_EDITS option must use one fragment from VALID FRAGMENTS and one
-site from VALID SITES.
-Do not invent fragment_smiles outside this list; do not write multi-fragment SMILES.
-```
-
-数据来源：`state.config["_diagnostic_manifest"]["catalogue"]`（在 `_new_state_with_docking` 注入）。
-
-### v4 在 4F agent 的影响（n=1）
-
-| 指标 | v3（无 catalogue_summary） | v4（有 catalogue_summary） |
-|---|---|---|
-| schema_errors | 6 | **1** |
-| state_machine_rejections | 6 | **4** |
-| termination | evaluation_budget_exhausted | evaluation_budget_exhausted |
-| qualifying | **0** | **0** |
-
-**schema_errors -83%（6→1），state_machine_rejections -33%（6→4）**。模型现在几乎不再发明无效 SMILES。
-
-但 **agent 仍 0 qualifying**——selection policy 和 budget 仍是约束，prompt 修复只解决了 SMILES 合法性这一层。
-
-### 诚实陈述
-
-1. **catalogue_summary 有效降低错误率**——但只是 n=1，可能有方差
-2. **仍未达 goal_met**——单一 prompt 改动不能解决根本的 selection 问题
-3. **要真正反转 v3 的 agent<baselines 结论**，需要：
-   - 重跑 phenol + catechol agent 看是否在 catalogue_summary 下能找到合格分子
-   - 或加更多 repetition（每个 parent 5 次）做统计对比
-4. **catalogue_summary 是 n=1 内部增益**——但对外的 agent-vs-baseline 结论**没变**：仍 0/3
-
-机读：`runs/samples/diagnostic_2d_dock_catalogue_summary_v4_20260923_summary.json`。
-
----
-
-## Resorcinol r4：把最弱 P1 母体升到 3/4（2026-09-22 续）
-
-紧接 fb03511 之后：resorcinol 是唯一尚未稳定的 P1 母体（2/3，r2 是 execution_failure 2 schema + 2 state_machine 错误）。再跑一次 r4 是最低成本的补充信号——既验证 schema sanitizer 在 parent scenario（非 phenol 24/16）上也有效，又把 resorcinol 从 2/3 推到 3/4。
-
-| obs | 终止 | 合格 | 最佳 Δ | schema_errors | state_machine |
-|---|---|---|---|---|---|
-| P1 r1 (pre-fix) | `goal_met` | 2 | **0.02962** | 5 | 1 |
-| r2 (post-fix) | `execution_failure` | 0 | 0.00030 | 2 | 2 |
-| r3 (post-fix) | `goal_met` | 1 | 0.02060 | 0 | 0 |
-| **r4 (post-fix)** | **`goal_met`** | **1** | **0.02060** | **1** | **0** |
-
-**resorcinol 总结**：
-
-- 4 次固定版本观察下 3/4 = **75% goal_met**（r2 是唯一失败）
-- schema_errors 趋势：5 → 2 → 0 → 1（sanitizer 有效，但 r4 仍触发了 1 次 schema error，可能是模型自然漂移）
-- r3 和 r4 找到了**同一分子** `COc1cccc(O)c1`（3-methoxyresorcinol，Δ 0.02060）——这是 resorcinol 的稳定收敛点
-- P1 r1 找到的是 audit-best `CCCOc1cccc(O)c1`（Δ 0.02962），但只有 1 次
-
-### P1 5 母体最终表（n=15 总观察）
-
-| 母体 | n | goal_met | execution_failure | 命中率 | best Δ 范围 |
-|---|---|---|---|---|---|
-| catechol | 3 | 3 | 0 | **100%** | 0.01911 - 0.02293 |
-| **resorcinol** | **4** | **3** | **1** | **75%** | 0.00030 - 0.02962 |
-| 4-methylphenol | 3 | 3 | 0 | **100%** | 0.01065 - 0.01738 |
-| 4-fluorophenol | 3 | 3 | 0 | **100%** | 0.01102 - 0.01989 |
-| **benzonitrile** | **2** | **0** | **1** (pre-fix) | **0%** | 0.00774 - 0.00774 |
-| **P1 合计** | **15** | **12** | **2** | **80.0%** | — |
-
-### 合并最终成绩
-
-| 维度 | 数据 |
-|---|---|
-| 总固定版本观察数 | 30 |
-| goal_met | **21 / 30 = 70.0%**（修复前 17 obs 21/26 = 81% 不变；+r4 resorcinol → 21/27 修复版；含 pre-fix = 21/30 总） |
-| execution_failure | 2 / 30 = **6.7%**（均在 pre-fix 冻结版本） |
-| 修复版 execution_failure | 0 / 27（含 r4，27 次观察全部合法结束） |
-
-### 不能说的
-
-1. **不能**说"resorcinol 稳定达标"——75% 是 n=4 的不稳定估计（95% CI 大约 30-95%）。
-2. **不能**说"sanitizer 修复了所有 schema 错误"——r4 仍有 1 次 schema error（model 自然漂移），但被静默吸收了。
-3. **不能**说"benzonitrile 搜索成功"——它 0/2 是诚实事实，不是 sanitizer 的失败。
-4. **不能**做效应量比较（P1 与原 3 母体 catalogue 规模不同）。
-5. **不能**做假设检验（n=15 P1，无随机化）。
-
-机读：`runs/samples/diagnostic_2d_resorcinol_r4_20260922_summary.json`。
-
----
-
-## 决策证据闭环与 v10 二维验收（2026-09-20，本轮最新）
-
-本轮的目标是把 v4 遗留的问题走完：**让智能体在真实连接下走完整条决策链**，并把途中暴露的每一个缺陷修掉、测掉、记录掉。全程遵守同一组约束：不新增分子工具、不扩展 3D、不跑 docking、不跑 n=20、不改 `property_score` 公式与 `+0.01` 阈值、不放宽 hERG 等既有约束、**不因结果差而重跑**。
-
-最终结果：**v10 是第一次完整成功的真实运行**，智能体自行找到合格分子并合法停止。
-
-### 1. 为什么这一轮必须做
-
-v4 的结论是「失败原因是 schema，不是网络」。这留下两个未解问题：
-
-1. v4 里智能体**一次编辑都没执行**，所以它的分子决策能力仍然无法评价。
-2. v4 结束后修复的两个缺陷只做了离线验证，**没有被真实验证过**。
-
-因此本轮要回答的问题是：**把传输与错误信息都修好之后，智能体到底能不能走完「评估母体 → 提出方案 → 筛选 → 选择 → 编辑 → 评估子代 → 父子比较 → 依据证据换策略 → 合法停止」这条链？**
-
-### 2. 本轮新增修复（10 个缺陷）
-
-每一版都只跑**一次**真实 agent 臂，暴露问题就修、就测，然后进入下一版。所有版本都保留，不做最好一次挑选。
-
-| 版本 | 暴露的缺陷 | 修复 |
-|---|---|---|
-| v4 | schema 错误不指名具体键 | `schema.validate_value` 输出 `missing`/`unexpected`/`allowed` |
-| v4 | 注入的 `LLMPolicy` 拿不到证据 sink（0 条记录） | Harness 为注入 policy 安装 recorder |
-| v5 | sink 只装一次：一个 policy 跨多个 Harness 时 12 次请求只落盘 1 条 | **每次 run 重新绑定**，并链式保留调用方自己的 sink |
-| v5 | `select_edit` 拒绝时不说需要哪个 evidence ID | 错误中直接给出所需 ID 与允许集合 |
-| v5 | 非法停止被归类为 `tool` 错误 | 带 `audit_event` 的拒绝归类为 `state_machine` |
-| v6 | 动作信封与参数拒绝不指名具体键 | 校验输出 `missing`/`unexpected`，并列出允许的工具 |
-| v7 | 改写措辞的非法 `finish` 绕过重复动作护栏，耗尽错误预算 | 重复护栏比较**语义参数**，忽略自由文本 |
-| v7 | 任务文本鼓励「可提前停止」，而冻结门槛禁止 | 任务文本明确写出必须穷尽的要求 |
-| v8 | 决策死循环被报告成 `execution_failure` | `repeated_action` 映射为独立的 `decision_loop` |
-| v9 | 策略与单跳约束拒绝不指名合法母体 | 错误给出 `required_parent_id` 与 `allowed_parent_ids` |
-
-**共同根因**：错误信息只说「不允许」，不说「应该是什么」。模型只能猜，猜三次就把错误预算用光，于是一次**状态机分歧**被误报成**执行失败**。这正是本任务要消灭的那类测量错误。
-
-### 3. 版本演进（每版一次真实运行）
-
-| 指标 | v4 | v5 | v6 | v7 | v8 | v9 | **v10** |
-|---|---|---|---|---|---|---|---|
-| 终止原因 | `consecutive_errors` | `consecutive_errors` | `consecutive_errors` | `consecutive_errors` | `repeated_action` | `consecutive_errors` | **`goal_met`** |
-| 网络重试 | 0 | 0 | 0 | 0 | 0 | 0 | **0** |
-| 网络失败 | 0 | 0 | 0 | 0 | 0 | 0 | **0** |
-| schema 错误 | 3 | 0 | 2 | 2 | 2 | 1 | **0** |
-| 实际编辑 | 0 | 1 | 1 | 2 | 2 | 2 | **2** |
-| 父子比较 | 0 | 1 | 1 | 2 | 2 | 2 | **2** |
-| 策略切换 | 0 | 1 | 0 | 2 | 2 | 1 | **1** |
-| 已落盘请求记录 | 0 | 1 | 11 | 20 | 16 | 15 | **14** |
-| 最佳合规增量 | — | 0.0002 | 0.0002 | 0.0082 | −0.0014 | **0.0139** | **0.0148** |
-
-**关键转折**：网络层从 v4 起就已彻底干净（0 重试、0 失败）。v5–v9 的每一次失败都是**错误信息质量**问题，而不是模型能力或网络问题。v9 首次越过 `+0.01` 阈值，v10 首次合法完成。
-
-### 4. v10 冻结设置
-
-| 项目 | 值 |
-|---|---|
-| 母体 | `Oc1ccccc1`（苯酚） |
-| 场景 | `phenol`（单跳局部修改） |
-| 目录动作数 | 24 |
-| 唯一可行产物 | 16 |
-| 可达合格产物 | 2（审计独立计算，对策略隐藏） |
-| 新结构评分预算 | 10（母体另计 1） |
-| `property_score` 最小提升 | 0.01 |
-| hERG 代理 | 不允许上升 |
-| 最大提交编辑数 | 3 |
-| docking / 3D | 关闭 |
-| provider / model | MiniMax / `MiniMax-M3` |
-| thinking | `disabled` |
-| SDK 重试 | 0（Harness 独占重试） |
-| 超时 / 重试上限 | 60 s / 3 次 |
-
-### 5. 连接验收门槛（先于任何真实实验）
-
-`scripts/check_minimax_connectivity.py` 先做 3 次顺序请求，写出的摘要必须 3/3 通过，agent 臂才允许启动（`require_connectivity_gate`）。本轮结果：
-
-| 项目 | 值 |
-|---|---|
-| attempted / successful | 3 / 3 |
-| schema_valid | 3 / 3 |
-| clients_created | 1 |
-| client_closed_explicitly | true |
-| retried_requests | 0 |
-| gate | **passed** |
-
-同时修正了一个门槛缺陷：门槛现在取**最新**的连接摘要（文件名内嵌 ISO 日期），因此一次新的验收会覆盖旧门槛，而不是被忽略。
-
-### 6. v10 双臂结果
-
-| 指标 | rule 臂 | **agent 臂** |
-|---|---|---|
-| 终止结果 | `budget_exhausted` | **`goal_met`** |
-| 新结构评估 | 10 | 8 |
-| 总计入评估 | 11 | 9 |
-| 合格产物数 | 0 | **2** |
-| 首次命中（批次末计） | — | 8 |
-| 最佳合规增量 | 0.000195 | **0.014776** |
-| 被接受的方案数 | 10 | 8 |
-| 结构通过率 | 1.0 | 1.0 |
-| 被拒动作 | 0 | 1 |
-| 网络重试 / 失败 | 0 / 0 | **0 / 0** |
-| schema / 状态机 / tool 错误 | 0 / 0 / 0 | **0 / 1 / 0** |
-| planner 尝试 / 成功响应 | 0 / 0 | **14 / 14** |
-| 执行的工具动作 | 12 | 13 |
-| **实际编辑** | 0 | **2** |
-| **父子比较** | 0 | **2** |
-| **策略切换** | 0 | **1** |
-| 步数 | 12 | 14 |
-| 停止证据合法 | true | **true** |
-| 请求证据记录 | 0 | **14** |
-
-agent 臂唯一一次被拒是 `select_edit` 缺少必需的 evidence ID，错误信息直接给出了 `h:planned_s1`，模型随即修正——这与 v5 的「猜三次然后死掉」形成直接对照。
-
-### 7. v10 合格分子
-
-| 项目 | 值 |
-|---|---|
-| candidate_id | `c3` |
-| SMILES | `CCCOc1ccccc1` |
-| 母体 | `c1` = `Oc1ccccc1` |
-| property_score | 0.942166 |
-| 相对母体增量 | **+0.014776**（阈值 +0.01） |
-| 判定 | `supported` |
-| 评估状态 | `screening_only` |
-
-### 8. v10 决策轨迹
-
-智能体实测的 8 个新结构（按顺序）：
-
-| # | SMILES | property_score | 判定 | 增量 |
-|---|---|---|---|---|
-| 1 | `Nc1ccccc1O` | 0.892431 | `tradeoff_exceeded` | −0.034958 |
-| 2 | `Oc1ccccc1O` | 0.913202 | `tradeoff_exceeded` | −0.014188 |
-| 3 | `Oc1ccccc1F` | 0.918610 | `inconclusive` | −0.008779 |
-| 4 | `COc1ccccc1` | 0.935598 | `inconclusive` | +0.008209 |
-| 5 | `CCOc1ccccc1` | 0.941292 | **`supported`** | **+0.013902** |
-| 6 | `CCCOc1ccccc1` | 0.942166 | **`supported`** | **+0.014776** |
-| 7 | `CC(C)Oc1ccccc1` | 0.936837 | `inconclusive` | +0.009447 |
-| 8 | `Oc1cccc(F)c1` | 0.916871 | `tradeoff_exceeded` | −0.010519 |
-
-假设与策略：
-
-| 项目 | 值 |
-|---|---|
-| `planned_s1` | `assessed` / `inconclusive` / 子代 `c2` |
-| `planned_s2` | `assessed` / `supported` / 子代 `c3` |
-| 策略选择 | `switch_strategy`，基于 `planned_s1`，回到母体 `c1` |
-
-**链完整性**：评估母体 → 提出方案 → 筛选 → 选择 → 执行编辑 → 评估子代 → 父子比较 → 依据负面证据换策略 → 找到合格产物 → 合法停止。全部为真。
-
-### 9. 与 v2/v3/v4 的对照
-
-| 维度 | v2 | v3 | v4 | **v10** |
-|---|---|---|---|---|
-| 网络重试 | — | 6 | 0 | **0** |
-| 最终网络失败 | — | 3 | 0 | **0** |
-| 终止原因 | 传输失败 | 传输失败 | schema | **`goal_met`** |
-| 实际编辑 | 0 | 0 | 0 | **2** |
-| 父子比较 | 0 | 0 | 0 | **2** |
-| 策略切换 | 0 | 0 | 0 | **1** |
-| 合格产物 | 0 | 0 | 0 | **2** |
-| 最佳合规增量 | — | — | 0.0002 | **0.014776** |
-
-### 10. 可以支持的结论
-
-1. 传输层已修复：连续多版均为 **0 网络重试、0 网络失败**，14/14 请求成功。
-2. 智能体**能够**走完完整决策链，并在真实运行中合法 `goal_met`。
-3. 智能体**能够**在负面证据后改变策略，而不是重复同一动作。
-4. 智能体**能够**在真实反馈下修正被拒动作（v10 唯一一次被拒后立即改正）。
-5. 智能体本轮表现**优于** rule 臂（最佳增量 0.014776 vs 0.000195，且少用 2 次评分）。
-6. 错误信息质量是决定性变量：v5–v9 的失败全部源于「错误不指名应填什么」，而非模型或网络。
-
-### 11. 不能支持的结论
-
-1. **单次运行不构成统计优越性**。不能声称智能体普遍强于规则策略。
-2. 不能声称模型学到了药物化学知识；合格分子由固定算术阈值判定。
-3. 目录是受限单跳空间，测的是**获取与选择**，不是无约束分子发明。
-4. 没有 docking、没有生物验证、没有调整阈值。
-5. 总分变化不能外推到单个性质改善。
-6. 可达性审计分数单独计算，从未传给任何策略。
-7. 8 个样本无法说明 SAR 规律。
-
-### 12. 复现步骤
-
-```powershell
-# 1. 连接验收（必须 3/3）
-python scripts/check_minimax_connectivity.py --output runs/samples/minimax_connectivity_20260920_summary.json
-
-# 2. 冻结清单 + 可达性审计（分数对策略隐藏）
-python scripts/compare_2d_policies.py prepare --output runs/diagnostic_2d_positive_v10_20260920 --scenario phenol
-python scripts/compare_2d_policies.py audit   --output runs/diagnostic_2d_positive_v10_20260920
-
-# 3. 双臂（agent 臂在门槛未过时会拒绝启动）
-python scripts/compare_2d_policies.py rule  --output runs/diagnostic_2d_positive_v10_20260920
-python scripts/compare_2d_policies.py agent --output runs/diagnostic_2d_positive_v10_20260920
-
-# 4. 报告
-python scripts/compare_2d_policies.py report --output runs/diagnostic_2d_positive_v10_20260920
-```
-
-`prepare` 会冻结 `manifest.json` 与其 SHA-256，并记录所有源文件哈希；任何源码改动都会让 `load_frozen` 拒绝混用版本。
-
-### 13. 离线测试
-
-| 项目 | 值 |
-|---|---|
-| 全量命令 | `python -m pytest -q` |
-| 结果 | **280 passed, 1 skipped** |
-| 本轮起点 | 267 passed, 1 skipped |
-| 净增 | +13 |
-| 新增测试文件 | `tests/test_reliability.py`、`tests/test_connectivity_check.py` |
-| 新增覆盖 | 证据 sink 重绑定、调用方 sink 链式保留、证据去重、必需 evidence ID 指名、非法停止分类、信封键指名、工具参数键指名、未知工具列举、策略父体指名、单跳约束指名、改写重复识别 |
-
-离线测试用 autouse fixture 阻断非回环 socket（"Network disabled in offline tests"），因此全部可离线复现。
-
-### 14. 数据与产物
-
-| 路径 | 内容 |
-|---|---|
-| `runs/samples/minimax_connectivity_20260920_summary.json` | 本轮 3/3 连接验收 |
-| `runs/samples/diagnostic_2d_positive_v10_20260920_summary.json` | v10 完整机读摘要 |
-| `runs/samples/diagnostic_2d_positive_v4_20260919_summary.json` | v4 摘要（保留） |
-| `runs/diagnostic_2d_positive_v{4..10}_2026*` | 各版本完整运行目录（本地、git 忽略） |
-
-完整运行目录、SQLite、缓存与原始日志**不进入 Git**；只提交小型摘要。
-
-### 15. 下一步
-
-1. 在 2–3 个母体上各重复 ≤3 次，检验稳定性，再谈更大结论。**（已于 2026-09-20 执行，见文首「多母体稳定性研究与决策死循环修复」；执行中发现并修复了决策死循环缺陷。）**
-2. 每次真实 agent 臂都必须先过连接门槛。
-3. 暂不扩展到完整 3D、docking 或 n=20。
-
-### 16. 智能体决策链
-
-```mermaid
-flowchart LR
-    A[目标与约束] --> B[模型选择下一步动作]
-    B --> C{状态机校验}
-    C -->|拒绝并指名原因| B
-    C -->|通过| D[RDKit 执行确定性编辑]
-    D --> E[固定协议评估]
-    E --> F[父子结构比较]
-    F --> G[假设核对]
-    G -->|支持| H[继续]
-    G -->|不支持| I[回退]
-    G -->|换思路| J[切换策略]
-    G -->|穷尽或达标| K[停止]
-    H --> B
-    I --> B
-    J --> B
-```
-
-## 模型传输修复与 v4 二维验收（2026-09-19）
-
-本轮先修复模型客户端生命周期与网络可靠性，再做**唯一一次** v4 小型二维验收。不新增分子工具、不扩展 3D、不跑 docking、不跑 n=20、不改 `property_score` 公式与 `+0.01` 阈值、不放宽 hERG 等既有约束。
-
-### 1. 为什么先修传输，而不是继续扩大实验
-
-v3 的唯一一次真实运行只能证明传输失败：Agent 成功评估了母体，随后 MiniMax 请求持续失败，记录为 10 次 planner attempt、1 次成功响应、6 次网络重试、3 次最终网络失败，`proposed options=0`、`actual edits=0`、`parent-child comparisons=0`，结果 `execution_failure`。在这种状态下继续扩大实验只会消耗额度，无法评价智能体的分子决策能力。因此门槛顺序是：**先证明传输可用（3/3），才允许启动 v4**。
-
-### 2. 原来的客户端生命周期问题（审计发现）
-
-| # | 问题 | 后果 |
-|---|---|---|
-| 1 | `LLMPolicy.decide()` 每次调用都执行 `get_client(...)`，每次都新建 `httpx.Client` + `OpenAI` 客户端 | 45 步任务最多创建 45 个连接池；连接与 TLS 握手反复重建，是不稳定的直接来源 |
-| 2 | 审计确认**没有任何代码调用 `close()`**（全仓库搜索 `\.close\(\)\|aclose` 只命中 SQLite、文件句柄等无关位置） | 客户端与套接字泄漏；进程退出前不释放 |
-| 3 | `_attempt()` 的重试退避硬编码为 `min(2**(attempt-1), 4)`，无 jitter，忽略 `Retry-After` | 固定间隔重试，遇到限流时同步撞墙 |
-| 4 | `transient()` 把 `APIStatusError` 的 `>=500` 与 429 判为可重试，但没有独立的错误分类函数 | 网络、schema、状态机、工具错误混在一个 `if/elif` 链里，无法独立统计 |
-| 5 | 模型请求没有任何结构化证据（只有失败后的 `error` 事件） | 无法区分“模型决策失败 / 网络失败 / 执行失败” |
-| 6 | `config.yaml` 允许 provider 块写 `max_retries`，SDK 可能在 Harness 之外自行重试 | 重试不计入 Harness 预算，且掩盖传输失败 |
-| 7 | 异常消息直接写进事件（`f"{type(exc).__name__}: {exc}"`） | 供应商错误文本可能回显 URL 或 header |
-
-### 3. 修改后的 client 复用与关闭流程
-
-新增 `agents/harness/reliability.py::ClientScope`，一个作用域内**每个 provider 只创建一个客户端**：
-
-- `LLMPolicy` 持有唯一的 `ClientScope`；`decide()` 把作用域注入到配置的**副本**（`config["_client_scope"]`），从不写入 `TaskState`。
-- 工具层（`generate` 等）只能拿到状态，因此改用**不透明 token**（`config["_client_scope_token"]`，`uuid4().hex`）经进程内 `_SCOPES` 注册表解析回作用域。Harness 在 `_execute()` 的 `finally` 中**移除**该键，token 绝不进入检查点、receipt 或 Repository。
-- 关闭：`LLMPolicy.close()` → `ClientScope.close()` → 每个客户端的 `close()`（存在 `aclose()` 时优先）。**幂等**：`ClientScope.close()` 首次执行后清空并置 `_closed`，重复调用直接返回；单个客户端 `close()` 抛异常会被吞掉，不掩盖原始错误。
-- 生命周期归属：Harness **自建**的 policy 在 `run()` 返回时由 `finally` 关闭；调用方**注入**的 policy 由调用方关闭，因此一个客户端可以跨多次 `run()` 复用。请求失败后仍保证资源最终关闭。
-- `TaskState` 只保存可 JSON 序列化数据：客户端不参与 `deepcopy`、不参与状态哈希、不写入 checkpoint。
-
-### 4. 为什么由 Harness 统一管理重试
-
-业务工具与模型 SDK 各自重试会产生三个问题：重试不计入 `model_calls_used` 预算、失败被 SDK 吞掉而不可审计、同一请求被多层放大。现在：
-
-- SDK 侧强制 `max_retries=0`（`agents.llm.SDK_MAX_RETRIES`，`get_client()` 覆盖 provider 配置）。
-- `config.yaml` 的 `harness.retry_*` 是唯一退避来源；`RetryPolicy.from_config()` 读取。
-- 只有 `Tool.retry_safe=True` 的工具才允许重试；`retry_safe=False` 的工具即使遇到网络错误也只执行一次。
-
-### 5. 哪些错误允许重试，哪些不允许
-
-允许进入网络重试（`classify_error()` 返回 `"network"`）：
-
-- 连接建立失败、连接超时、读取超时、远端断开（`APIConnectionError`、`httpx.TransportError`、`TimeoutError`、`ConnectionError`）
-- HTTP 429、500、502、503、504
-
-**不允许**重试：
-
-- 模型返回 JSON 不符合 schema（`json.JSONDecodeError` → `schema`）
-- 非法动作、当前状态不允许的动作（→ `state_machine`）
-- 工具参数错误、RDKit 编辑失败、约束违反、未知代码缺陷（→ `tool`）
-- HTTP 400、401、403、404（→ `provider`，直接失败，不消耗额度）
-
-四类分类互相独立，网络失败不会被计为 state-machine rejection 或 actual edit；schema 错误不会触发网络重试。
-
-### 6. 指数退避、jitter 与 Retry-After
-
-```text
-delay(n) = min(retry_base_delay * 2**(n-1), retry_max_delay) + U(0, jitter) * 该值
-若响应含合法 Retry-After：改用该值，但仍 clamp 到 retry_max_delay
-```
-
-配置：`harness.max_attempts: 3`（1..5，为**总尝试次数**）、`retry_base_delay: 1.0`、`retry_max_delay: 30.0`、`retry_jitter: 0.25`。`Retry-After` 同时接受秒数与 HTTP-date，负值/不可解析值被忽略而不是信任。测试注入 `sleep`，不真正等待。
-
-### 7. 模型请求证据字段与脱敏规则
-
-每次 HTTP 尝试写入一条 `model_request` 事件（进入 JSON checkpoint、receipt 与 Repository 的 `agent_events` 表，复用现有机制）：
-
-```text
-task_id, step/round, attempt, request_id, provider, model, base_url_host,
-started_at, finished_at, latency_ms, response_received, http_status,
-exception_category, exception（已脱敏）, retry_scheduled, retry_delay_s,
-token_usage（供应商未返回则 null）, token_usage_status（reported/unavailable）,
-thinking, schema_valid, outcome
-```
-
-脱敏（`agents/redaction.py`）：已知密钥字面量替换；`Authorization`/`api_key`/`x-api-key`/`token` 赋值替换；`Bearer <opaque>`、`sk-*`、JWT 形状 token 替换；URL 只保留 host，去掉 path、query 与 userinfo。客户端在异常上附带 `sanitized_message`，Harness 优先使用它。**不重复保存完整 prompt 与完整响应**：prompt 只在原有 generator/judge 记录中保存一次，事件中不含它们。token usage 缺失时明确写 `null` + `unavailable`，不编造。
-
-这些证据用于区分三类结果：**模型决策失败**（有响应、有合法动作、但证据不支持）、**网络失败**（无响应或可重试状态码，进入 `retry`/`network`）、**执行失败**（schema/state_machine/tool 错误或预算/检查点问题）。
-
-### 8. 使用的模型
-
-- 模型：`MiniMax-M3`，provider `MiniMax`，base host `api.minimaxi.com`（不记录完整 URL）
-- thinking：`disabled`（`config.yaml` 中 planner 使用非 thinking 路由，以稳定返回严格单动作 JSON）
-- 温度 `1.0`，`max_tokens 2048`，timeout 60 s，`max_sdk_retries=0`，`trust_env_proxy=false`，TLS `verify=true`
-- **职责边界**：模型只负责在目标、约束、历史证据与父子结构比较之间选择下一步动作；RDKit 执行全部确定性分子编辑与性质计算；Harness 负责状态机、工具调度、可靠性、检查点、恢复与审计；Repository 保存运行、候选、评估、事件、审批与工件。
-
-### 9. 离线测试结果
-
-```powershell
-python -m pytest -q tests/test_llm.py tests/test_harness.py tests/test_repository.py tests/test_api.py tests/test_2d_comparison.py tests/test_reliability.py tests/test_connectivity_check.py
-# 108 passed
-python -m pytest -q
-# 267 passed, 1 skipped
-```
-
-基线为 `222 passed, 1 skipped`；净增 **45** 个测试（`tests/test_reliability.py` 33 个、`tests/test_connectivity_check.py` 6 个、`tests/test_llm.py` +5 个、`tests/test_2d_comparison.py` +1 个）。没有删除或弱化任何既有测试。唯一被修改的既有断言是 `test_proxy_policy_is_explicit_and_tls_remains_verified` 中的 `max_retries`：它原本断言 config 值 `4` 会透传给 SDK，这与“SDK 内部重试必须为 0”的要求直接冲突，已改为断言更强的新契约 `max_retries == 0`。
-
-### 10. 三次连接验收结果
-
-```powershell
-$env:NO_PROXY = 'api.minimaxi.com,localhost,127.0.0.1'
-python scripts/check_minimax_connectivity.py
-```
-
-只做 3 次很小的**顺序**请求，固定 schema `{"status":"ok","sequence":N}`，不做并发、不做分子实验、不运行完整 Harness，不要求任何化学推理。
-
-| sequence | attempts | retried | latency_ms | schema_valid |
-|---:|---:|---|---:|---|
-| 1 | 1 | false | 1815.161 | true |
-| 2 | 1 | false | 823.421 | true |
-| 3 | 1 | false | 843.175 | true |
-
-**3/3 成功**，`clients_created=1`，`client_closed_explicitly=true`，`retried_requests=0`，密钥未出现在任何证据中。摘要见 [`runs/samples/minimax_connectivity_20260919_summary.json`](runs/samples/minimax_connectivity_20260919_summary.json)。
-
-### 11. v4 是否启动及启动门槛
-
-门槛已满足（3/3），v4 **已启动**，且只运行一次。`run_arm("agent")` 现在会先调用 `require_connectivity_gate()`：若摘要缺失或 `successful != 3`，直接抛错阻止 Agent 组启动，避免把传输失败误读为决策失败。
-
-### 12. v4 唯一实验结果
-
-目录 `runs/diagnostic_2d_positive_v4_20260919/`（v1/v2/v3 目录完整保留，未覆盖）。冻结设置：母体 `Oc1ccccc1`、24 个目录动作、16 个唯一有效产物、2 个可达合格产物（该信息未提供给任何策略）、阈值 `property_score +0.01`、关闭 docking、每 arm 新结构评分上限 10。
-
-| 指标 | rule | agent |
-|---|---:|---:|
-| 新结构评估 | 10 | 0 |
-| 母体评估 | 1 | 1 |
-| planner attempts | 0 | 4 |
-| 成功模型响应 | 0 | **4** |
-| 网络重试 | 0 | **0** |
-| 最终网络失败 | 0 | **0** |
-| schema 错误 | 0 | **3** |
-| state-machine rejection | 0 | 0 |
-| tool 错误 | 0 | 0 |
-| 非法早停尝试 | 0 | 0 |
-| proposed options | 10 | 0 |
-| actual deterministic edits | 0 | 0 |
-| 父子比较 | 0 | 0 |
-| 策略变更 / 回退 | 0 / 0 | 0 / 0 |
-| 停止依据有效 | true | **false** |
-| termination outcome | `budget_exhausted` | `execution_failure` |
-
-规则组合法停止：`finite_space_products=16`、`explored_unique_products=10`、`remaining_evaluation_budget=0`，`deterministic_stop_reasons=["budget_exhausted"]`。
-
-**Agent 组：传输已修复，但暴露了新的失败模式——不是网络，而是 schema。** 4/4 模型响应成功、0 次网络重试（v3 为 6 次重试、3 次最终失败），说明客户端复用与重试层生效。但模型在 `propose_edits` 的每个 option 里多加了 `evidence_ids` 键，schema 正确拒绝，错误文本为：
-
-```text
-ValueError: options[0]: Expected arguments: ['edit', 'rationale', 'expected_benefit', 'allowed_cost', 'expected_metric', 'expected_direction', 'predictions']
-```
-
-该消息只列出允许的键、**没有指出哪个键违规**，于是 planner 连续 3 次重复同一非法调用，触发 `consecutive_errors` 暂停。行为链因此只完成第 1 步（评估母体）。
-
-**该运行暴露的两个真实代码缺陷（已修复，但未重跑 v4）**：
-
-1. schema 错误不指出违规键 → `agents/harness/schema.py` 现在报告 `missing=[...]` / `unexpected=[...]` 与 `allowed=[...]`。
-2. 由脚本外部构造的 `LLMPolicy` 未安装 Harness 证据 sink，导致 `model_requests_recorded=0` → `Harness.run()` 现在会为注入的 policy 安装 `_record_request`。
-
-同时提示词补充了 option 的精确键集合，并说明 `evidence_ids` 只属于 `select_edit`。修复仅经离线测试验证（267 passed），**没有进行第二次真实运行**。
-
-### 13. 与 v2、v3 的区别
-
-| | v2 | v3 | v4 |
-|---|---|---|---|
-| 目录 | `..._v2_20260919` | `..._v3_20260919` | `..._v4_20260919` |
-| Agent 模型响应 | 有 | 1 次成功 | **4/4 成功** |
-| 网络重试 / 最终网络失败 | 5 / — | 6 / 3 | **0 / 0** |
-| 主要失败类别 | 网络 + 错误状态动作 | 网络 | **schema** |
-| 客户端复用 | 否（每次重建） | 否 | **是（1 个）** |
-| 显式关闭 | 无 | 无 | **有（幂等）** |
-| 结构化请求证据 | 无 | 无 | **有（含脱敏）** |
-| 启动门槛 | 无 | 无 | **3/3 连接门槛** |
-
-### 14. 当前能支持的论文结论
-
-- 客户端生命周期与重试层是可工程化的：复用单一 client、幂等显式关闭、Harness 统一退避（含 jitter 与 `Retry-After`），在真实端点上把网络失败从 v3 的 3 次降到 v4 的 0 次。
-- 错误分类是可行的且可审计：网络、schema、state_machine、tool 四类可分别统计，本轮的失败被正确归为 schema 而非网络。
-- 在冻结的有限二维空间内，规则组按预算合法停止（`budget_exhausted`），停止依据可核验。
-- 结构化请求证据足以区分模型决策失败、网络失败与执行失败。
-- 智能体在 v4 中确实完成了“评估母体”这一步，且模型响应本身是稳定、快速的（823–1815 ms）。
-
-### 15. 当前不能支持的结论
-
-- **不能说 Agent 决策能力已被验证**：v4 只完成第 1 步，0 次实际编辑、0 次父子比较、0 次策略变更，停止依据无效。
-- 不能从单次实验声称 Agent 优于规则方法；本任务未做任何重复。
-- 不能声称模型学会了药物设计，也不能从总分变化推导单项性质改善。
-- 不能把 proposed option 计为 actual edit（本轮两者都为 0，但口径必须保持）。
-- 不能把网络失败计为 rejected action（本轮 rejected=3 全部是 schema，network=0）。
-- 不能声称 v4 的 schema 修复已改善真实结果——修复仅离线验证。
-- 传输稳定性只由 3 次小请求与 4 次 planner 调用支持，样本量极小。
-- 未做 docking、未做 3D、未做生物学验证，阈值与约束未被调整。
-
-### 16. 下一阶段建议
-
-- 若未来 v4 完成完整动作链（提出候选 → 预检查 → 选择 → 确定性编辑 → 子结构评估 → 父子比较 → 假设核对 → 继续/回退/换策略/停止），再考虑 **2–3 个母体、每个最多 3 次**的小型稳定性研究。
-- 若 v4 再次因网络失败终止，则先替换或隔离传输层（例如独立进程/代理隔离），**不继续消耗真实实验额度**。
-- 暂不扩展完整 3D / docking / n=20。
-
-### 完整流程
-
-```mermaid
-flowchart LR
-    A[目标 / 约束 / 用户指令] --> B[模型决策<br/>MiniMax-M3 只选下一步动作]
-    B --> C{Harness 状态机校验<br/>available_actions}
-    C -- 非法动作 --> C1[schema / state_machine rejection<br/>不重试、单独统计]
-    C -- 合法 --> D[RDKit 确定性编辑<br/>apply_edit + verify_refinement]
-    D --> E[评估<br/>evaluate / evaluate_options<br/>计入预算、可复用同协议结果]
-    E --> F[父子比较<br/>compare_parent_child]
-    F --> G[假设核对<br/>judge_effect + 归因 + 预测核对]
-    G --> H{继续 / 回退 / 换策略 / 停止}
-    H -- continue --> B
-    H -- rollback / switch_strategy --> B
-    H -- finish --> I[结构化报告<br/>停止依据 + 事实性结论]
-    C1 --> B
-    B -. 网络错误 .-> R[有上限指数退避 + jitter<br/>Retry-After 优先、上限 clamp]
-    R --> B
-    R -- 超过上限 --> J[execution_failure<br/>与决策失败分开报告]
-```
-
-关键点：**网络失败**走重试分支并最终可能变成 `execution_failure`；**schema / state_machine / tool 错误**直接回到模型决策且从不重试；`actual edit` 只统计 RDKit 真正执行的确定性编辑。
-
-## Local API（研究原型）
-
-The persistent Harness is available through a local FastAPI service. It uses SQLite by default and does not start model calls unless a run is created with `mock: false`.
-
-```powershell
-uvicorn api:app --host 127.0.0.1 --port 8766
-```
-
-Available endpoints include `POST /runs`, `GET /runs/{task_id}`, `GET /runs/{task_id}/candidates`, pause/resume/cancel controls, and `POST /runs/{task_id}/approvals`. The API stores task snapshots and auditable facts through the same Repository used by Harness.
-
-这是绑定 `127.0.0.1` 的本地研究原型。FastAPI `BackgroundTasks` 仍在 Web 进程内执行，不是持久 Worker；进程退出、鉴权、多用户权限和任务迁移尚未解决。未实现鉴权前不要暴露到公网；请求中的 `mock: false` 可能调用付费模型。approval 当前只保存人工记录，不会自动授权或阻止某个工具动作。
-
-## ???????????????2026-09-19?
-
-??????? **222 passed, 1 skipped**??? API ?? 5 ??Repository ?? 9 ??Harness ?? 42 ??LLM client ?? 5 ???????? 6 ??SQLite ?????????JSON checkpoint ???????????????????????????????????????????????????????????????????????
-
-Repository ??? `evaluation_attempts` ???????? `evaluations` ????????????????? `task_id + candidate_id + protocol_id`?????????????????? `evaluation_error` ??? `complete` ??????????????? attempt ???????????????????????SQLite ?? `busy_timeout=5000` ? WAL??????????????`rounds` ?????????? agent step snapshot???????????
-
-Harness ????? `available_actions(state)` ????????????????????????????????????????????????????????????????????????????????????????Registry ????? stage?????????? ID?`choose_strategy` ????????????????????????? assessed hypothesis ???????????????? planned-edits ???????
-
-??????????????????????????????????????????????????`goal_not_met` ??????????????????????????????????? `invalid_early_stop_attempt` ??????????????????????????schema ???????????????? RDKit ???????????????????
-
-FastAPI ????????????????????????????`completed/cancelled` ???????approval ??? `approve/reject/request_changes`??? `task_id` ??? FastAPI ???????? writer???????????????????????`BackgroundTasks` ?? Web ?????????????? `127.0.0.1`?
-
-MiniMax client ?? `llm.trust_env_proxy: false`???? Windows ?????TLS ????????????????? `trust_env=False`?`verify=True`?provider URL?model?timeout ? SDK `max_retries`?API key ??????????? manifest ?????? provider host????60 ? timeout?SDK ????? 0??????TLS ??? thinking ???
-
-## ????? v2 ???
-
-v2 ?????????? `runs/diagnostic_2d_positive_v2_20260919/`?????? 10 ?????????????????MiniMax-M3 Agent ??? 3/16 ???????? 7 ???????????????????? `goal_not_met` ?????????????? 2 ???????? v2 ?????????????????????????????? 4 ??????1 ????????0 ???????0 ?????? 0 ????????????????? [`runs/samples/diagnostic_2d_positive_v2_20260919_summary.json`](runs/samples/diagnostic_2d_positive_v2_20260919_summary.json)?
-
-v2 ??? planner ? `config.yaml ? harness.planner: MiniMax ? MiniMax-M3`?temperature `1.0`?thinking disabled?`judge_MiniMax` ? adaptive thinking ??????? Agent ???v2 ???????????????????????????? Agent ??????????????
-
-## ????? v3 ?????
-
-v3 ??????? `runs/diagnostic_2d_positive_v3_20260919/`???????? v2????????? `Oc1ccccc1`?24 ????????16 ????????`property_score +0.01` ??????? 10 ??????? 3 ????????? docking????????? 2 ????????????????
-
-????? 10 ????????????????????????????? 10 ?????6 ?????`termination_outcome=budget_exhausted`???????????
-
-?? MiniMax-M3 Agent ??????????????????????????? 10 ? planner attempt?1 ??????6 ?????? 3 ????????? `termination_outcome=execution_failure` ??????????????????????? RDKit ????????????? arm ??? token ????????????????????????????????????????????????????????????????????? [`runs/samples/diagnostic_2d_positive_v3_20260919_summary.json`](runs/samples/diagnostic_2d_positive_v3_20260919_summary.json)?
-
-??????? 3D/docking????? n=20?????????????????????RBAC?Redis/Celery ???? Worker????????????????????? v4 ??????? v3????? v3 ???????????????
-
-`real_ablation_v4` 已补齐四组各 3 个合格重复。主指标比较均未达到显著：reflection vs baseline Δ=+0.006、p=0.717；reflection_failed_set vs reflection Δ=+0.025、p=0.164；reflection_memory vs reflection_failed_set Δ=-0.009、p=0.400。现有证据不支持启动每组 20 次确认实验，也不支持把长期记忆设为默认配置。
-
-二维正对照 pilot 的有限空间包含 16 个不同产物和 2 个可达的合格产物。规则组评估 10 个新结构未命中；MiniMax-M3 智能体评估 3 个，最佳 property_score 改善为 `+0.008208575961059172`，随后因 5 次网络重试和错误的 `choose_strategy` 状态动作以 `consecutive_errors` 暂停。它证明当前瓶颈是决策阶段可靠性和连接稳定性，尚不能比较智能体与规则谁更优。
-
-下一阶段按以下顺序执行：Repository 精确协议复用与跨协议重评 → 确定性 `available_actions(state)` 阶段机 → MiniMax 显式代理策略 → 新的二维正对照 v2。暂停鉴权、RBAC、Redis/Celery、分布式 Worker、3D 扩展和 n=20。可直接复制给 MiniMax 的完整任务书见 [MiniMax 下一阶段连续交付提示词](docs/MINIMAX_NEXT_TASK_PROMPT.md)。
-
-> **2026-09-19 更新**：最初复核时旧 v4 为 10/12 个合格重复，见 [原复核记录](docs/REVIEW_EXPERIMENTS_20260919.md)。随后已修复实验合同和报告问题，并按用户授权补跑；当前规则和执行结果以本页“实验合同与报告修复”一节为准。下文旧“v4 待跑”与“过滤器是真因”均不作为当前结论。
-
-新增持久任务智能体入口：支持母体导入、受约束分子优化、工具选择、检查点、暂停恢复和用户干预。
-离线演示及真实运行方法见 [Agent Harness 使用说明](docs/AGENT_HARNESS.md)。
-运行 `python agent_dashboard.py`，打开 `http://127.0.0.1:8765`，即可在浏览器中查看并干预执行。
-
-## 实验合同与报告修复（2026-09-19，优先于下文旧执行说明）
-
-本轮先修实验可信度，再补旧 v4，之后推进独立的二维 Harness 对照；不增加分子工具、不扩展 3D 链路、不启动每组 20 次实验。
-
-### 实际执行规则
-
-- `experiments/contract.py` 集中校验预算与确认规则。正式预算优先级为 **CLI > matrix.execution > profile 默认值**；`--profile smoke` 明确采用小预算预设，CLI 仍可覆盖。0/负数预算报错。`--dry-run` 打印实际组别、轮次、候选数、模式、主指标、判决配置、attempt 上限，不写实验数据、不请求模型。
-- `treatment_group` 与 `treatment_groups` 二选一；未知确认字段和未实现的 futility 规则拒绝运行。多个处理组分别比较同一 reference，采用 Bonferroni：family alpha=0.05，两组各 alpha=0.025；不选择最小 p 值，不自动修改默认记忆配置。安全非劣性使用对应置信区间（两组时 97.5% 双侧区间的上界）；这是程序预设门控，不是生物安全证明。
-- 新 v4 确认配置使用 `safe_run_improvement_rate` 与 `best_safe_vina_delta`：从首末轮安全门通过且 complete 的候选分别取最优 Vina，末轮减首轮，小于 0 才计改善。缺少任一端点记 unknown；报告显示有效端点的统计，确认批准要求计划重复及端点覆盖完整。旧协议未指定此字段时仍使用旧全候选口径，避免追溯改变历史定义。
-- 无望达标早停：`minimum_successes=ceil(rate*planned-1e-12)`；20 次、70% 要求 14 次成功。已合格但缺少改善证据的重复不计成功。对每个处理组计算剩余最大成功数，**所有处理组均不可达才停止整套矩阵**。无中期显著性早停，也无注释曾声称的“连续两批 2-sigma”规则。
-- `--resume` 在写文件或 API 调用前比对原组 overrides、确认规则、主指标、顺序、预算、模式、profile、各 attempt 的 resolved_config、记录的执行代码哈希及评分资产；仅忽略必须独立的 memory_namespace。新实验另冻结各组完整配置与执行/报告合同哈希。老 v4 无合同哈希，因此报告代码升级另记录版本，原执行代码必须一致。
-- 已合格重复跳过；失败重复从新的 attempt 第 0 轮开始，原 attempt 不覆盖。`--max-attempts` 是每个重复的累计上限，不是额外次数；旧 v4 已到 3，因此补一次需设 4。增加上限记录在 resume_history。
-- 本次**未修改旧 v4 的生成、评分、safe_vina 控制行为**：没有安全候选时 patience 不增加，仍受总轮次/预算限制。3 轮 v4 不能证明新进度信号的提前终止收益。
-
-### 报告与证据规则
-
-`experiments/reporting.py` 同时输出以下对照，差值始终为 treatment − reference：
-
-1. reflection_failed_set vs reflection：加入失败过滤器的增量。
-2. reflection_memory vs reflection_failed_set：加入 WorkingMemory 的增量。
-3. reflection_memory vs reflection：保留旧组合比较，不能称为记忆独立作用。
-
-全部候选与安全门内 composite/Vina、首末轮变化分别呈现。主指标沿用各 manifest 声明；旧 screening v4 仍为 best_composite_global，不事后换指标。额外比较是探索性描述，不因一次 p 值宣布因果。新增 all-attempt 表包含合格与排除次数、全部已记录 token 和时间；失败 API 请求可能缺 usage，记录值不等于供应商完整账单。缓存会影响时间与 docking 成本。
-
-新增 `tests/test_experiment_contract.py` 覆盖预算覆盖、字段冲突、多处理组早停、alpha 校正、缺样本禁止批准、恢复漂移、缺安全端点和失败成本。此前“回放已证明过滤器是真因”的表述已改为待验证假设。
-
-全量离线回归：`python -m pytest -q`，**200 passed, 1 skipped**（25.83 秒）。首次全量回归发现历史记录缺 repeat 字段时的兼容问题，已修复为缺字段时以 run_dir 去重；最终结果为上述全部通过。另有真实 API 连通性与实际运行验收，不能用离线通过代替真实行为证据。
-
-```powershell
-# 仅验证配置；不会启动 20 次确认实验
-python scripts/run_benchmark.py --matrix experiments/confirmatory_matrix_v4.yaml --profile confirmatory --benchmark-id dry_check_only --dry-run
-# 旧 v4 补跑之前先只核查
-python scripts/run_benchmark.py --matrix experiments/matrix_v4.yaml --profile screening --benchmark-id real_ablation_v4 --resume --max-attempts 4 --dry-run
-```
-
-2026-09-19 已核对旧 v4 全部 17 个 attempt：当前配置与记录的执行源码一致。补跑前保存原 manifest/report 快照；补跑结果与二维对照记录见本节后续更新。最初复核状态保留在 [复核记录](docs/REVIEW_EXPERIMENTS_20260919.md)，其中“尚未修复”指该复核时点。
-
-### 补跑连接修复与证据保存
-
-定位到 Python/httpx 自动读取的 Windows 系统代理 `127.0.0.1:12000`：默认连接报 TLS `UNEXPECTED_EOF_WHILE_READING`；同机直连同一 API 主机可正常握手。仅对本次进程设置 `NO_PROXY=api.minimaxi.com,localhost,127.0.0.1` 后，真实 MiniMax-M3 JSON 请求成功（记录 usage=173 tokens）。没有改系统代理、模型、API 地址、评分配置或 TLS 证书验证。
-
-连通性记录与补跑日志在 `runs/review_repair_20260919/`；最初两次带系统代理的失败请求未返回 usage，不能断言没有计费。成功请求保存在 `connectivity_direct.json`。原报告、manifest 与升级口径的补跑前报告保存在 `benchmarks/real_ablation_v4/review_before_resume_20260919/`，原 attempt 文件保留。
-
-```powershell
-$env:NO_PROXY = 'api.minimaxi.com,localhost,127.0.0.1'
-$env:HF_HUB_OFFLINE = '1'
-$env:TRANSFORMERS_OFFLINE = '1'
-$env:AIDD_EMBED_AUTO_DOWNLOAD = '0'
-python scripts/run_benchmark.py --matrix experiments/matrix_v4.yaml --profile screening --benchmark-id real_ablation_v4 --resume --max-attempts 4
-```
-
-### 独立二维对照：任务与边界
-
-新目录 `runs/diagnostic_2d_positive_20260919/`，旧 `diagnostic_2d_comparison_20260918` 完整保留，不继续旧失败运行。新母体苯酚 `Oc1ccccc1`，来源是此前父子评分证据提示其存在可改善方向：这是**经可达性筛选的正对照诊断**，不是盲测或泛化基准。
-
-- 阈值仍是 property_score 改善至少 0.01，hERG 代理风险不允许上升，保留骨架；关闭 docking，最多 3 次正式编辑。
-- 冻结 24 个已有 attach_fragment 操作：O 原子 0 上的 4 个碳片段，以及芳环 2–6 号位各 C/N/O/F。预检查全部通过，去重后 16 个产物；离线可达性检查另计母体与产物共 17 次评分，发现 2 个达标产物。
-- 两组只看相同的未评分目录；模型上下文不含可达性评分、达标结构名单或规则组结果。两组上限均为母体 1 次＋新结构 10 次评分，备选评分计入；最多 45 步、60 次请求。首次命中按整批结束时评估数计，避免批内顺序优势。
-- 规则仍按改动原子少、Morgan 相似度高、目录 ID 排序，产物去重，每批 2 个。它不看可达性结果，也不根据模型结果调整排序。
-- 模型用 MiniMax-M3，模型负责提方案与选择，RDKit 执行既有工具。修复仅加强顶层 reason 必填与正数 min_change 的提示，并让验证错误显示具体范围；不自动补写理由、不把 0 偷改成正数、不放宽阈值。预计不变的性质写 allowed_cost/数值约束，不伪造方向性改善预测。
-- 在评分前保存 manifest、SHA256、代码哈希和规则排序；可达性通过后才允许两组运行。单次真实模型对照，无人工重启凑成功，不因分数不理想改任务。结果仅说明此固定任务的行为，不证明药理活性或普遍优于规则。
-
-```powershell
-python scripts/compare_2d_policies.py prepare --output runs/diagnostic_2d_positive_20260919 --scenario phenol
-python scripts/compare_2d_policies.py audit --output runs/diagnostic_2d_positive_20260919
-python scripts/compare_2d_policies.py rule --output runs/diagnostic_2d_positive_20260919
-# 确保当前进程 NO_PROXY 如上设置，随后运行真实模型组
-python scripts/compare_2d_policies.py agent --output runs/diagnostic_2d_positive_20260919
-python scripts/compare_2d_policies.py report --output runs/diagnostic_2d_positive_20260919
-```
-
-## 结果判断、约束重验与策略执行（2026-09-18）
-
-### 当前版本：评分分项、结构化预测与计入预算的备选评估
-
-本次完成四项改造：评分公式分项归因、预测逐项核对、备选的本地性质评估、数组/对象形式的工具参数。
-本节为最新接口和行为；下方的 `options_json/evidence_ids_json` 等说明属于上一版历史记录，当前新调用不再接受这些字段。
-原有评分函数及权重没有改变，也没有重新写入旧验收记录中的评分。
-
-**当前流程：**评估母体 → 提出 2–4 个方案及结构化预测 → RDKit 预检查 → `evaluate_options` 本地评分 → 根据实测分项、约束和多样性选择 → 精确执行 → 复用同协议评分或评估 → 父子比较与预测核对 → 换方案或停止。
-CLI/网页新建有母体任务默认启用 `require_option_screening: true`；旧任务保持原开关默认值，可在网页自行开启。
-
-#### 1. 评分分项与父子归因
-
-`agents/harness/attribution.py` 读取评分记录，保存各项原值、归一化值、权重、贡献和分项变化：
-
-```text
-property_score = 0.55 × ADMET_quality + 0.15 × Lipinski_pass + 0.30 × SA_component
-SA_component = clip(1 − (SA − 1)/9, 0, 1)
-当 SA > 配置的 reject_above 时，SA_component 再乘 0.3
-ADMET_quality = 0.375 × absorption + 0.375 × bioavailability + 0.25 × QED
-```
-
-ADMET 的已存储值经过舍入，因此子分项还单独记录 `stored_quality_rounding_residual`，不把舍入差异算作某个性质的改善。
-分项贡献之和须与已存总分相差不超过 `1e-10`；不匹配标为 `formula_mismatch`，缺值或不同评估协议时不给出可比归因。
-新增的 `property_attribution`、`attribution_delta` 同时进入模型上下文、任务内经验、最终报告和结构详情页；模型现在直接接收 `validate.sa_score`。
-这里解释的是**评分公式的加减关系**，不是药理机制、真实毒性或实验活性的因果解释。
-
-用上一轮现有证据复核，不调用模型、不重新评分：
-
-| 母体 → 5 号位加 F | ADMET_quality 贡献变化 | SA 贡献变化 | Lipinski 贡献变化 | 性质分变化 |
-|---|---:|---:|---:|---:|
-| `CCOc1ccccc1` → `CCOc1cccc(F)c1` | +0.00390830 | −0.01080137583 | 0 | −0.00689307583 |
-
-QED 从 `0.583207` 上升到 `0.611633`，但 SA 从 `1.041975` 变为 `1.366017`，后者在公式中的损失更大。
-导出证据见 [attribution.json](runs/score_feedback_history_20260918/attribution.json)。该文件注明 `retrospective: true`，原始运行文件未修改。
-
-#### 2. 结构化预测与实际结果核对
-
-每个新方案必须在评分之前保存 `predictions`，例如：
-
-```json
-[
-  {"metric": "qed", "direction": "increase", "min_change": 0.01},
-  {"metric": "sa_score", "direction": "decrease", "min_change": 0.02}
-]
-```
-
-字段为指标、方向和最小预期变化；阈值必须是有限正数，不能用 0 把没有变化算成支持。
-可使用性质总分、QED、SA、logP、MW、TPSA、ADMET_quality、吸收/生物利用度代理、hERG 代理、Vina 和综合分。
-评分后逐项生成 `supported / refuted / inconclusive / insufficient_evidence`：达到预期方向及幅度、达到相反方向幅度、变化不足、缺值或协议不一致。
-预测核对与任务完成判断是两个概念：例如“hERG 风险会上升”可能被数据支持，但候选仍会因违反安全代理约束而被拒绝。
-选中后，预测复制到正式假设；比较结果与当时的规则随评估历史保存。未选中方案的预测核对也保留在备选记录中。
-同一产物如果已有任务内初筛缓存，新方案注明 `prediction_provenance.prior_screening_key`，不能将已知评分后提出的预测算作首次前瞻预测。此标记表示任务内是否已有评分，不证明模型没有其他先验知识。
-
-#### 3. 低成本评估、选择与预算
-
-`agents/harness/screening.py` 调用已有 `evaluate_candidates(..., dock_enabled=False)`，只计算本地性质，不调用 Vina 或额外模型。
-结果存于独立的 `TaskState.option_screenings`，不会把所有备选混入正式编辑候选池。
-缓存按“本地评估协议 + 规范 SMILES”标识；评分配置/实现/环境变化导致协议变化时不复用。
-
-- 每个新增的唯一备选评分计入同一个 `max_evaluations`，在执行前检查整批预算；不足则整批不运行。
-- 相同协议的已缓存结果计费 0，但报告保留来源和新增/复用数量。
-- 选中后真正执行分子编辑；仅在关闭 docking 且协议完全相同时，正式候选复用备选评分，后续 `evaluate` 不重复计算或扣费。
-- 开启 docking 的正式候选不会用本地初筛结果冒充完整评估；不同协议的父子证据返回证据不足。
-- 分项、预测核对、数值化允许代价、相对已有候选的新颖度、备选间 Morgan 相似度均提供给模型。
-- 程序建议顺序为：证据可用且代价合规优先，其次性质分，分数相同时使用新颖度；这是明确的工程排序，不宣称最优多目标算法。
-- 已知代价超限或证据不足的已评分方案不能选择；如果全部不合格，模型可以再提一批或直接生成未达标报告。
-
-新颖度定义为 `1 − 与已有候选的最大 Morgan Tanimoto 相似度`；只是结构差异，不等于发现价值。
-模型选择理由仍标记未经验证，程序不会因为文字解释更好听而放宽硬约束。
-
-#### 4. 原生结构化工具参数与恢复
-
-`propose_edits` 现在接收 `options: [...]`，`select_edit` 接收 `evidence_ids: [...]`；已删除接口中的二次 JSON 字符串解析。
-`agents/harness/schema.py` 递归检查对象、数组、字段、枚举、有限数值和范围；编辑操作仍由各自工具契约进一步检查。
-本次消除的是嵌套字符串的转义/二次解析问题，不能保证模型永远不输出缺字段或错误动作。
-旧运行事件照常可读，不会自动重写历史参数；新动作须遵循当前结构化接口。
-模型可见工具会过滤当前阶段不适用的选择/策略动作；真正执行时仍会检查前置条件。
-因连续错误暂停后，显式恢复重新开始连续错误计数，累计请求数、步骤、预算和失败事件均不重置。
-
-#### 实际验证、复现命令与覆盖范围
-
-```powershell
-# 只解释旧分数；输出文件须不存在，不花费模型或评分预算
-python scripts/explain_score_history.py --task runs/acceptance_autonomous_edits_20260918/task.json --output runs/my_score_history/attribution.json
-# 一个母体、最多 3 次正式编辑；本地评估总预算 14（包含所有备选）
-python scripts/validate_autonomous_edits.py --output runs/my_score_feedback
-# 遇到可修复问题时恢复同一检查点；不会增加原有预算
-python scripts/validate_autonomous_edits.py --resume --output runs/my_score_feedback
-python -m pytest -q
-```
-
-本次真实模型仍为 `MiniMax-M3`，非 thinking 路由；无 docking。
-证据见 [验收摘要](runs/acceptance_score_feedback_20260918/acceptance.json) 和 [完整记录](runs/acceptance_score_feedback_20260918/task.json)。
-模型提出 2 批共 7 个方案，其中 5 个通过结构预检查并进行了本地评分；连同母体共 **6 次评估**，累计 **13 步、17 次模型请求尝试**。
-评分结果中 4 个方案代价超限，另一个性质分下降但未超过退化上限，仍不满足有效改善要求；模型最终停止并输出 `goal_not_met`。
-本次 **0 次正式编辑、0 次正式选择、0 个合格子候选**。5 个备选的分项与预测核对全部保留；它们不是已执行的正式子候选。
-
-真实运行没有一次直接跑通：保留了 **7 条 error、4 条 retry、2 次恢复**。其中模型把已评分方案当成已执行假设，误调策略工具，也曾尝试选择已知代价超限的方案；均被程序拒绝。
-随后补充阶段说明、可见工具过滤及显式恢复的错误计数处理，从原检查点继续，未重置预算或降低约束。
-先前失败摘要保留为同目录的 `acceptance_before_resume_step_7.json`、`acceptance_before_resume_step_8.json`。
-
-**覆盖边界：**这次真实调用验证了分项反馈、前置预测核对、备选成本计数、失败恢复和评估后停止；没有覆盖真实模型的“选择 → 执行 → 复用评分”路径。
-该完整路径由离线集成测试验证：母体 1 次 + 两个备选 2 次 = 总计 3 次，选择/执行/再次 evaluate/比较后仍为 3 次，预测与分项证据随检查点保留。
-不以“必须做一次无益编辑”作为成功条件，也不把停止或接口验收说成分子优化性能提高。
-最终全量回归 **189 passed, 1 skipped**；网页 JavaScript 语法与 HTTP/控制接口通过检查。本次未做浏览器视觉验收。
-
----
-
-### 上一版记录：自主备选方案、预检查与任务内经验
-
-本次把“用户指定先改 C、再改 N”的验收推进为**仅给目标、母体与约束，模型自行提出修改**。
-当前新建的有母体任务默认启用 `require_planned_edits: true`；旧检查点默认关闭该开关以兼容已有执行步骤，可在网页“有效改善与允许代价”中开启。
-`max_edits` 默认为 3，可在网页或结构化约束中调整；这是实际生成的确定性编辑子候选数量上限。
-预检查不占候选评估预算，但模型提出方案仍消耗请求/步骤预算。原有检查点、暂停恢复、约束重验和报告规则继续有效。
-
-**当前工具流程：**评估母体 → `propose_edits` → `select_edit` → `execute_selected_edit` → 评估子候选 → `compare_parent_child` → 根据结果 `choose_strategy` → 新一轮备选与选择，或 `finish`。
-
-| 新能力 | 具体实现与强制条件 |
-|---|---|
-| 方案预检查 | `agents/harness/planning.py::preview` 在任务副本中调用 RDKit 图编辑，检查参数、原子位置、价态、骨架/相似度/允许位点等约束，以及与已有候选的重复产物；不写入正式候选、不执行评分或调用模型 |
-| 多方案比较 | `propose_edits` 每批要求 2–4 个不同编辑；每个方案记录操作参数、理由、预期收益、允许代价、目标指标和方向。失败方案及具体原因也保留；同批不同操作产生同一产物时标为重复 |
-| 可执行选择 | `select_edit` 选择通过检查的方案，记录相对其他方案的选择理由并自动建立假设。选择前母体必须已评估；`execute_selected_edit` 再次检查并严格执行所选参数，不能换操作、绕过当前约束、重复执行或超过编辑预算 |
-| 任务内经验 | 从真实父子评估和预检查失败记录构建 `experience`。证据 ID 为 `h:<hypothesis_id>` 或 `p:<proposal_id>:<option_index>`；后续选择必须引用最近一次已评估假设，并保存选择时的证据快照 |
-| 用户查看与干预 | 网页显示每批备选、预检查失败原因、预期收益、模型选择理由、证据快照和实际产物；可调整是否必须预先选择方案及最多编辑次数 |
-| 报告与恢复 | `TaskState.edit_proposals/edit_selections` 随检查点和收据持久化，最终报告包含全部方案、选择和经验；用户修订后旧方案/选择不能执行，必须重新提出 |
-
-接口为严格单动作 JSON。`propose_edits` 参数 `options_json` 是 JSON 数组字符串，每项包含 `edit: {operation, arguments}`、`rationale`、`expected_benefit`、`allowed_cost`、`expected_metric`、`expected_direction`；`edit.arguments` 不包含母体 ID 和假设 ID。
-`select_edit` 参数为 `proposal_id`、从 0 开始的 `option_index`、`rationale`、`evidence_ids_json`。
-实际编辑预算耗尽且没有合格结果时，当前程序报告 `stop_reason: edit_budget_exhausted`。模型仍需调用 `finish` 才生成最终报告；若先耗尽调用预算，系统暂停保留检查点。
-
-这里的“经验”是**本任务的事实记录及上下文引用**，不是模型训练、参数更新、跨任务学习或已证实的构效关系。
-系统强制证据 ID 真实存在、最近结果被引用、执行与选择一致；不会自动证明模型的因果解释正确。
-预检查通过也不证明化学合成可行性、药效或安全性。所有预期收益与模型选择理由均作为未验证文字保存/展示。
-
-#### 不指定编辑步骤的小型真实验收
-
-运行命令（新的输出目录；会调用已配置的模型）：
-
-```powershell
-python scripts/validate_autonomous_edits.py --output runs/my_autonomous_edits
-python -m pytest tests/test_edit_planning.py -q
-python agent_dashboard.py
-```
-
-真实证据：[acceptance.json](runs/acceptance_autonomous_edits_20260918/acceptance.json)、[完整 task.json](runs/acceptance_autonomous_edits_20260918/task.json)。
-使用原有 `MiniMax-M3`、非 thinking 配置；仅给母体 `CCOc1ccccc1`、改善性质代理分、保留骨架、不允许 hERG 风险上升的目标。
-未指定连接片段、位点或编辑顺序；docking 关闭，最多 3 次编辑，最多 4 个候选评估，32 个步骤和 45 次请求尝试预算。
-
-模型实际提出 **3 批、共 10 个备选方案**，其中 **3 个被预检查拒绝**；实际执行如下：
-
-| 顺序 | 模型选出的实际子结构 | 相对原母体的性质分变化 | 程序判定 |
-|---|---|---:|---|
-| 1 | `COc1ccccc1`（乙氧基改为甲氧基） | −0.005693621849877872 | `inconclusive`，未达到最小有效变化 |
-| 2 | `CCOc1cccc(F)c1`（母体 5 号原子连接 F） | −0.006893075830636808 | `inconclusive` |
-| 3 | `Oc1ccccc1`（乙氧基替换为羟基） | −0.013902197810937045 | `tradeoff_exceeded`，性质分退化超过 0.01 |
-
-第二次选择引用 `h:planned_s1`，第三次选择引用前两次评估，并执行了不同修改。
-最终 **0 个合格子候选、1 个参考母体、3 个未达标候选**，输出 `goal_not_met`，没有把任务运行完成说成性质优化成功。
-共 25 个决策步骤、36 次模型请求尝试、4 个本地评估、3 次实际编辑。
-事件保留 **6 条 error 与 11 条 retry**：包括网络错误、动作格式错误及一次嵌套方案 JSON 解析错误；并非无故障运行。
-该原始运行的停止原因是 `no_candidate_meets_current_constraints`；验收后的程序补充了更明确的 `edit_budget_exhausted` 分类并用离线测试验证，没有改写旧运行记录。
-
-**对结果的解释：**本次证明了未指定编辑序列时，模型能够提出备选、读取预检查、引用已有结果并选择不同动作；没有证明它找到更优分子，也没有证明“引用经验”提升了决策质量。
-原始模型理由中把 5 号位 F 称为 para，并从少量结果推导了过宽的趋势；其第三次选择仍回到更短侧链方向，最终表现更差。
-这些文字与程序证据分开保存。验收后补充了“用精确原子编号、不要从单个结果推导一般规律”的提示和界面的未验证标识；未为美化结果重跑真实实验。
-
-离线回归覆盖：无副作用预检查、错误位点/价态/SMILES、重复产物、不可行方案禁止执行、过期选择、精确执行所选参数、编辑预算、引用最近结果、恢复后经验保留和有母体的 Mock 网页流程。
-Mock 的备选与选择是固定规则演示，不算真实模型自主决策；真实验收则使用上述模型接口。
-本次最终全量回归为 **182 passed, 1 skipped**；网页 JavaScript 通过 Node 语法检查，HTTP 和控制接口通过回归测试。本次没有执行浏览器视觉验收。
-
----
-
-本版完成四项收口：数值化判断、当前约束下重验、程序生成结果报告、判断驱动下一次实际编辑。
-这一节是当前行为；后文早期验收记录保留原始事实，不能把旧版 `supported` 或 `completed` 直接当作新版验收通过。
-
-### 执行流程与职责
-
-`导入母体 → 本地评估 → 模型记录假设 → 模型选位点和编辑工具 → RDKit 编辑 → 本地评估 → 父子比较 → 程序判定 → 模型选择继续/回退/换策略 → 执行下一次编辑 → 暂停 → 用户更新约束 → 重验已有候选 → 恢复 → 程序生成报告`。
-
-- `TaskState` 保存候选、假设、约束及其修订历史、新增的 `strategies` 和 `final_history`；原子写入 JSON 检查点，工具完成收据支持恢复。
-- `agents/harness/evidence.py` 负责数值判定、验证版本和事实报告；`molecule_ops.py` 负责 RDKit 结构检查与完成条件。
-- `tools.py` 提供类型受限的工具注册与执行前检查；`runtime.py` 向模型提供当前证据，管理调用预算、失败重试和控制指令。
-- 模型负责提出假设、选择动作及解释。RDKit 真正修改分子图；确定性 Python 代码生成分数差、约束判定、结果分组和停止原因。
-- 本次真实决策使用 `config.yaml → harness.planner: MiniMax → llm.providers.MiniMax`，模型 `MiniMax-M3`，`thinking` 关闭、temperature `1.0`，通过 OpenAI 兼容客户端调用。没有调用 DeepSeek 模型，也没有把运行时迁移到官方 `dsh`；这里是项目自建 Harness。
-- 关闭 docking：只执行 RDKit 描述符和 ADMET 启发式性质评估。没有 Vina 结果，没有训练或微调任何模型。
-
-### 判断规则及阈值依据
-
-所有差值均为 **子候选 − 直接母体**，计算使用未四舍五入的值；显示精度不改变验收。
-
-| 指标 | 有利方向 | 默认最小有效变化 `min_effects` | 默认允许退化 `max_regressions` |
-|---|---|---:|---:|
-| `property_score` | 增大 | 0.01 | 0.01 |
-| `composite_score` | 增大 | 0.01 | 不启用 |
-| `vina` | 减小 | 0.5 kcal/mol | 不启用 |
-| `herg_risk` | 减小 | 0.02 | 0.0 |
-
-这些值是**可配置的工程容差**：性质分约百分之一的变化才计为有效，默认不接受 hERG 代理风险上升。
-它们未经重复实验或生物数据校准，不是统计显著性阈值，也不能用于断言活性提升。Vina 阈值是预留规则，本次未验证其科学合理性。
-后续论文若讨论性能，应另行报告阈值敏感性；本次只验收执行行为。
-
-程序依次判断：评估成功且协议相同、所需指标齐全 → 数值化代价是否超限 → 主指标变化是否达到阈值及方向是否有利。
-结果包括 `insufficient_evidence`（缺值/协议不一致）、`tradeoff_exceeded`（代价超限）、`inconclusive`（基本不变）、`not_supported`（明显反向）、`supported`（有效改善且代价合规）；结构不合规为 `edit_rejected`。
-因此 `+0.00000843` 判为基本不变；即使主指标提高，只要某项启用的退化上限被突破，也不能判为支持。
-边界计算使用 `1e-12` 浮点容差，非有限指标视作缺失。
-
-`allowed_tradeoff` 仍保留模型的文字解释，但不能放宽 `max_regressions`。后者是每个指标的最大允许退化量，省略某项表示不启用该项；启用但缺少测量值则证据不足。
-`min_effects` 必须包含表中四项，全部为有限正数；退化上限须为有限非负数。
-通过 CLI/网页导入母体创建的新任务，默认开启 `require_verified_refinement` 和 `require_meaningful_improvement`。
-兼容旧检查点时不会偷偷修改既有目标；若旧任务也要求有效改善，需要显式开启后一项。
-
-### 新约束、策略和报告
-
-修改位点、骨架、改动大小或其他结构约束时，系统保留最初的 `refinement_verification`，追加 `validation_history`，更新 `current_validation`。
-验证签名由约束和父子结构生成；相同条件不会重复追加。确定性编辑另核对实际操作记录中的原子位置。
-原子编号属于该候选的**直接母体**；MCS 差异映射仍可能存在对称结构歧义，不能理解为跨代的原子身份追踪。
-`revision` 同时记录约束和用户指令修订，所以验证版本与最新指令版本可能不同；报告保存生成时的完整约束。
-原评分、协议、旧验证及假设评估历史均保留，结构重验不重新调用评分或 docking。新阈值下的 `current_improvement` 会重新计算。
-不符合当前结构约束的子候选不能继续评估、作为后续编辑母体或进入合格结果；旧报告在用户更新后归档并清除，避免继续显示过期结论。
-
-父子比较后，下一次假设之前必须调用 `choose_strategy`：`continue` 仅允许已获支持的子候选；`rollback` 返回该假设的原母体；`switch_strategy` 选择当前结构合规的母体并改变编辑方案。
-策略保存判断依据、所选母体、后续假设 ID，以及真正执行后的工具名、子候选 ID 和步骤。
-新假设必须与所选母体匹配，旧修订下的假设不能执行。相同母体、工具及参数的历史编辑不能靠换假设 ID 再做一遍；重复产物另有结构去重。
-
-最终报告遍历完整候选池，明确分为 `qualified_candidates`、`reference_parents`、`rejected_candidates`。
-参考母体始终单独列出，不充当优化成功的子候选。数值、逐项完成条件、当前验证、改善判断、停止原因和策略历史由程序生成。
-模型提交的文字只进入 `model_explanation`，标记 `verified: false`，不覆盖程序结论。
-没有合格候选时输出 `goal_not_met / no_candidate_meets_current_constraints`，任务暂停并保留结果供继续干预。
-网页新增判断规则编辑、策略实际执行记录、三类结果和完整证据；结构详情同时展示原验证、当前验证及历史。
-
-### 可复现验收与真实结果
-
-运行脚本要求新的输出目录，拒绝覆盖已有证据：
-
-```powershell
-python scripts/validate_agent_decisions.py --output runs/my_decisions_offline
-python scripts/validate_agent_decisions.py --real --output runs/my_decisions_real
-python -m pytest -q
-```
-
-离线版本使用脚本决策和真实本地 RDKit 计算，不调用模型；真实版本由 MiniMax-M3 选择每一步工具。
-场景刻意指定先在母体 `CCOc1ccccc1` 的 6 号位连接 C、再尝试 N，用于稳定触发微小变化和代价超限；**这不是开放式自主分子发现实验**。
-第二次比较后，以步数边界暂停，用户把允许位点收紧到 `[0]` 并关闭后续编辑，重新加载检查点恢复，要求整理现有结果。
-
-| 验收项 | 2026-09-18 实测结果 |
-|---|---|
-| 原母体 `c1` | property `0.941291921849878`，hERG-risk `0.0` |
-| 甲基子候选 `c2` | property `0.9413003548104499`，差值 `+0.00000843296057195797`，判为 `inconclusive` |
-| 真实模型下一步 | `switch_strategy`，返回 `c1`，实际执行连接 N，生成 `c3`；策略记录为 `executed` |
-| 含 N 子候选 `c3` | property `0.9355555833818785`，差值 `−0.00573633846799948`；hERG-risk `0.029322` 超过允许上升 `0.0`，判为 `tradeoff_exceeded` |
-| 收紧位点后 | 两个子候选保留原来的通过记录，但当前验证均失败；原评分保留，未重新评估 |
-| 最终结果 | 合格 0、参考母体 1、未达标 2；`goal_not_met`，未声称优化成功 |
-| 离线场景 | 11 个决策步骤、3 个分子本地评估、0 次外部模型请求 |
-| 小型真实场景 | 13 个决策步骤、21 次模型请求尝试（含重试）、3 个分子本地评估、docking 关闭 |
-
-证据目录：[离线验收](runs/acceptance_decisions_offline_20260918/acceptance.json)、[真实验收](runs/acceptance_decisions_real_20260918/acceptance.json)。
-各目录的 `task.json` 保存完整任务、参数、候选、约束历史和事件，`receipts/` 保存工具完成收据。
-真实调用出现 1 次动作格式错误、网络连接重试及 1 次重试耗尽；这些失败计入预算并保留，最终恢复完成验收，不能描述为“全程无错误”。
-`model_calls_used` 在脚本决策模式也记决策预算，不等于外部请求数，论文请同时标明运行模式。
-
-新增回归覆盖微小变化、代价超限、缺值/协议不一致、阈值边界、新约束重验、旧证据保留、策略门控、跨假设重复编辑及事实报告。
-全量检查：**175 passed, 1 skipped**；网页脚本通过 Node 语法检查，HTTP/控制接口包含在回归测试中。
-本次证明的是可审计、可干预的执行闭环；不证明药效、安全性或相对其他算法的优化优势。
-
-> **Multi-Agent Iterative Loop for AI-Driven Drug Design (AIDD)**
-> 异构生成器 + 多裁判投票 + 专家路由 + 对抗辩论 + Selection Operator Bridge (Phase 4.5)
+> **Multi-Agent Iterative Loop for AI-Driven Drug Design**
+>
+> 异构生成器 + 多裁判投票 + 对抗辩论 + 专家路由 + Selection Operator Bridge
+>
+> 5 个独立智能体角色并行协作，针对 EGFR（PDB 1M17）跑真实的分子优化闭环。
+> 不是 AutoGPT/ReAct 单 agent 循环；每轮并行 3 个模型、按 prompt_role 区分立场，
+> 多裁判独立投票，对抗辩论 push-back，专家路由按短板动态切 prompt。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](https://www.python.org/)
-[![Status](https://img.shields.io/badge/Status-Phase%204.5%20Multi--Agent-blue)]()
-[![Tools Version](https://img.shields.io/badge/tools-0.4.5-blue)]()
-
-> ⚠️ 本仓库的设计目标从一开始就是**真 multi-agent 协作**，不是 AutoGPT/ReAct 风格的单 agent 循环。历史 README 曾经因为实现进度暂时退化为单 agent 叙事；**2026-09-29 起，本 README 已按真实 multi-agent 架构重写**（标题、架构图、生成器列表、裁判列表、专家路由、对抗辩论、selection operator）。下方「项目目标」「架构概览」「关键设计原则」「multi-agent 设计节」按 2026-09-29 的实际状态给出；中间历史节保留作为时间线证据，**不能把早期节中的旧表述当成当前结论**。
-
----
-
-## 项目目标（2026-09-29）
-
-构建一个**多智能体协作的分子优化闭环**，针对靶点蛋白（默认 **EGFR / PDB: 1M17**）实现：
-
-> **异构生成器并行提案 → 多裁判投票 → 聚合去重 → 父子比较 → 假设核对 → 专家路由 / 对抗辩论 → 进度信号 → 终止判断**
-
-五个独立的智能体角色同时存在：
-
-| 角色 | 个性 | 实现 |
-|---|---|---|
-| **异构生成器** A1, A2, … | 同一个 round 内**用不同模型 / 不同 prompt 立场**并行提案，强制多样性 | `agents/generator.py`（每 round 并行 N 个 provider） |
-| **多裁判** J1, J2, J3 | property 偏 / docking 偏 / 合成难度偏，加权投票产出下一轮 focus | `agents/judge.py`（multi-judge mode） |
-| **对抗批评家** C | 与 generator 多轮 push-back，critic 必须给具体证据而非单次结论 | `agents/judge.py::debate_mode` |
-| **评估器** E | RDKit 确定性 + Vina docking + calibrated ADMET（非 LLM） | `tools/evaluate_*` + `tools/dock_score.py` |
-| **专家路由** R | 根据当前 round 状态（property 弱 / docking 弱 / SA 难）动态激活不同 prompt | `agents/router.py`（new in 4.6） |
-
-迭代轮次不再硬编码为「5–6 轮」，由 **LoopController** 显式终止（`max_rounds` / `token_budget` / `judge_convergence_patience`）。Phase 4.5 的 **selection operator bridge (PARENTS block)** 把评估器选出的 top-k safety-gated parents 注入**所有**生成器 prompt，让多 agent 共享同一组显式结构起点。
-
----
-
-## 架构概览（Phase 4.5+ — Multi-Agent 协作）
-
-```text
-┌────────────────────────────────────────────────────────────────────────┐
-│                        Loop Orchestrator (loop.py)                      │
-│                                                                        │
-│   for round in 1..N (LoopController 终止):                             │
-│     ┌──────────────────────────────────────────────────────────────┐   │
-│     │ A. 多生成器并行 (Round 1/2/.../N)                              │   │
-│     │   ┌─────────────┐  ┌─────────────┐  ┌─────────────┐            │ │
-│     │   │  A1 (QED)   │  │  A2 (Vina)  │  │  A3 (Synth) │            │ │
-│     │   │  MiniMax-M3 │  │  DeepSeek   │  │  Kimi-K3    │            │ │
-│     │   │  prompt_qed │  │ prompt_vina │  │prompt_synth │            │ │
-│     │   │  temp=0.7   │  │  temp=1.0   │  │  temp=0.5   │            │ │
-│     │   └──────┬──────┘  └──────┬──────┘  └──────┬──────┘            │ │
-│     │          │ candidates    │ candidates    │ candidates          │ │
-│     │          ▼               ▼               ▼                     │ │
-│     │   ┌──────────────────────────────────────────────────┐         │ │
-│     │   │  Aggregation layer                              │         │ │
-│     │   │  - 去重 (canonical SMILES)                       │         │ │
-│     │   │  - 多样性强制 (max Tanimoto between generators)  │         │ │
-│     │   │  - 投票 (per-generator confidence weighted)      │         │ │
-│     │   │  - PARENTS 块 (Phase 4.5 selection operator)     │         │ │
-│     │   └─────────────────────┬────────────────────────────┘         │ │
-│     └─────────────────────────┼──────────────────────────────────────┘   │
-│                              ▼                                          │
-│     ┌──────────────────────────────────────────────────────────────┐   │
-│     │ B. 多裁判投票 (Multi-Judge Vote)                             │   │
-│     │   J1 (property)   J2 (docking)    J3 (synthesis)             │   │
-│     │   ─────────────────────────────                              │   │
-│     │   score_p,  score_d,  score_s                                 │   │
-│     │   softmax(α·W·scores) → next_round_focus                     │   │
-│     │   同时输出 weighted critique (per-judge evidence)             │   │
-│     └─────────────────────┬────────────────────────────────────────┘   │
-│                            ▼                                          │
-│     ┌──────────────────────────────────────────────────────────────┐   │
-│     │ C. 专家路由 (Expert Router)                                  │   │
-│     │   if  property_weak:        activate prompt_qed_expert        │   │
-│     │   if  vina_weak:            activate prompt_vina_expert        │   │
-│     │   if  sa_difficult:         activate prompt_sa_expert         │   │
-│     │   if  all_metrics_ok:       activate prompt_exploit_expert    │   │
-│     │   → 下一轮生成器 prompt 模板由 router 选定                    │   │
-│     └─────────────────────┬────────────────────────────────────────┘   │
-│                            ▼                                          │
-│     ┌──────────────────────────────────────────────────────────────┐   │
-│     │ D. 对抗辩论 (Adversarial Debate) — 必要时触发                │   │
-│     │   round state == disagreement 或 confidence < threshold:     │   │
-│     │     for debate_round in 1..K:                                │   │
-│     │       Generator A_i 输出提案 + 自辩                          │   │
-│     │       Critic C 输出反驳 + 具体证据 ID                         │   │
-│     │       直到 C 给出 accept / 收敛 或 K 轮用尽                   │   │
-│     └─────────────────────┬────────────────────────────────────────┘   │
-│                            ▼                                          │
-│                            └→ 回到 A（下一轮）                          │
-│                                                                        │
-│   ── 横向模块 (Phase 4.1–4.5) ─────────────────────────────────────    │
-│   WorkingMemory  FailedLigandSet  LoopController  RuleStore (4 类)     │
-│   (短期上下文)    (跨 session 去重) (max/budget/patience)               │
-│                                                                        │
-│   ── 评估 (非 LLM) ───────────────────────────────────────────────     │
-│   RDKit + AutoDock Vina + calibrated_hERG + calibrated_ADMET           │
-└────────────────────────────────────────────────────────────────────────┘
-```
-
-### 角色矩阵
-
-| 角色 | 个性 | 模型 / 配置 | 实现位置 |
-|---|---|---|---|
-| **A1 (QED)** | property / ADMET / SA / Lipinski 友好 | `MiniMax-M3` + `prompt_qed` + temp=0.7 | `agents/generator.py` |
-| **A2 (Vina)** | binding / docking / scaffold 偏好 | `DeepSeek-V3` + `prompt_vina` + temp=1.0 | `agents/generator.py` |
-| **A3 (Synth)** | 合成可行性 / SA score / 已知片段 | `Kimi-K3` + `prompt_synth` + temp=0.5 | `agents/generator.py` |
-| **J1 (Property)** | 评估 property_score / QED / SA / hERG | `MiniMax-M3` + judge_prompt_p + temp=0.3 | `agents/judge.py` |
-| **J2 (Docking)** | 评估 Vina / binding mode / pose | `DeepSeek-V3` + judge_prompt_d + temp=0.3 | `agents/judge.py` |
-| **J3 (Synthesis)** | 评估合成路线 / SA / 可得性 | `Kimi-K3` + judge_prompt_s + temp=0.3 | `agents/judge.py` |
-| **C (Critic)** | 多轮 push-back，必须给证据 ID | `MiniMax-M3` + debate_prompt + temp=0.4 | `agents/judge.py::debate_mode` |
-| **E (Evaluator)** | RDKit / Vina / calibrated ADMET（非 LLM） | n/a | `tools/evaluate_*` |
-| **R (Router)** | 根据当前状态选专家 prompt | 纯规则 | `agents/router.py` |
-
-### Aggregation 层
-
-- **去重**：canonical SMILES（统一 RDKit canonical）
-- **多样性强制**：当批内两个生成器输出 Tanimoto > 0.7 时，只保留评分更高的
-- **投票**：每个生成器自评 confidence × judge 加权 = 最终 ranking
-- **PARENTS 块（Phase 4.5）**：所有生成器共享同一组 safety-gated parents 作为 mutation 起点
-
-### Multi-Judge 投票
-
-加权公式（`experiments/reporting.py::_multi_judge_decision`）：
-
-```text
-next_focus = argmax_i  (α_p · score_p_i + α_d · score_d_i + α_s · score_s_i)
-weights (α_p, α_d, α_s) 默认 (0.4, 0.4, 0.2)，可调。
-
-# 何时触发对抗辩论
-if max_jones(p) - median_jones(p) > 0.15 OR
-   any_judge_confidence < 0.30:
-    enter debate mode
-```
-
-详见 [「Multi-Agent 设计节」](#multi-agent-设计节-2026-09-29)。
-
----
-
-## 快速开始（Phase 4.5）
-
-### 1. 环境准备
-
-```bash
-# 推荐使用 conda
-conda create -n aidd python=3.10 -y
-conda activate aidd
-
-# 安装依赖
-pip install -r requirements.txt
-
-# Vina 需要单独装（详见 docs/setup.md）
-conda install -c conda-forge vina  # 或从 GitHub release 下载二进制
-```
-
-### 2. 配置 API 密钥
-
-```bash
-cp .env.example .env
-# 编辑 .env 填入 MiniMax_API_KEY（MiniMax Token Plan 1/2、Volcengine Agent/Coding Plan、Alibaba Cloud Token Plan 均可）
-# 可选：MiniMax_API_KEY_SECONDARY 双 key 自动 fallback（429 时切换）
-# DeepSeek provider 块默认注释，不会调用 DeepSeek 模型 API
-```
-
-### 3. 离线烟雾（< 1 秒，验证接线）
-
-```powershell
-# A. 工具层烟雾：确认 RDKit / ADMET / Vina / mutate / calibrate 全部可导入
-python -c "import tools; print('tools version:', tools.__version__)"
-
-# B. ExperimentRunner 烟雾：跑 mock 4 臂矩阵，确认 harness / runner 正确
-python scripts/run_benchmark.py --matrix experiments/matrix_v4.yaml --profile smoke --mock --no-dock --benchmark-id v4_smoke
-
-# C. Persistent Harness mock：跑通 agent_task 的 mock 模式（不调模型）
-python agent_task.py start --task-dir runs/quickstart_mock --goal "smoke test" --seed-smiles "Oc1ccccc1" --mock
-```
-
-### 4. 真实运行入口
-
-```powershell
-# A. 命令行 Persistent Harness（创建 → 暂停 → 改约束 → 恢复 → finish）
-python agent_task.py start  --task-dir runs/quickstart_real --goal "保留骨架，优化性质分" --seed-smiles "CCOc1ccccc1" --constraints-json '{"preserve_scaffold":true,"max_changed_atoms":4,"min_similarity":0.3,"require_safety_gate":true}' --max-steps 20 --steps 3
-python agent_task.py status --task-dir runs/quickstart_real
-
-# B. 本地 Web 控制台（推荐，需要交互式观察）
-python agent_dashboard.py
-# 打开 http://127.0.0.1:8765
-
-# C. Local FastAPI（让其它脚本/前端控制）
-uvicorn api:app --host 127.0.0.1 --port 8766
-
-# D. 实验矩阵（多臂 A/B/C + confirmatory）
-python scripts/run_benchmark.py --matrix experiments/matrix_v4.yaml --profile screening --benchmark-id real_ablation_v4
-python scripts/run_benchmark.py --matrix experiments/confirmatory_matrix_v4.yaml --profile confirmatory --benchmark-id confirmatory_v4
-```
-
-### 5. 全量回归测试
-
-```powershell
-python -m pytest -q
-# 预期：420 passed, 1 skipped（Phase 4.5 收口）
-# 历史：374 → 391（Phase 4.4 收口）→ 420（Phase 4.5 PARENTS 块 + tests/test_mutate.py）
-```
-
-> 早期 README 提到的 `python tests/test_tools.py`（4 个工具 smoke）已并入 `tools/__init__.py` 的导出层与 `pytest tests/test_tools*.py`（若存在），不再作为单一入口。
-
----
-
-## 项目结构（Phase 4.5）
-
-```
-aidd-multi-agent/
-├─── README.md            # 本文件（顶部概要 + 中下部时间线）
-├─── PLAN.md              # 早期 5 阶段路线图（已 100% 完成；保留作为历史参考）
-├─── docs/                # 设计文档（PHASE_4_PLAN / PROJECT_HANDBOOK / REVIEW_* 等）
-├─── LICENSE              # MIT
-├─── .gitignore
-├─── requirements.txt     # Python 依赖
-├─── config.yaml          # 靶点 / 模型 / 评分阈值 / Phase 4.5 PARENTS 开关
-├─── agent_dashboard.py   # 本地 Web 控制台（127.0.0.1:8765）
-├─── agent_task.py        # CLI 入口：start / pause / resume / constraints / status
-├─── api.py               # FastAPI 入口（uvicorn 127.0.0.1:8766）
-├─── loop.py              # Phase 4 主循环 + Phase 4.5 PARENTS 块注入
-├─── tools/               # 确定性 / RDKit 工具层（Phase 4.5 起含 mutate）
-│    ├─── validate_mol.py # SMILES 合法性 + Lipinski + SA + 立体化学
-│    ├─── admet_score.py  # ADMET 多目标打分（含 calibrated_admet 块）
-│    ├─── calibrated_herg.py / calibrated_admet.py
-│    │                     # 多特征 logistic + 主导贡献解释
-│    ├─── dock_score.py   # AutoDock Vina 对接打分
-│    ├─── diversity.py    # Bemis-Murcko 骨架多样性
-│    ├─── mutate.py        #  ★ Phase 4.5：selection operator (parents / brics / atom_subst / terminal_swap)
-│    ├─── calibration_probe.py / evaluation_cache.py / docking_cache.py / provenance.py / references.py
-│    └─── __init__.py     # __version__ = "0.4.5"
-├─── agents/              # 智能体核心模块
-│    ├─── generator.py    # LLM 单步生成 + PARENTS block 注入（Phase 4.5）
-│    ├─── evaluator.py    # 评估、帕累托、Pareto key
-│    ├─── judge.py        # 反思裁判
-│    ├─── llm.py          # OpenAI 兼容客户端 + key swap fallback
-│    ├─── working_memory.py / failed_set.py / rule_memory.py / agent_metrics.py
-│    │                     # WorkingMemory / FailedLigandSet / RuleStore (4 类) / 行为指标
-│    ├─── loop_controller.py / hitl.py / redaction.py
-│    └─── harness/        # Persistent Harness（agent_task / dashboard 的真正调度层）
-│         ├─── runtime.py / state.py / schema.py / tools.py
-│         │   # available_actions / 原子检查点 / schema 校验 / 工具注册
-│         ├─── editor.py / molecule_ops.py / planning.py
-│         │   # 确定性编辑 / 结构不变量 / 父子结构图 SVG
-│         ├─── attribution.py / evidence.py / screening.py
-│         │   # 评分分项归因 / 假设核对 / 本地初筛
-│         ├─── reliability.py   # ClientScope / 重试 / 错误分类
-│         ├─── dashboard.html / dashboard.py / presentation.py
-│         └─── __init__.py
-├─── db/                  # Repository（SQLite + 校验 + 索引）
-│    ├─── access.py / repository.py / schema.sql / patch_constraints.sql
-├─── experiments/         # ExperimentRunner + 矩阵 + 报告
-│    ├─── matrix.yaml / matrix_v4.yaml / confirmatory_matrix*.yaml / p3_signal_matrix.yaml
-│    ├─── contract.py / reporting.py / cross_version_compare.py
-│    ├─── inner_round_progression.py / summarize_ablation.py
-│    └─── profiles.yaml
-├─── scripts/             # 运行入口（CLI / runner / audit / calibration）
-│    ├─── run_benchmark.py / run_experiments.py / check_minimax_connectivity.py
-│    ├─── compare_2d_policies.py / compare_experiments.py / visualize_memory.py
-│    ├─── audit_pool_vs_random.py / validate_* / prepare_receptor.py
-│    └─── _test_memory.py / scout_parents.py / explain_score_history.py
-├─── benchmarks/          # 已运行的实验产物（local, git 忽略）
-├─── runs/                # 当前会话运行目录（local, git 忽略）
-├─── memory/              # WorkingMemory / FailedLigandSet / RuleStore 持久化（local, git 忽略）
-├─── tests/               # 单元测试（> 400 passed, 1 skipped）
-└─── notebooks/           # 数据分析与可视化脚本
-```
-
----
-
-## 路线图（实际里程碑 — Phase 0 → Phase 4.5）
-
-> 下方路线图已按 **2026-09-29 实际状态** 重写。[PLAN.md](PLAN.md) 中早期「Phase 0–5」五阶段设计**已 100% 完成**，但实际项目继续推进到 **Phase 4.x 系列**（Persistent Harness + 模块化记忆 + 校准 + Selection Operator）。保留 [PLAN.md] 是作为时间线参考，不作为当前规划。
-
-| Phase | 内容 | 状态 |
-|---|---|---|
-| **0** | 环境准备 + API Key（RDKit / Meeko / Vina / MiniMax） | ✅ 完成（2026-09-13） |
-| **1** | 工具封装（validate_mol / admet_score / dock_score / diversity）+ 单元测试 | ✅ 完成 |
-| **1.5** | 第一阶段可信度修复（受体准备 / 对照身份 / 评分一致 / Mock 隔离） | ✅ 完成（[PHASE_1_CREDIBILITY.md](docs/PHASE_1_CREDIBILITY.md)） |
-| **2** | 2-Agent MVP 闭环（generate → evaluate → judge → repeat） | ✅ 完成 |
-| **2.5** | 持久 Harness（agent_task.py / Dashboard）+ 4 类别 RuleStore + WorkingMemory + FailedLigandSet | ✅ 完成 |
-| **3** | 实验矩阵：A/B/C 反馈-记忆消融（baseline / reflection / reflection_memory） | ✅ 完成（`benchmarks/real_ablation_v3_20260915`） |
-| **3.5** | Confirmatory 实验：n=10、Bonferroni、alpha=0.025、`do_not_approve` 决策 | ✅ 完成（`confirmatory_pareto_v3_1_20260916`） |
-| **4** | 工程收口 + Dashboard + API + 受控实验矩阵 v4（4 臂 + failed_set 隔离） | ✅ 完成 |
-| **4.1** | WorkingMemory + FailedLigandSet + LoopController + HITL | ✅ 完成 |
-| **4.2** | Self-Reflection Judge（Judge 评估自己建议的采纳率） | ✅ 完成 |
-| **4.3** | 评分分项归因 + 结构化预测 + 本地初筛 + 持久任务智能体确定性编辑 | ✅ 完成 |
-| **4.4** | 记忆校准（EVIDENCE 规则）+ 内存可视化 + 立体化学 + 安全口径指标 + 随机胜率门槛 + ADMET 扩展 | ✅ 完成（2026-09-27） |
-| **4.5** | **Selection Operator Bridge（PARENTS 块）** —— 把 evaluator 的 top-k safety-gated parents 注入 generator prompt | ✅ 完成（2026-09-27） |
-| **4.6** | **Multi-Agent 协作** —— 异构生成器并行 + 多裁判投票 + 专家路由 + 对抗辩论 | 🚧 进行中（2026-09-29 启动；阶段 1 README 收口；阶段 2-4 待跑） |
-| **4.7+** | Marketplace / 多模型投票 / 异步辩论闭环 | 暂未启动 |
-
-详细分解与设计哲学见 [docs/PROJECT_HANDBOOK.md](docs/PROJECT_HANDBOOK.md) 与 [docs/PHASE_4_PLAN.md](docs/PHASE_4_PLAN.md)。
-
----
-
-## 关键设计原则（Phase 4.5+ Multi-Agent）
-
-- **多角色，多模型，多 prompt 立场** —— 同一 round 内并行 A1/A2/A3 三个生成器（不同模型或至少不同 prompt），强制结构性多样性而非「同温度 / 同 prompt 跑三遍」
-- **多裁判独立投票** —— J1/J2/J3 按 property / docking / synthesis 三个独立视角加权投票，不允许单一 LLM 视角垄断下一轮 focus
-- **对抗辩论兜底** —— 裁判分歧大或 confidence 低时，generator ↔ critic 多轮 push-back，必须给出 evidence ID 才算 accept
-- **专家路由按状态动态激活** —— `agents/router.py` 监测当前 round 短板（property 弱 / vina 弱 / SA 难），对应激活 prompt_qed_expert / prompt_vina_expert / prompt_sa_expert
-- **Aggregator 强制多样性 + 去重 + 投票** —— canonical SMILES 去重；批内 Tanimoto > 0.7 的产物只留一个；per-generator confidence × judge 加权 = 最终 ranking
-- **Phase 4.5 selection operator bridge (PARENTS block)** —— 把 evaluator 选出的 top-k safety-gated parents 注入**所有**生成器 prompt，让 multi-agent 共享同一组显式结构起点（审计依据：[docs/REVIEW_MINIMAX_ADVICE_20260917.md](docs/REVIEW_MINIMAX_ADVICE_20260917.md) Priority A-3）
-- **LoopController 显式终止** —— `max_rounds` / `token_budget` / `judge_convergence_patience` 三条独立预算
-- **Persistent Harness 是调度总线** —— 工具注册、状态机、原子检查点、暂停恢复、用户干预都在 `agents/harness/`；多 agent 在它之上运行
-- **Evaluator 严格走 RDKit / Vina / calibrated 端点** —— 性质计算非 LLM
-- **不宣称 multi-agent 优于 baseline 的稳定结论** —— 没有 confirmatory 三条门控（`efficacy_supported ∧ stable_improvement ∧ safety_noninferior`）同时成立，不把任何 multi-agent 配置写进默认
-- **诚实度量** —— `safe_vina` / `safe_composite` 进度信号 + `random_gate` 防止「随机抽样胜过 multi-agent」时仍发布对比
-
----
-
-## 持久任务智能体：受约束母体优化（2026-09-17）
-
-### 为什么进行这次改造
-
-原有 `loop.py` 是预先规定步骤的实验工作流：每轮生成、评估、裁判，再进入下一轮。
-它适合跑可重复基准，但不能根据当前证据自主选择工具，也不能可靠地接收用户中途修改。
-新增的 `agent_task.py` 与 `agents/harness/` 将模型放进一个持久决策循环：模型每次只选择一个
-动作，Harness 负责验证参数、执行工具、写检查点、记录证据和决定能否继续。
-
-本次实现的研究问题是：给定一个或多个母体分子，智能体能否在用户规定的结构边界内提出子分子，
-用确定性程序验证“确实是受约束修改”，比较父子证据，并在暂停恢复或用户改变要求后继续执行。
-
-### 四项任务与实现结果
-
-| 顺序 | 任务 | 实现位置 | 可审计结果 |
-|---|---|---|---|
-| 1 | 导入指定母体并实现可验证 `refine` | `agents/harness/molecule_ops.py`、`agents/harness/tools.py` | 母体作为 `seed` 候选保存；子候选记录 `parent_id`、请求的修改、结构检查和失败原因 |
-| 2 | 在 `TaskState` 保存结构化约束 | `agents/harness/state.py` | `constraints` 保存当前约束，`constraint_history` 保存每次变更及版本；新约束触发重新规划 |
-| 3 | 增加父子比较与完成条件检查 | `compare_parent_child`、`candidate_goal_assessment`、`finish` | 保存父子指标差、协议一致性、每项完成条件及未满足原因；不满足条件时暂停而不虚报成功 |
-| 4 | 在界面展示证据并允许调整约束 | `agents/harness/dashboard.html`、`dashboard.py`、`presentation.py` | 创建时输入母体；运行中修改结构约束与 docking 策略；查看验证状态、父子差异、时间线和最终判断 |
-
-### 实际执行流程
-
-```text
-用户目标、母体 SMILES、结构化约束
-              │
-              ▼
-        TaskState + 原子检查点
-              │
-              ▼
-MiniMax-M3 选择一个下一步工具动作
-              │
-              ▼
-Harness 校验动作、预算、约束和候选状态
-              │
-     ┌────────┴────────┐
-     ▼                 ▼
- refine 生成子分子     evaluate 调用本地评估器
-     │                 │
-     ▼                 ▼
-RDKit 验证父子关系      RDKit/ADMET/Vina 产生证据
-     └────────┬────────┘
-              ▼
-父子比较 → 完成条件检查 → 完成 / 暂停 / 用户调整后恢复
-```
-
-任务创建时，用户提供的 SMILES 会被 RDKit 解析并转换为 canonical SMILES。重复结构不会重复导入，
-非法结构会在任务启动前直接报错。每个母体候选包含 `candidate_role: seed`，不会被伪装成模型生成结果。
-
-模型调用 `refine(parent_id, count, focus)` 后，生成结果先经过以下确定性检查：
-
-- 子分子必须与母体不同；
-- 重原子数量差不超过 `max_heavy_atom_delta`；
-- 基于 RDKit MCS 估计的改动原子数不超过 `max_changed_atoms`；
-- Morgan 指纹 Tanimoto 相似度不低于 `min_similarity`；
-- 启用 `preserve_scaffold` 时，子分子必须包含母体 Bemis–Murcko 骨架；
-- 设置 `allowed_parent_atom_indices` 时，MCS 映射检测到的母体原子环境变化只能发生在这些 0-based RDKit 原子索引上；
-- `protected_smarts` 中的结构模式必须同时存在于母体和子分子。
-
-所有检查通过时写入 `modification_verified: true`。检查失败的子候选仍保留在检查点中，
-以便解释模型为什么失败，但 Harness 禁止将其送入评估或最终选择。这里验证的是可计算的结构不变量；
-`focus` 中“降低毒性”“改善结合”等自然语言意图仍属于模型假设，因此明确记录
-`semantic_change_verified: false`，不能在论文中写成已由程序证明。
-
-父子比较工具只接受已经评估的子候选，输出 child − parent 的 `property_score`、
-`composite_score`、Vina 和 hERG-risk 变化。性质分和综合分越高越好，Vina 与 hERG-risk 越低越好。
-每个候选携带 `protocol_id`；当父子来自不同评估协议时，界面标记“协议不同”，此时只能谨慎比较
-双方共有的原始指标，不能把综合分直接解释为同尺度改善。
-
-### TaskState 与用户干预语义
-
-关键持久字段如下：
-
-| 字段 | 含义 |
-|---|---|
-| `goal` | 用户的自然语言任务目标 |
-| `constraints` | Harness 当前强制执行的结构化约束 |
-| `constraint_history` | 约束变更版本、具体差异及顺序 |
-| `instructions` | 用户追加的自然语言要求及 revision |
-| `candidates` | 母体、子候选、评估结果、结构验证和协议标识 |
-| `events` | 决策、工具结果、错误、重试、暂停和控制指令时间线 |
-| `pending` | 已计划但尚未确认提交的工具调用，用于处理中断的不确定结果 |
-| `steps_used` / `model_calls_used` / `evaluations_used` | 跨暂停恢复持续累计的资源预算 |
-| `final` | 最终候选、逐项完成检查、证据、限制和 `goal_met/goal_not_met` |
-
-界面中的自然语言“追加要求”用于指导模型重新规划；“结构化执行约束”由代码强制执行。
-两者发生冲突时，模型不能绕过结构化约束。更新约束会增加 `revision`，正在运行的旧决策会被丢弃并重新规划。
-关闭后续 docking 是一次显式协议变化：旧候选及其 docking 结果继续保留，新候选只做性质初筛，
-新的评估协议从下一次恢复开始生效。
-
-`finish` 不再把“工具已经执行”当作“科研目标达到”。它逐项检查：评估是否成功、是否要求已验证修改、
-安全代理门槛、最低性质分、最低综合分和最大 Vina 分数。至少一个最终候选通过全部启用条件时，
-任务状态才变成 `completed`；否则保存 `goal_not_met` 证据并暂停，用户可以调整约束或继续优化。
-
-### 使用的模型、框架与科学工具
-
-当前真实模式只使用 `config.yaml` 中配置的 **MiniMax-M3**：
-
-- 持久智能体 planner：`harness.planner = MiniMax`，模型 `MiniMax-M3`，temperature `1.0`，关闭 thinking；
-- 固定实验循环裁判：`judge_MiniMax`，模型 `MiniMax-M3`，temperature `0.3`，adaptive thinking；
-- 自由分子生成器：`MiniMax`；受控优化优先使用 RDKit 确定性编辑，不调用生成器重写整个 SMILES；
-- API 协议：OpenAI-compatible Chat Completions；密钥来自 `MiniMax_API_KEY` 环境变量；
-- DeepSeek 模型 provider 保持注释状态，运行路径不会调用 DeepSeek 模型 API。
-
-`agents/harness/` 是本项目实际运行的自建 Harness：负责工具注册、动作校验、资源预算、重试、原子检查点、
-暂停恢复和用户控制。它不是大语言模型，也不提升模型本身的化学知识。仓库中的 `.venv-dsh` 可用于研究
-DeepSeek Harness SDK，但当前 `agent_task.py` 和网页控制台并未把任务执行委托给官方 `dsh` runtime；
-论文复现实验应按实际调用链描述为“MiniMax-M3 + project-local Python Harness”。
-
-确定性与数值工具包括：
-
-- RDKit：SMILES 解析、canonicalization、Lipinski/描述符、Morgan 指纹、MCS、Bemis–Murcko 骨架；
-- 项目 ADMET 代理：由 RDKit 描述符形成的启发式评分与 hERG-risk proxy；
-- AutoDock Vina：可选 docking，参数和受体摘要进入 `protocol_id`；
-- JSON 检查点：临时文件写入、`fsync`、原子替换和进程级单写者锁；
-- 本地 HTTP 控制台：仅绑定 `127.0.0.1`，控制请求需要随机 token，并校验 Host/Origin。
-
-### 运行方法
-
-网页方式：
-
-```powershell
-python agent_dashboard.py
-```
-
-打开 `http://127.0.0.1:8765`，创建任务，输入每行一个母体 SMILES，选择约束和运行模式。
-真实模型运行会读取 `MiniMax_API_KEY`，启用 docking 还需要可用的 Vina 与受体文件。
-
-命令行方式：
-
-```powershell
-python agent_task.py start `
-  --task-dir runs/task_parent_demo `
-  --goal "保留母体骨架，优化性质并比较父子证据" `
-  --seed-smiles "CCOc1ccccc1" `
-  --constraints-json "{\`"preserve_scaffold\`":true,\`"allowed_parent_atom_indices\`":[4,5],\`"max_changed_atoms\`":4,\`"min_similarity\`":0.3,\`"require_safety_gate\`":true}" `
-  --max-steps 20 --steps 3
-
-python agent_task.py pause --task-dir runs/task_parent_demo
-python agent_task.py constraints --task-dir runs/task_parent_demo `
-  --constraints-json "{\`"docking_allowed\`":false,\`"min_property_score\`":0.65}"
-python agent_task.py resume --task-dir runs/task_parent_demo --steps 4
-python agent_task.py status --task-dir runs/task_parent_demo
-```
-
-`--mock` 使用固定的离线策略与 Mock 生成器，只用于验证控制流、持久化和工具协议，不构成模型智能或药物发现效果证据。
-
-### 论文记录与复现边界
-
-论文中应分别报告三类结论：工程可靠性、代理指标变化、真实科学效力。当前自动化测试可以支持第一类；
-RDKit/ADMET/Vina 结果只能支持第二类；细胞、酶学、毒理和合成实验完成前，不能声称候选具有真实活性、安全性或可合成性。
-
-每次可用于论文分析的任务应保留整个任务目录，包括 `task.json`、`receipts/`、`controls/`、
-`artifacts/` 和 `worker.log`。至少报告：代码提交、Python/RDKit/Vina 版本、模型名与温度、目标受体、
-约束、随机种子、模型/评估预算、`protocol_id`、父子候选关系、失败候选和所有人工干预。
-
-本次四项改造的离线验收路径为：导入母体 → 评估母体 → 生成并验证子候选 → 评估子候选 →
-父子比较 → 完成条件检查；另有测试覆盖不相关结构被拒绝、未满足目标时暂停、约束版本化与关闭后续 docking。
-完整回归命令：
-
-```powershell
-python -m pytest -q
-```
-
-### 确定性编辑、结构图与优化假设（2026-09-18）
-
-这一阶段将优化动作从“模型输出一个完整新 SMILES”改为“模型选择操作和原子索引，RDKit 修改分子图”。
-模型不能直接执行代码，也不能跳过参数、结构和完成条件检查。实现位于
-`agents/harness/editor.py`、`agents/harness/tools.py` 和 `agents/harness/runtime.py`。
-
-五个确定性编辑工具如下：
-
-| 工具 | 必要参数 | 确定性行为 |
-|---|---|---|
-| `attach_fragment` | `parent_id`、`atom_index`、`fragment_smiles`、`fragment_atom_index`、`hypothesis_id` | 在母体原子与片段连接原子之间添加单键 |
-| `replace_substituent` | 上述参数，加 `neighbor_atom_index` | 切断母体核心原子到分支邻居的键，移除该分支并连接新片段 |
-| `remove_terminal_group` | `parent_id`、核心/邻居原子索引、`hypothesis_id` | 只移除非环、可分离的末端分支 |
-| `replace_bioisostere` | 与 `replace_substituent` 相同 | 执行相同的图替换，但明确记录 `bioisostere_claim_verified: false` |
-| `change_bond_order` | `parent_id`、两个相邻原子索引、`bond_order`、`hypothesis_id` | 将现有键改为 `SINGLE`、`DOUBLE` 或 `TRIPLE` |
-
-RDKit 在每次操作后执行 sanitization。不存在的原子、非相邻原子、环键分支删除、非法价态、
-没有产生变化的操作和重复候选都会失败。编辑成功生成分子图后，仍必须经过上一节的骨架、MCS、
-相似度、重原子和允许位点检查。结构约束失败的产物会保留为拒绝证据，但不能进入评估。
-
-确定性编辑前必须先调用 `record_hypothesis`。每条假设保存：
-
-- 母体、选择理由和唯一 `hypothesis_id`；
-- 预期变化指标：`property_score`、`composite_score`、`vina` 或 `herg_risk`；
-- 预期方向：`increase` 或 `decrease`；
-- 允许的指标权衡；
-- 假设被支持和不被支持时各自应采取的下一步。
-
-一条假设只能授权一次编辑。父子比较后，Harness 根据同一评估协议下的指标差自动写入
-`supported`、`not_supported`、`inconclusive` 或 `insufficient_evidence`，并把对应的下一步返回给 planner。
-如果结构编辑本身被拒绝，假设会立即标记为 `edit_rejected` 并采用 `next_if_not_supported`；模型需要建立新假设才能换一种编辑方式。
-
-网页控制台的候选表新增“结构证据”入口。结构图由服务端 RDKit 按需生成 SVG，显示 0-based 原子编号；
-母体和子分子并排展示，改动原子及其相关键高亮。详情同时显示确定性编辑记录、结构检查、父子指标差和
-对应假设。SVG 通过 `data:image/svg+xml;base64` 返回，不需要外部绘图库或 CDN；接口仍受本地 token、
-Host 和 CSP 限制。任务主列表不携带 SVG，只有用户点击“查看”时才生成，以免轮询页面反复传输大图。
-
-#### MiniMax-M3 小型真实验收
-
-真实验收结果保存在 `runs/acceptance_minimax_deterministic_20260918/`。这次验收没有启用 docking，
-没有运行批量实验，母体只有 `CCOc1ccccc1`。任务约束禁止自由生成和自由 `refine`，因此 MiniMax-M3
-只能选择确定性编辑工具。最终运行参数与结果如下：
-
-| 项目 | 记录 |
-|---|---|
-| planner | `MiniMax-M3`，provider `MiniMax`，temperature `1.0`，thinking disabled |
-| 初始约束 | 保留 Murcko 骨架；最多改动 4 个原子；Morgan 相似度 ≥ 0.30；最终候选必须是验证通过的修改；关闭 docking |
-| 运行预算/实际使用 | 最大 16 步、20 次模型调用、5 次评估；实际 11 步、15 次模型调用、2 次评估 |
-| 母体 `c1` | `CCOc1ccccc1`，property score `0.941291921849878` |
-| 第一次编辑 `c2` | 模型把取代基核心/分支方向选反，生成 `CCC`；骨架、最大改动和相似度检查失败，禁止评估 |
-| 自主调整 | 模型读取 `c2` 的失败证据，建立新假设 `h2`，改用在母体 6 号芳环原子连接甲基 |
-| 验证子分子 `c3` | `CCOc1ccc(C)cc1`；骨架保留；改动 1 个原子；Morgan 相似度 `0.590909` |
-| 父子证据 | `c3` property score `0.9413003548104499`，child − parent = `0.000008`；hERG-risk 均为 `0.0` |
-| 用户中途干预 | revision 1：只允许母体 6 号位点、最大改动降为 2、禁止继续 refine、最低性质分设为 `0.94` |
-| 恢复结果 | 模型复用已有 `c1/c3` 证据，选择 `finish`；`c3` 通过全部完成条件，任务状态为 `completed` |
-
-这次验收还记录了真实失败：MiniMax API 出现过连接错误；一次动作缺少顶层 `reason`，被工具协议拒绝；
-一次响应在完整 JSON 后追加文本。Harness 对连接错误进行了有界重试，对缺字段动作保持严格拒绝，
-并将 JSON 解析改为读取响应中的第一个完整 JSON 值。所有失败和恢复都保存在同一任务时间线中。
-第一次使用 adaptive-thinking planner 的连通失败保存在
-`runs/acceptance_minimax_deterministic_20260918_attempt1/`；因此持久智能体明确改用非 thinking 的
-`MiniMax` 路由输出严格动作 JSON，固定实验循环的裁判配置保持不变。
-
-`0.000008` 的性质代理变化极小，不能作为药效改善证据。此次验收支持的结论仅是：真实模型能够选择工具，
-错误编辑会被约束层阻止，模型能够读取失败证据更换策略，暂停后的结构化用户约束能够保存并在恢复后生效。
-它不证明候选具有更好的真实结合能力、安全性或成药性。
-
----
-
-## 第一阶段可信度修复（2026-09-13）
-
-已修复受体准备、对照身份、缺失评分、上一轮反思、Mock 隔离与测试污染。
-详细变更与验证见 [PHASE_1_CREDIBILITY.md](docs/PHASE_1_CREDIBILITY.md)。
-
-旧版样例与图表使用过未经核验的受体和错误标注的参考结构，保留为历史资料，
-不能用于证明亲和力、筛选优越性或自主学习收益。旧版与新版分数不可直接比较。
-搜索框大小没有通用的 kcal/mol 加减换算关系。
-
-重新准备受体（输出必须不存在；如需重建，选择新版本名并更新配置）：
-
-```bash
-python scripts/prepare_receptor.py data/1M17.pdb data/prepared/1M17_v1.pdbqt
-python scripts/validate_protocol.py --output runs/new_protocol_validation
-```
-
-离线验证和运行：
-
-```bash
-python -m pytest -q
-python loop.py --mock --no-dock --rounds 3
-```
-
-不传 `--rounds` 和 `--n` 时，主循环读取 `config.yaml` 的
-`loop.max_rounds` 与 `loop.candidates_per_round_per_generator`；命令行参数只用于显式覆盖。
-
-受控实验请使用三档配置，避免开发阶段直接执行昂贵的完整 docking：
-
-```powershell
-python scripts/run_benchmark.py --profile smoke
-python scripts/run_benchmark.py --profile screening
-python scripts/run_benchmark.py --matrix experiments/confirmatory_matrix.yaml --profile confirmatory
-```
-
-并行 Vina、GPU embedding、两阶段漏斗和无望提前停止说明见
-[`docs/EXPERIMENT_SPEEDUP.md`](docs/EXPERIMENT_SPEEDUP.md)。
-实际采用的参数会写入每次运行的 `manifest.json`。
-
-完整评估按 `protocol_id + canonical SMILES` 缓存在 `memory/evaluation_cache/`。
-同一受体、口袋、评分代码和 Vina 参数下再次出现相同分子时，会复用原评分与 docking
-工件，并在候选的 `evaluation_cache.source` 中记录首次评估来源。
-
-工程收口阶段的配置、记忆隔离、去重和指标语义说明见
-[PHASE_1_ENGINEERING_CLOSURE.md](docs/PHASE_1_ENGINEERING_CLOSURE.md)。
-
-真实模式缺少密钥会报错，不再自动使用 Mock。真实运行与 Mock 均有独立运行 ID、
-manifest、输入/模型记录和评估协议；Mock 不读取或写入正式失败记忆。
-当 docking 或其他必要评分缺失时，`composite_score` 为 null，候选不进入完整评分排名。
-`--no-dock` 仅产生初筛性质分，不宣称完成结合能力评估。
-
-ADMET 当前仍为 RDKit 描述符启发式，Vina 仍为未校准的 docking 分数。
-即使重对接通过，也不等价于实验活性验证。
-
-长期存储建议使用 [PostgreSQL + pgvector](docs/DATABASE_SETUP.md)。当前第一阶段
-输出仍为本地 JSON/SDF/PDBQT；尚未自动写入 PostgreSQL。
-
----
-
-## 受控实验矩阵：A/B/C 反馈-记忆消融（2026-09-15 ~ 09-18）
-
-`PLAN.md` 阶段 2 中最具体的下一项任务是：**实现 ExperimentRunner，
-让 A/B/C 三组在独立记忆、相同预算和相同协议下自动运行，并输出统一比较报告。**
-本节记录这件事的当前状态、真实运行结果和复现命令。
-
-### 三组消融设计与隔离保证
-
-`experiments/matrix.yaml` 定义三个组，使用同一个 `config.yaml` 与同一个
-`experiments/profiles.yaml` 配置文件；三组只在 `loop.judge_enabled` /
-`loop.memory_enabled` / `loop.failed_set_enabled` 三个开关上不同，确保“预算、协议、
-受体、口袋、模型、温度、Vina 参数、初始参考化合物”全部一致。
-
-| 组 | 含义 | `judge_enabled` | `memory_enabled` | `failed_set_enabled` |
-|---|---|---:|---:|---:|
-| `baseline` | 双生成器，无裁判、无记忆、无失败集 | false | false | false |
-| `reflection` | 加入 Judge 反馈，关闭记忆与失败集 | true | false | false |
-| `reflection_memory` | Judge + 跨轮记忆 + FailedLigandSet | true | true | true |
-
-为了保证三组互不污染，`scripts/run_benchmark.py` 给每个 `group × repeat × attempt`
-分配独立的 `loop.memory_namespace`（形如 `bench_<id>_<group>_r<repeat>_a<attempt>`），
-并把 `memory/strategy_history.json`、`memory/best_molecules.json`、
-`memory/failed_ligands.json` 三份持久状态写入不同的命名空间目录：
-
-```text
-memory/v2/EGFR/<protocol_id>/bench_<id>_baseline_r01_a01/
-memory/v2/EGFR/<protocol_id>/bench_<id>_reflection_r01_a01/
-memory/v2/EGFR/<protocol_id>/bench_<id>_reflection_memory_r01_a01/
-```
-
-`evaluation_cache` 与 `docking_cache` 是按 `protocol_id` + canonical SMILES 共享的，
-这符合 §3.4 验收要求“缓存命中不计入新 docking”。共享缓存只会让命中候选的
-`evaluation_cache.hit = true` 显式标记，`new_dockings` 不会重复计入。
-
-### ExperimentRunner 的质量门与可恢复性
-
-`scripts/run_benchmark.py` 不是简单循环，而是带质控的编排器：
-
-- 每个 `repeat` 允许最多 `max_attempts_per_repeat` 次尝试；只有当一次 attempt 同时满足
-  `summary.status == finished`、`rounds_completed == expected`、`每个 round
-  proposal 都给出预期数量的候选`、`(若 judge 开启) judgment.status == ok` 时，才被
-  标记为 `eligible` 进入统计；不通过的 attempt 写入 `benchmark_run.json` 的
-  `quality_reasons`，并被报告的“Excluded attempts”表显式列出，不与合格 run 混合。
-- `--resume` 模式读取既有 `benchmark_manifest.json`，只补跑缺失的 `group × repeat`，
-  已经 eligible 的 run 不会被重复执行；预算/协议/模式不一致会硬性拒绝，防止误用旧 manifest。
-- 每次运行都把 matrix yaml、base config、profile、memory namespace、protocol_id、
-  protocol 快照、参考化合物哈希、SA 片段模型哈希和关键代码哈希写入
-  `manifest.json`，可以审计“是哪一份代码跑出了这份报告”。
-
-报告聚合由 `experiments/reporting.py` 完成：`extract_run_metrics` 从
-`round_*.json` 与 `summary.json` 计算 30+ 项指标，`build_report` 给出每组的
-mean / stdev / 95% CI，并使用 Welch `t` 检验与 Welch 差值 95% CI 给出
-`reflection` / `reflection_memory` vs `baseline` 的对比。`scipy` 不可用时差值 CI
-自动退化为 `None`，但 mean / stdev 仍然给出，避免整篇报告因可选依赖失效。
-
-### 第一次 A/B/C 真实消融（`real_ablation_v3_20260915`）
-
-| 实验参数 | 值 |
-|---|---|
-| 矩阵 | `experiments/matrix.yaml` (`feedback-memory-ablation`) |
-| Profile | `experiments/profiles.yaml::screening` |
-| `repeats × rounds × n_per_provider` | 3 × 3 × 5（每组 30 个生成候选） |
-| 模型 | `MiniMax-M3` 单 provider，temperature 1.0 / 0.3 |
-| Docking | 真实 Vina，`exhaustiveness=8`，并行 CPU workers |
-| Primary metric | `best_composite_global` |
-| 总耗时 | ≈ 70 min（real mode, 含 LLM + Vina） |
-
-**Group summary**（每次实验的 `best_*` / `tokens` / `new_dockings` 等 9 个核心指标）：
-
-| Group | n | best composite | best Vina | unique | scaffolds | xrd_dup | tokens | new dock |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| baseline | 3 | 0.8190 ± 0.0139 | -8.490 ± 0.097 | 19.0 | 13.7 | 9.3 | 10 144 | 5.3 |
-| reflection | 3 | 0.8313 ± 0.0075 | -8.597 ± 0.084 | 20.3 | 14.7 | 5.3 | 28 643 | 8.3 |
-| reflection_memory | 3 | 0.8420 ± 0.0000 | -8.819 ± 0.132 | 22.3 | 16.0 | 2.7 | 30 376 | 11.3 |
-
-完整 30 项指标和每 run 明细见
-[benchmark_report.md](benchmarks/real_ablation_v3_20260915/benchmark_report.md)；
-可机器读取的版本在同名 `.json`。
-
-**vs baseline 的主要结论**（Welch 检验，n=3）：
-
-| Group vs baseline | Δ best composite | Welch p | verdict |
-|---|---:|---:|---|
-| reflection | +0.0123 | 0.266 | inconclusive |
-| reflection_memory | +0.0230 | 0.103 | inconclusive |
-
-**memory vs reflection（去掉 baseline 的“更多采样”效应）**：
-
-| 指标 | memory − reflection | Welch p | 有利方向 |
-|---|---:|---:|---|
-| best composite | +0.0107 | 0.133 | 是 |
-| best Vina | -0.222 | 0.081 | 是（Vina 越小越好）|
-| best_vina_delta（首末轮差）| -0.428 | 0.057 | 是 |
-| 跨轮重复分子 | -2.667 | 0.178 | 是（更少）|
-| tokens | +1 732 | 0.614 | 否（成本更高）|
-
-**Agent 行为指标**（`agents/agent_metrics.py`）：
-
-| Group | 改善运行率 | Vina 改善量 | Judge 采纳率 | 结构采纳率 |
-|---|---:|---:|---:|---:|
-| baseline | 0.333 | -0.074 | — | — |
-| reflection | 0.333 | -0.018 | 0.422 | 0.367 |
-| reflection_memory | 1.000 | -0.446 | 0.578 | 0.267 |
-
-**诚实结论**：在 n=3 的小样本下，memory 组在主指标、best Vina、首末轮 Vina 差、跨轮
-重复率上**方向一致地领先** reflection；但 Welch p 值都 > 0.05，按报告自身的解释规则
-只能写 “inconclusive”。这里**不宣称“记忆有效”**。需要 10 次重复的 confirmatory
-才能给出“批准/不批准”二元决策。
-
-### Confirmatory 实验：`confirmatory_pareto_v3_1_20260916`
-
-为了把“是否批准把 WorkingMemory + FailedLigandSet 写进默认配置”这件事从经验判断
-升级为带规则的二元决策，又跑了 10 次重复的 confirmatory（`experiments/confirmatory_matrix.yaml`），
-主指标切到 `best_safe_composite_global`，并启用 v3.1 多目标 + 安全门控。
-
-| Group | n | best composite | best Vina | best safe composite | hERG risk | xrd_dup | tokens |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| reflection | 10 | 0.7975 ± 0.0180 | -8.581 ± 0.163 | 0.7953 ± 0.0205 | 0.640 ± 0.067 | 3.3 | 34 422 |
-| reflection_memory | 10 | 0.7927 ± 0.0107 | -8.467 ± 0.093 | 0.7927 ± 0.0107 | 0.628 ± 0.061 | 0.6 | 33 204 |
-
-`reflection_memory` 同样在“跨轮重复分子”上**显著更少**（p = 0.002，Δ = -2.7）；
-hERG 风险略低（Δ = -0.013，CI95 [-0.073, 0.048]）；但 **best safe composite 略低**
-（Δ = -0.003，p = 0.720）和 **best Vina 略差**（Δ = +0.114 kcal/mol，p = 0.075）。
-
-**Confirmatory 决策**（`experiments/reporting.py::_confirmatory_decision`）：
-
-```text
-status: do_not_approve
-  efficacy_supported       : False
-  stable_improvement       : False    # improved_run_rate 0.10 < 0.70
-  safety_noninferior       : True     # CI95 upper 0.048 ≤ margin 0.05
-  primary delta CI95       : [-0.0184, +0.0131]
-  safety delta CI95        : [-0.0729, +0.0476]
-```
-
-规则要求 **efficacy_supported ∧ stable_improvement ∧ safety_noninferior** 同时成立
-才批准；本次 `do_not_approve`。也就是说：在 10 重复、safety-gated 主指标下，
-**没有足够的证据把长期记忆纳入默认配置**。`cross_round_duplicates` 仍是有统计学
-证据的、可重复的差异；它目前更适合作为“记忆模块让 FailedLigandSet 起到去重作用”
-的旁证，而不是“记忆提升主指标”的证据。
-
-### 用现有数据能下什么结论
-
-把 v3 与 v3.1 合并来看：
-
-| 结论 | 支持证据 | 反证 / 限定 |
-|---|---|---|
-| Judge 反馈增加 token 成本但带来小幅主指标改善 | v3：tokens 28 643 vs 10 144，Δ composite +0.012 | n=3，Welch p=0.266 |
-| WorkingMemory + FailedLigandSet 显著降低跨轮重复 | v3：p=0.178；v3.1：p=0.002（效应量更大） | 仅在 reflection_memory vs reflection 之间成立 |
-| 在安全门控的 best safe composite 上，记忆并未确认带来主指标改善 | v3.1：Δ = -0.003，p=0.720 | confirmatory 决策 = do_not_approve |
-| Agent 行为层指标支持 reflection_memory 改善更稳定 | v3：3/3 改善 vs 1/3（reflection）/ 1/3（baseline） | 与 best composite 的 Welch 检验结果不完全一致 |
-
-**项目层面的下一步**（不是已经做完的事）：在不增加模型成本的前提下扩大样本量到
-`n ≥ 10`，并把 `progress_signal: safe_vina`（2026-09-17 引入）作为强约束，避免
-Vina 优秀但 hERG 风险高的分子被当成“进步”；在 confirmatory 设计里把
-`min_improved_run_rate` 与 `safety_noninferiority_margin` 一起作为预注册门控，
-直到 `efficacy_supported ∧ stable_improvement` 同时成立才把 memory 纳入默认配置。
-
-### 复现与扩展命令
-
-```powershell
-# 1) 离线烟雾（不到 1 秒）：验证 ExperimentRunner 端到端，不调外部 LLM，不跑 docking
-python scripts/run_benchmark.py --profile smoke --mock --no-dock --benchmark-id smoke_check
-
-# 2) 真实 A/B/C 消融（3 组 × 3 重复 × 3 轮 × 5 候选 = 9 个 run，约 70 min）
-python scripts/run_benchmark.py `
-    --matrix experiments/matrix.yaml `
-    --profile screening `
-    --benchmark-id real_ablation_v4
-
-# 3) Confirmatory：reflection vs reflection_memory，10 次重复，启用 v3.1 安全门控
-python scripts/run_benchmark.py `
-    --matrix experiments/confirmatory_matrix.yaml `
-    --profile confirmatory `
-    --benchmark-id confirmatory_v3_2
-
-# 4) 中途挂掉？用 --resume 接着跑，已经 eligible 的 run 不会被重复执行
-python scripts/run_benchmark.py `
-    --matrix experiments/confirmatory_matrix.yaml `
-    --profile confirmatory `
-    --benchmark-id confirmatory_v3_2 `
-    --resume
-
-# 5) 只重新生成某次 benchmark 的报告（不重跑 run）
-python scripts/compare_experiments.py benchmarks/real_ablation_v3_20260915
-
-# 6) 终端打印紧凑版摘要（Group summary + Welch 对比 + confirmatory 决策）
-python experiments/summarize_ablation.py benchmarks/real_ablation_v3_20260915
-python experiments/summarize_ablation.py benchmarks/confirmatory_pareto_v3_1_20260916
-
-# 7) 跑 notebooks 出图
-python scripts/run_experiments.py --runs-dir runs_demo
-```
-
-报告会自动写入 `<benchmark_dir>/benchmark_report.json` 与 `benchmark_report.md`，
-包含 Group summary、vs baseline 主对比、`reflection_memory` vs `reflection`
-增量对比、Agent 行为指标、每 run 明细、被排除 attempt 的原因、以及
-confirmatory 决策（如适用）。
-
-### 已运行的 benchmark 一览
-
-| 目录 | 矩阵 | Profile | 用途 |
-|---|---|---|---|
-| `benchmarks/real_ablation_20260915` | A/B/C v1 | screening | 最早真实消融，旧评分 |
-| `benchmarks/real_ablation_v2_20260915` | A/B/C v2 | screening | 修复初始 v1 的若干 bug |
-| `benchmarks/real_ablation_v3_20260915` | A/B/C v3 | screening | **本节主引用的真实消融** |
-| `benchmarks/confirmatory_pareto_v3_20260916` | B vs C v3 | confirmatory | v3 主指标下的 confirmatory |
-| `benchmarks/confirmatory_pareto_v3_1_20260916` | B vs C v3.1 | confirmatory | **本节主引用的 confirmatory** |
-| `benchmarks/v4_smoke` | A/B/C + failed_set v4 | smoke/mock | v4 矩阵 4 组接线冒烟 |
-| `benchmarks/v4_conf_smoke` | B/C/FS v4 confirmatory | smoke/mock | v4 confirmatory 接线冒烟 |
-| `benchmarks/mock_validation_20260915` | A/B/C | smoke/mock | Mock 模式冒烟 |
-| `benchmarks/mock_quality_validation_20260915` | A/B/C | smoke/mock | Mock 质控回归 |
-| `benchmarks/mock_confirmatory_v3_20260916` | B vs C | confirmatory/mock | confirmatory 在 Mock 下的等价 |
-| `benchmarks/mock_confirmatory_interleaved_20260916` | B vs C | confirmatory/mock | 调度顺序 interleaved vs grouped |
-| `benchmarks/cache_layer_validation` | A/B/C | screening | 验证 evaluation/docking 缓存层隔离 |
-
-旧版的分数（v1/v2）使用早期评分公式，**不能直接与 v3+ 比较**；保留为历史资料。
-
----
-
-## v4 执行记录与下一阶段约定（2026-09-18）
-
-上面 4.5 节给出了 4 条 ROI 排序的下一步建议。本节记录每一条**已经落地的部分**
-和**留给真实运行的部分**，避免"建议归建议，没人跑"。
-
-### 第 1 条：把 `safe_vina` 接入 v4 矩阵（已落地）
-
-`config.yaml::loop.progress_signal: safe_vina`（2026-09-17 引入）已被 v4 矩阵自动继承。
-新写一份 [experiments/matrix_v4.yaml](experiments/matrix_v4.yaml)，**新增第四组**
-`reflection_failed_set`，仅开 Judge + FailedLigandSet、关闭 WorkingMemory，
-目的是把"过滤失败结构"和"长期记忆"的作用**分开**测量。
-
-```powershell
-# 冒烟（< 1 秒，验证接线）
-python scripts/run_benchmark.py --matrix experiments/matrix_v4.yaml --profile smoke --mock --no-dock --benchmark-id v4_smoke
-
-# 真实 A/B/C + failed_set × 3 重复 × 3 轮 × 5 候选（≈ 90 min）
-python scripts/run_benchmark.py --matrix experiments/matrix_v4.yaml --profile screening --benchmark-id real_ablation_v4
-
-# 只跑新增的 reflection_failed_set（节省 API 成本）
-python scripts/run_benchmark.py --matrix experiments/matrix_v4.yaml --profile screening --groups reflection_failed_set --benchmark-id v4_failed_set_only
-```
-
-冒烟结果：`benchmarks/v4_smoke/benchmark_report.json` 已生成，4 组全部进入 eligible。
-
-### 第 2 条：confirmatory 扩到 n=20 + futility 早停（已落地）
-
-新写一份 [experiments/confirmatory_matrix_v4.yaml](experiments/confirmatory_matrix_v4.yaml)：
-- `repeats: 20`（每个 group × repeat 都跑 20 次）
-- 启用 `futility: stop_when_minimum_improvement_rate_is_mathematically_unreachable`
-- 同时跑 `reflection`（参考）、`reflection_failed_set`（隔离过滤）、`reflection_memory`（v3 赢家）三组
-
-新写 [experiments/demo_futility.py](experiments/demo_futility.py)：
-在 `confirmatory_pareto_v3_1_20260916` 这套已知 `do_not_approve` 的数据上**回放** v4 的
-futility 规则，验证它能正确触发早停：
-
-```text
-Planned runs        : 10
-Treatment group     : reflection_memory
-Min improved rate   : 0.70 -> minimum_successes = 7
-min_completed gate  : 3
-
-  step | completed | successes | max_possible | stop?
-  -----+-----------+-----------+--------------+-------
-     1 |         1 |         0 |            9 | continue
-     2 |         2 |         1 |            9 | continue
-     3 |         3 |         1 |            8 | continue
-     4 |         4 |         1 |            7 | continue
-     5 |         5 |         1 |            6 | STOP  ← 早停
-
-  futility trigger: minimum_improvement_rate_unreachable
-  remaining planned: 5
-  minimum needed   : 7
-  maximum possible : 6  (< 7 -> cannot reach 70% improved rate)
-```
-
-→ 在已知数据上，futility 会在第 5/10 次运行时正确触发。
-按 v3.1 单 run ≈ 18 min 估算，**节省约 90 min**（原本 187 min → 实际 ~95 min 即停止）。
-新规则不需要修改 `scripts/run_benchmark.py`，已经内嵌 `assess_confirmatory_futility`，
-运行 `confirmatory_matrix_v4.yaml` 时自动启用。
-
-```powershell
-# 真实 confirmatory（n=20，含 futility 早停；预期 6 h 上限）
-python scripts/run_benchmark.py --matrix experiments/confirmatory_matrix_v4.yaml --profile confirmatory --benchmark-id confirmatory_v4
-```
-
-### 第 3 条：reflection 单组为什么退步（已诊断，记录在此）
-
-新写 [experiments/diagnose_reflection.py](experiments/diagnose_reflection.py)，
-回放 v3 的 reflection 三次 run 各自的 `judgment.focus` / `reflection` / `adopted_count`，
-得到如下诊断结论：
-
-**reflection 退步的真因不是 Judge prompt 也不是 temperature**，而是
-`failed_set_enabled: false`——Judge 自己在反思里已经识别出"上轮建议未起作用"，
-但循环里没有把已知失败的结构**拦截**下来，所以 LLM 会重复生成同款被否决的分子。
-
-| 组 | repeat | round 1 → 2 best Vina Δ | 反思里的原文（节选）|
-|---|---:|---:|---|
-| reflection | r1 | **+0.077**（退步）| 「5/8 采纳了 basic-amine tail；Vina 反而掉到 -8.12」|
-| reflection | r2 | **+0.286**（明显退步）| 「3-Cl-4-F-aniline 4/5；但 6-methoxy 完全没采纳；hERG 4/5」|
-| reflection | r3 | **+0.128**（退步）| 「Two of five adopted N-methylpiperazine；logP rose, hERG flagged」|
-| reflection_memory | r1 | -0.487（改善）| 「Prior focus 5/5 adopted; Vina -8.36→-8.76」|
-| reflection_memory | r2 | **-0.509**（最佳）| 「α,α-dimethyl 5/5 adopted; Vina -8.46→-8.97」|
-| reflection_memory | r3 | -0.137（改善）| 「Prior OCH2 + β-OH focus adopted 3/5」|
-
-**真正起作用的不是 WorkingMemory 本身，而是 FailedLigandSet 的结构去重**。
-v4 矩阵加的 `reflection_failed_set` 组就是为了把这个独立出来测量。
-
-### 第 4 条：把 `efficacy_supported` 证据补上（路径已规划，未跑）
-
-预注册门控规则已经写在 [experiments/confirmatory_matrix_v4.yaml](experiments/confirmatory_matrix_v4.yaml)，
-`experiments/reporting.py::_confirmatory_decision` 已经实现判分逻辑。
-补证据的唯一方式是**真实运行 confirmatory_v4**：
-
-```text
-efficacy_supported = primary_metric.favorable AND primary_metric.statistically_significant
-stable_improvement = improved_run_rate >= 0.70 AND mean_best_vina_delta < 0
-safety_noninferior = upper CI95 of safety_delta <= margin (0.05)
-approved = efficacy_supported AND stable_improvement AND safety_noninferior
-```
-
-只有 v4 confirmatory 同时满足这三条，`safety_memory` 才被允许写入默认 `config.yaml`。
-否则继续把 v3 / v4 数据当 inconclusive，**不允许把"看起来有效"当成"确认有效"**。
-
-### v4 阶段交付物与状态
-
-| 项 | 落地位置 | 状态 |
-|---|---|---|
-| 4-arm A/B/C + failed_set 矩阵 | `experiments/matrix_v4.yaml` | ✅ mock smoke 通过 |
-| confirmatory 4 组 + n=20 + futility | `experiments/confirmatory_matrix_v4.yaml` | ✅ mock smoke 通过 |
-| 真实 v4 消融 | `benchmarks/real_ablation_v4/` | ⏳ 待跑（≈ 90 min LLM + Vina）|
-| 真实 confirmatory v4 | `benchmarks/confirmatory_v4/` | ⏳ 待跑（≤ 6 h 含 futility 早停）|
-| reflection 退步诊断 | `experiments/diagnose_reflection.py` | ✅ 输出已检视 |
-| futility 早停回放 | `experiments/demo_futility.py` | ✅ 在 v3.1 数据上验证可触发 |
-| `efficacy_supported` 预注册门控 | `experiments/reporting.py::_confirmatory_decision` | ✅ 已实现，待 confirmatory_v4 数据驱动 |
-
-旧版的分数（v1/v2）使用早期评分公式，**不能直接与 v3+ 比较**；保留为历史资料。
-
----
-
-## 许可
-
-MIT © 2026 LeslieDian
-
----
-
-## 2026-09-27：Phase 4.4 — 记忆校准、可视化、立体化学
-
-本轮把「agent 在做什么」从审计日志（`request_evidence.jsonl`）翻译成**可被人读、可被图表对比**的结果。三件事独立、可单元测试、可视化。
-
-### 1. 记忆校准（prediction_error → EVIDENCE 规则）
-
-`agents/harness/runtime.py` 在 `screening` 产生 `outcome=insufficient_evidence` 时，比较模型的 `predicted.min_change` 与实测 `observed_delta`，写入 `RuleStore` 的第 4 类——**EVIDENCE**（与 NEGATIVE/POSITIVE/CONTEXT 平级）。
-
-```text
-pred::Oc1ccccc1::COc1ccccc1::under
-  predicted +0.0200  observed +0.0050  (calibration error 0.0150, observations=3)
-```
-
-`agents/agent_metrics.py::compute_calibration_metrics(rule_store)` 给出：
-
-| 指标 | 含义 |
-|---|---|
-| `mean_abs_error` | 所有 EVIDENCE 观测的 `\|predicted - observed\|` 平均 |
-| `median_abs_error` / `max_abs_error` | 中位数 / 最大绝对误差 |
-| `under_claim_rate` | `predicted > observed` 的比例（模型系统性高估效应） |
-| `over_claim_rate` | `predicted ≤ observed` 的比例 |
-| `worst_pair` | 误差最大的一对 (parent_smiles, child_smiles) |
-
-每条规则都保留**完整观测日志** (`pattern.observations_log`)，跨 run 累积——同一 parent/child 对在多次实验中累积误差历史。
-
-修复要点：`agents/harness/runtime.py` 中 `add_prediction_error` 抛错时**不再静默**，而是写入 `rule_store_error` 审计事件 + stderr（之前是裸 `except Exception: pass`，校准链断裂无人知晓）。
-
-### 2. 内存可视化（P3-4）
-
-`scripts/visualize_memory.py` 扫描 `runs/` 和 `memory/` 下所有 `rule_memory*.json`，输出到 `docs/figures/`：
-
-- `memory_categories_pie.png`：4 类规则占比（红=NEGATIVE / 绿=POSITIVE / 紫=CONTEXT / 蓝=EVIDENCE）
-- `calibration_scatter.png`：predicted vs observed 散点 + `y=x` 参考线
-- `calibration_drift.png`：误差直方图 + over/under 比例条
-- `top_rules_evidence.png`：按 `evidence_strength` 排序的 top-15 规则
-- `memory_visualization.json`：机读汇总（`n_rules_total`、`calibration.mean_abs_error`、top 20 规则表）
-
-```bash
-python scripts/visualize_memory.py --output docs/figures
-# 或纯 JSON：
-python scripts/visualize_memory.py --json-only
-```
-
-缺失 matplotlib 时自动降级——只输出 JSON。
-
-### 3. 立体化学（P3-3 修复）
-
-之前所有 SMILES 都是 2D 平面式，遇到 `(S)-alanine` 这类带 `@`/`@@` 的手性中心时**会被静默丢失**。`tools/validate_mol.py` 现在输出：
-
-```json
-{
-  "valid": true,
-  "smiles": "C[C@H](N)C(=O)O",
-  "n_stereocenters": 1,
-  "n_specified": 1,
-  "n_unspecified_stereocenters": 0,
-  "has_double_bond_geometry": false,
-  "canonical_with_stereo": "C[C@H](N)C(=O)O",
-  "chirality": "chiral"
-}
-```
-
-`n_unspecified_stereocenters > 0` 表示生成器**忘记标注手性**——下游可以拒绝这种产物（外消旋混合物 ADMET 与纯对映体差异巨大）。
-
-### 4. 完整测试套件
-
-```
-369 passed, 1 skipped
-```
-
-新增（基线 336 + 33 新增）：
-
-| 测试 | 文件 | 数量 |
-|---|---|---|
-| Runtime 校准端到端（含异常审计） | `tests/test_runtime_calibration.py` | 7 |
-| Calibration metrics 聚合 | `tests/test_calibration_metrics.py` | 8 |
-| 内存可视化脚本（CLI + JSON + auto-discovery） | `tests/test_visualize_memory.py` | 9 |
-| 立体化学 round-trip + racemic 标记 | `tests/test_validate_mol_stereo.py` | 9 |
-
-完整文档见 [docs/PROJECT_HANDBOOK.md](docs/PROJECT_HANDBOOK.md) 第 41 章「Phase 4.4 — 校准、可视化、立体化学」。
-
-### 5. Phase 4.4 后续：真实 EVIDENCE 校准数据（2026-09-27）
-
-上一节的可视化管线在最初只有**空数据**——非 dock 的 phenol 诊断永远产生 `inconclusive` / `tradeoff_exceeded`，从不产生 `insufficient_evidence`，因此 EVIDENCE 类别为空、校准图无法生成。本轮打通了真实数据路径：
-
-**真实 `insufficient_evidence` 来源**：dock 诊断运行（`runs/diagnostic_2d_dock_*_20260923`）中，母体用 `dock_enabled=True`（Vina 协议）评估，而 `evaluate_options` 以 `dock_enabled=False` 筛选子代 → `evidence_delta` 报告 `same_protocol=False` → `judge_effect` 对每一行返回 `insufficient_evidence`。这些运行共记录 **497 条**真实预测-观测对，每条都带模型 `property_score` 预测与实测 `observed_delta`——正是校准链所需的输入。
-
-**探针脚本**：`tools/calibration_probe.py` 重放这些真实 receipts（逐字读取，不伪造任何数字），通过真实的 `RuleStore.add_prediction_error` 路径写入 `runs/samples/rule_memory_<probe_id>.json`：
-
-```bash
-python tools/calibration_probe.py
-# 输出 runs/samples/rule_memory_calib_probe_*.json（44 条 EVIDENCE 规则、497 条观测）
-```
-
-**校准结果（真实数据）**：
+[![Status](https://img.shields.io/badge/Status-Phase%204.6%20Multi--Agent-blue)]()
+[![Tools Version](https://img.shields.io/badge/tools-0.4.6-blue)]()
 
 | 指标 | 值 |
 |---|---|
-| EVIDENCE 规则数 | 44（36 under / 8 over） |
-| 观测总数 | 497 |
-| `mean_abs_error` | 0.0196 |
-| `max_abs_error` | 0.0469 |
-| `under_claim_rate` | 0.865（模型系统性高估改善幅度） |
-
-`under_claim_rate 0.865` 是一个有意义的工程发现：模型几乎总是预测 `property_score +0.01`，而 dock 协议下实测 delta 常常为负——说明**协议不一致时的预测不可信**，校准块把这一系统性偏差量化了。
-
-重新生成带真实数据的图表（`calibration_cross_run.png` 需要 `--cross-run`，或当 ≥2 个规则文件时自动输出）：
-
-```bash
-python scripts/visualize_memory.py --cross-run --output docs/figures
-```
-
-| 图表 | 内容 |
-|---|---|
-| [docs/figures/calibration_scatter.png](docs/figures/calibration_scatter.png) | predicted vs observed 散点 + `y=x` 参考线（497 个真实点） |
-| [docs/figures/calibration_drift.png](docs/figures/calibration_drift.png) | 误差直方图 + over/under 比例 |
-| [docs/figures/calibration_cross_run.png](docs/figures/calibration_cross_run.png) | 跨 run 平均绝对误差 + over/under 比例趋势 |
-| [docs/figures/memory_visualization.json](docs/figures/memory_visualization.json) | 机读汇总（含 `calibration` 与 `cross_run` 块） |
-
-## 2026-09-27：Phase 4.4 收口 — 四项后续任务（REVIEW_MINIMAX_ADVICE 清单）
-
-上一轮完成了校准、可视化、立体化学三件事。本轮把 [docs/REVIEW_MINIMAX_ADVICE_20260917.md](docs/REVIEW_MINIMAX_ADVICE_20260917.md)「尚未做」清单里的四项一次做完，并写入本文档与 [docs/PROJECT_HANDBOOK.md](docs/PROJECT_HANDBOOK.md) 第 42 章。
-
-### P1：`best_safe_vina` 首末轮变化曲线（agent_metrics.py）
-
-之前 `compute_agent_metrics` 只算 `best_vina` 曲线和 delta。现在按**安全口径**同样给出：
-
-- `curves.best_safe_vina`：每轮安全门内最佳 Vina（`summarize_round` 已输出，现被透传进曲线）
-- `aggregates.best_safe_vina_first / last / delta`：首末轮安全 Vina 及其差值
-- `verdict.run_safe_shows_improvement` / `run_safe_rationale`：安全口径下的"首末轮改善"判定
-- `aggregates.rounds_without_safe_improvement`：来自 `loop_state.rounds_without_safe_vina_improvement`
-
-`schema_version` 3 → 4。新增 `tests/test_safe_vina_metrics.py`（5 个测试）。
-
-**伴随缺陷修复**：`loop.py` 写 `summary.json` 的 `agent_metrics` 是手写白名单，漏掉了以上 P1 字段（它们只在 `metrics.json` 里）。已补齐——现在 `summary.json` 与 `metrics.json` 口径一致。
-
-### P2：随机抽样胜率作为实验准入门槛（run_benchmark.py）
-
-把 `scripts/audit_pool_vs_random.py` 的核心审计逻辑重构为可导入的 `audit_report(run_dir, draws)`（返回 JSON-safe 报告，无数据时抛 `ValueError`），并在 `scripts/run_benchmark.py` 中接入：
-
-- 新增 `assess_random_gate(root, enabled)`：真实（非 mock）且 dock 评分可用的 benchmark，在报告生成前运行审计
-- 门槛：`P(随机抽样胜过智能体) > 50%` → `random_gate.status = "failed"`（REVIEW_MINIMAX_ADVICE 第 3 项：随机都打不过就不该进入统计比较）
-- 结果写入 `benchmark_manifest.json` 的 `random_gate` 字段，并透传进 `benchmark_report.json`
-- `--no-random-gate` 可显式关闭；mock 模式自动跳过（无 dock 分数 → `skipped_no_scored_rounds`）
-
-新增 `tests/test_benchmarking.py` 3 个测试（disabled / skipped / passed 三态）。
-
-### P3：真实运行验证 `safe_vina` 是否提升 `best_safe_composite_global`
-
-**这是本轮唯一的验收标准**（REVIEW_MINIMAX_ADVICE 第 4 项）。运行 `experiments/p3_signal_matrix.yaml`（2 组 × 2 重复 × 4 轮 × 6 候选，真实 LLM + Vina docking，主指标 `best_safe_composite_global`）：
-
-| 指标 | `signal_vina`（旧） | `signal_safe_vina`（新） | delta |
-|---|---|---|---|
-| `best_safe_composite_global` | 0.7958 ± 0.0024 | 0.7951 ± 0.0092 | **-0.0007**（持平，p=0.93） |
-| `best_safe_vina_global` | -8.24 ± 0.12 | **-9.03 ± 0.65** | **-0.80**（更优，p=0.33） |
-| `best_vina_global` | -8.51 | **-9.03** | -0.52（更优） |
-| `mean_herg_risk_score` | 0.624 | 0.642 | +0.018（略高） |
-| `safe_run_improvement_rate` | 0.0 | 0.0 | 持平（两臂都无改善） |
-
-**诚实解读**：
-
-1. `safe_vina` 信号确实把**安全门内的 Vina 推得更低**（-8.24 → -9.03，改善约 0.8 kcal/mol），说明进度信号改成安全口径后，搜索更早地锁定安全通过的好分子。
-2. 但 `best_safe_composite_global` **基本持平**（-0.0007，p=0.93）。原因是 composite 中 hERG/logP 安全项占比有限，而两臂的安全通过率都很低（见下），composite 主要被安全通过率而非 Vina 深度驱动。
-3. **两臂 `safe_run_improvement_rate` 均为 0**：没有任何 run 在首末轮之间持续改善安全 Vina。逐轮看：`signal_safe_vina/r2` 的唯一安全候选在第 3 轮才出现（-9.50，全场最佳），且首轮即峰值或倒数第二轮即峰值是常态——**安全门通过率过低（0–100% 大幅波动，多轮为 0）导致"无安全候选 → 无法证明持续改善"**。
-4. n=2/组，所有 Welch p > 0.2，本运行无统计功效，只能给出方向性证据。
-
-**同时验证了 P2 门槛的实战价值**：本次真实运行的 `random_gate.status = "failed"`，`P(随机抽样胜过智能体) = 65.8%`——随机抽样仍然胜过智能体（较历史 72.7% 略有下降但仍 >50%）。这证实 REVIEW_MINIMAX_ADVICE 的核心诊断：**瓶颈在生成器的原始输出分布，而不在轮数或进度信号**。
-
-### P4：ADMET 模型扩展 — calibrated_herg 模式推广到整个 ADMET 块
-
-`tools/calibrated_herg.py` 的"多特征 logistic + 结构化特征 + 主导贡献解释"模式（7 特征 hERG）此前只覆盖心脏毒性。本轮新增 `tools/calibrated_admet.py`，把同一透明合约推广到 6 个端点：
-
-| 端点 | 方向 | 主要特征 |
-|---|---|---|
-| `absorption` | 越高越好 | TPSA / logP / MW / HBD / HBA / RotB |
-| `bioavailability` | 越高越好 | RotB / TPSA / MW / HBD（Veber） |
-| `bbb_penetration` | 越高越透 | logP / MW / TPSA / HBD / 碱性 N |
-| `cyp_inhibition` | 越高越抑制 | 芳香环 / 碱性 N / logP / MW / HBA |
-| `solubility` | 越高越溶 | logP / MW / RotB / 芳香比例（ESOL 风格） |
-| `metabolic_stability` | 越高越稳 | RotB / 芳香环 / logP / 碱性 N / MW |
-
-每个端点输出 `{score, features, dominant_contributors, rationale}`；总体 `admet_calibrated_summary` = 6 端点均值。集成进 `tools/admet_score.py::estimate_admet`（`calibrated_admet_block`，与 `calibrated_herg_block` 同款稳定接口）。
-
-新增 `tests/test_calibrated_admet.py`（10 个测试，含方向性 sanity：亲脂芳香胺 → 高 CYP 抑制 + 低溶解度；Veber 违规者 → 低生物利用度；小亲脂分子 → 高 BBB）。
-
-### 测试统计
-
-```
-Before: 374 passed, 1 skipped
-After:  391 passed, 1 skipped   (+17 tests)
-```
-
-新增覆盖：
-
-| 类别 | 测试文件 | 数量 |
-|---|---|---|
-| `best_safe_vina` 曲线/聚合/判定 | `tests/test_safe_vina_metrics.py` | 5 |
-| 随机胜率 admission gate 三态 | `tests/test_benchmarking.py` | +3 |
-| 多端点校准 ADMET | `tests/test_calibrated_admet.py` | 10 |
-| schema_version 断言更新 | `tests/test_calibration_metrics.py` / `test_phase4_3.py` | — |
-
-完整设计文档见 [docs/PROJECT_HANDBOOK.md](docs/PROJECT_HANDBOOK.md) 第 42 章「Phase 4.4 收口 — 安全口径指标、随机胜率门槛、真实验收运行、ADMET 扩展」。
-
+| 离线测试 | **515 passed, 1 skipped**（最后 commit `66c5f2a`） |
+| Generator | MiniMax-M3 + GLM-5.3-flash + Qwen-3.8-flash（全部 live 验证） |
+| 端到端 multi-agent | 519.9 s / 1 round / 3 generators（live 跑通） |
+| Selection operator | PARENTS block（Phase 4.5） |
+| Adversarial debate | generator ↔ critic 多轮 push-back + evidence_id 强校验 |
 
 ---
 
-## 2026-09-27：Phase 4.5 — Selection Operator Bridge（PARENTS 块）
+## 目录
 
-本轮把「agent 在做什么」从「在 LLM 训练分布上 re-roll」翻译成「在化学空间里 walk」。单一新增组件是 `tools/mutate.py` + `loop.py` 中的 PARENTS 块注入，与之前所有 harness/记忆/校准层**正交**，可单独打开/关闭、单独 A/B 测。
+1. [项目是什么](#1-项目是什么)
+2. [快速开始](#2-快速开始)
+3. [项目结构](#3-项目结构)
+4. [架构概览](#4-架构概览)
+5. [关键设计原则](#5-关键设计原则)
+6. [Multi-Agent 设计节](#6-multi-agent-设计节)
+7. [API 验证状态](#7-api-验证状态)
+8. [Local Dashboard / API](#8-local-dashboard--api)
+9. [受控实验矩阵](#9-受控实验矩阵)
+10. [测试基线](#10-测试基线)
+11. [真实跑通证据](#11-真实跑通证据)
+12. [路线图](#12-路线图)
+13. [历史时间线](#13-历史时间线)
+14. [许可](#14-许可)
 
-### 1. 为什么需要 selection operator
+---
+
+## 1. 项目是什么
+
+`aidd-multi-agent` 是一个**有状态的多 agent 协作分子优化闭环**，针对酪氨酸激酶 **EGFR（PDB: 1M17）** 跑真实的化学空间搜索。整个系统不是 AutoGPT/ReAct 风格的"单 LLM 循环 + 工具调用"，而是**真正并行 5 个智能体角色**：
+
+```
+A. 异构生成器（≥ 2 个）     — 不同 model / 不同 prompt_role / 不同 temperature 并行提案
+J. 多裁判（≥ 2 个）         — property / docking / synthesis 等独立视角投票
+C. 对抗批评家              — generator ↔ critic 多轮 push-back，必须给 evidence_id
+E. 评估器                  — RDKit + Vina + calibrated ADMET（非 LLM）
+R. 专家路由                — 按短板动态切 prompt（property_weak / vina_weak / SA）
+```
+
+外加 Phase 4.5 的 **Selection Operator Bridge（PARENTS 块）**：把 evaluator 选出的 top-k safety-gated parents（SMILES + vina + hERG + weakness）显式注入 generator prompt，让搜索成为"化学空间中的 walk"而不是 LLM re-roll 自己的训练分布。
+
+### 1.1 一句话定义
+
+> 真 multi-agent 协作：每轮并行 3 个模型（不同 prompt 立场），3 个独立视角的裁判投票，对抗辩论 push-back，专家路由动态切 prompt。所有 agent 调用、评估、聚合、辩论、路由都是**实测可跑的代码**，不是设计文档。
+
+### 1.2 为什么不是单 agent
 
 按 [docs/REVIEW_MINIMAX_ADVICE_20260917.md](docs/REVIEW_MINIMAX_ADVICE_20260917.md) Priority A-3 审计：
 
-| 指标 | 历史观察 | 含义 |
+| 指标 | 单 agent 历史观察 | 含义 |
 |---|---:|---|
-| `P(随机抽样胜过智能体)` | **65.8%** | 从确认池随机抽 8 个分子有 65.8% 概率胜过 agent |
-| `P(当轮最佳 = 全局最佳)` | **70%** | 多数轮次都在重新发现前几轮的同一个最佳 |
-| `P(连续轮最佳 Tanimoto > 0.6)` | **40.6%** | 多数相邻轮产物彼此不接近 |
+| `P(随机抽样胜过智能体)` | 65.8% | 从候选池随机抽 8 个有 65.8% 概率胜过 agent |
+| `P(当轮最佳 = 全局最佳)` | 70% | 多数轮次都在重新发现前几轮的同一个最佳 |
+| `P(连续轮最佳 Tanimoto > 0.6)` | 40.6% | 多数相邻轮产物彼此不接近 |
 
-这些数字**不能**靠「加更多 LLM token」或「加更多轮次」改进——只能靠「给 generator 一个显式的 selection operator」。PARENTS 块就是这座桥：把 evaluator 选出的 top-k safety-gated parents（SMILES + Vina + hERG + weakness）注入 generator prompt，让模型有**显式的结构起点**去 mutate，而不是重新抽样自己的训练分布。
+这些数字**不能**靠"加更多 LLM token"或"加更多轮次"改进，只能靠"给 generator 一个显式的 selection operator + 多视角"。这是 PARENTS 块 + 多 agent 协作的设计依据。
 
-### 2. 三块组件
+---
 
-#### 2.1 Parent selection —— `tools.mutate.nearest_neighbors`
+## 2. 快速开始
 
-ECFP4 Tanimoto（Morgan radius=2, 2048 bits）。给定 query SMILES，在 parents 池中找最相似的 k 个，返回 `[(smiles, similarity, rank)]`。**不**调用 LLM，**不**依赖外部数据库，单次 < 100 ms。
+### 2.1 环境准备
 
-#### 2.2 Mutation operators —— `tools.mutate.mutate`
+```bash
+# 推荐用 conda
+conda create -n aidd python=3.10 -y
+conda activate aidd
+pip install -r requirements.txt
 
-三个确定性、可种子化的 RDKit 操作：
+# Vina 需要单独装（详见 docs/setup.md）
+conda install -c conda-forge vina   # 或从 GitHub release 下载二进制
+```
 
-| 操作 | 函数 | 说明 |
+### 2.2 配置 API 密钥
+
+```bash
+cp .env.example .env
+# 编辑 .env 填入 key：
+#   MiniMax_API_KEY           (MiniMax Token Plan 1, 默认主用)
+#   MiniMax_API_KEY_SECONDARY (MiniMax Token Plan 2, 429 fallback)
+#   GLM_API_KEY               (Volcengine Coding Plan)
+#   QWEN_API_KEY              (Alibaba Cloud Token Plan)
+```
+
+### 2.3 验证连接（必做）
+
+```bash
+python scripts/check_all_api_keys.py --out runs/samples/probe.json
+# 期望：MiniMax / MiniMax-secondary / GLM / Qwen 4 个都 OK
+```
+
+### 2.4 第一次 multi-agent smoke
+
+```bash
+python scripts/smoke_multi_agent.py
+# 期望：
+#   multi_agent.on : True
+#   n_generators   : 3
+#   n_judges       : 3
+#   router.enabled : True
+#   Smoke OK.
+```
+
+### 2.5 真实跑
+
+```bash
+# A. 真 multi-agent 1 round（端到端）
+python scripts/run_multi_agent_round.py --n-per-generator 2 \
+    --out runs/samples/multi_agent_round_20260929.json
+
+# B. 真 multi-agent 多 round（router → evaluate → multi-judge → debate → 下一轮）
+python scripts/run_full_multi_agent.py --n-per-generator 1 --max-rounds 2 \
+    --out runs/samples/multi_agent_full_20260929.json
+
+# C. A/B 验证 multi-agent vs single-agent
+python scripts/run_phase4_6_ablation.py --n-per-generator 1 --max-rounds 1 \
+    --out runs/samples/phase4_6_ablation.json
+
+# D. MiniMax 连通性（前置门槛）
+python scripts/check_minimax_connectivity.py
+```
+
+### 2.6 本地 Dashboard（可选）
+
+```bash
+python agent_dashboard.py
+# 打开 http://127.0.0.1:8765
+# 在创建任务页面勾选 "multi-agent" 即可启用 multi-agent 模式
+```
+
+### 2.7 全量回归
+
+```bash
+python -m pytest -q
+# 期望：515 passed, 1 skipped（含 1 个 flaky mutate 测试）
+```
+
+---
+
+## 3. 项目结构
+
+```
+aidd-multi-agent/
+├── README.md                  # 本文件
+├── PLAN.md                    # 早期 5 阶段路线图（已 100% 完成，保留作为历史）
+├── LICENSE                    # MIT
+├── .env / .env.example        # API 密钥（gitignored）
+├── requirements.txt
+├── config.yaml                # 靶点 / 模型 / 评分阈值 / multi-agent 配置
+│
+├── agent_dashboard.py         # 本地 Web 控制台（127.0.0.1:8765）
+├── agent_task.py              # CLI 入口：start / resume / pause / steer / constraints
+├── api.py                     # FastAPI 入口（127.0.0.1:8766）
+├── loop.py                    # Legacy single-agent 主循环
+├── loop_multi_agent.py        # ★ Multi-agent 主入口（Phase 4.6 阶段 7+）
+│
+├── tools/                     # 确定性 / RDKit 工具层（Phase 4.5 起含 mutate）
+│   ├── validate_mol.py        # SMILES 合法性 + Lipinski + SA + 立体化学
+│   ├── admet_score.py         # ADMET 多目标打分（含 calibrated ADMET）
+│   ├── calibrated_herg.py     # 多特征 logistic hERG 代理
+│   ├── calibrated_admet.py    # 多端点校准 ADMET（Phase 4.4）
+│   ├── dock_score.py          # AutoDock Vina 对接打分
+│   ├── diversity.py           # Bemis-Murcko 骨架多样性
+│   ├── mutate.py              # ★ Phase 4.5：selection operator (PARENTS / brics / atom_subst / terminal_swap)
+│   ├── calibration_probe.py   # EVIDENCE 校准探针
+│   ├── evaluation_cache.py / docking_cache.py / provenance.py / references.py
+│   └── __init__.py            # __version__ = "0.4.6"
+│
+├── agents/                    # 智能体核心
+│   ├── generator.py           # LLM 单步生成 + PARENTS block + SHORT prompt mode (Phase 4.6 阶段 11)
+│   ├── evaluator.py           # 评估、帕累托、Pareto key
+│   ├── judge.py               # 评审（multi-judge 兼容）
+│   ├── llm.py                 # OpenAI 兼容客户端 + key swap fallback
+│   ├── working_memory.py      # WorkingMemory（Phase 4.1）
+│   ├── failed_set.py          # FailedLigandSet（Phase 4.1）
+│   ├── rule_memory.py         # RuleStore 4 类（NEG/POS/CTX/EVIDENCE，Phase 4.4）
+│   ├── agent_metrics.py       # 行为指标（Phase 4.3）
+│   ├── loop_controller.py     # 显式终止（Phase 4.1）
+│   ├── hitl.py                # Human-in-the-Loop 闸门
+│   ├── redaction.py           # 凭据脱敏
+│   ├── multi_agent.py         # ★ Phase 4.6：heterogeneity + dedup+聚合 + multi-judge vote + debate trigger
+│   ├── router.py              # ★ Phase 4.6：RoundFingerprint + 专家路由规则
+│   ├── debate.py              # ★ Phase 4.6：generator ↔ critic 多轮 push-back
+│   ├── marketplace.py         # ★ Phase 4.6 阶段 13：trader budget + N-of-N 投票
+│   ├── prompts/               # ★ Phase 4.6：prompt 模板注册（qed/vina/synth + 4 expert）
+│   ├── __init__.py            # __version__ = "0.4.6"
+│   └── harness/               # Persistent Harness（dashboard 的真正调度层）
+│       ├── runtime.py / state.py / schema.py / tools.py
+│       ├── editor.py / molecule_ops.py / planning.py
+│       ├── attribution.py / evidence.py / screening.py
+│       ├── reliability.py     # ClientScope / 重试 / 错误分类
+│       └── dashboard.html / dashboard.py / presentation.py
+│
+├── db/                        # Repository（SQLite + 校验 + 索引）
+├── experiments/               # ExperimentRunner + 矩阵 + 报告
+│   ├── matrix.yaml / matrix_v4.yaml / confirmatory_matrix*.yaml / p3_signal_matrix.yaml
+│   ├── contract.py / reporting.py / cross_version_compare.py
+│   ├── profiles.yaml
+│   └── ...
+├── scripts/                   # 运行入口（CLI / runner / audit / calibration / multi-agent）
+│   ├── run_benchmark.py / run_experiments.py / check_minimax_connectivity.py
+│   ├── compare_2d_policies.py / compare_experiments.py / visualize_memory.py
+│   ├── audit_pool_vs_random.py / validate_*.py / prepare_receptor.py
+│   ├── check_all_api_keys.py                # ★ Phase 4.6：API 多 provider 探测
+│   ├── smoke_multi_agent.py                # ★ Phase 4.6：offline smoke
+│   ├── run_multi_agent_round.py            # ★ Phase 4.6：1 round 真实 multi-agent
+│   ├── run_full_multi_agent.py             # ★ Phase 4.6：多 round router/eval/judge/debate
+│   ├── run_phase4_6_ablation.py            # ★ Phase 4.6：single vs multi A/B 验证
+│   ├── run_multi_agent_for_dashboard.py    # ★ Phase 4.6：dashboard worker
+│   └── _build_*.py / _smoke_*.py / ...
+│
+├── benchmarks/                # 已运行实验产物（local, git ignored）
+├── runs/                      # 当前会话运行目录（local, git ignored）
+├── memory/                    # WorkingMemory / FailedLigandSet / RuleStore 持久化（local）
+├── tests/                     # 单元测试（515 passed, 1 skipped）
+└── docs/                      # 设计文档
+    ├── PROJECT_HANDBOOK.md    # ★ 完整设计手册（chapter 41-42 是 Phase 4.5/4.6）
+    ├── PHASE_4_PLAN.md         # Phase 4 设计方案
+    ├── REVIEW_MINIMAX_ADVICE_20260917.md  # 触发 multi-agent 改造的关键审查
+    ├── EXPERIMENT_MATRIX.md
+    └── ...
+```
+
+---
+
+## 4. 架构概览
+
+### 4.1 流程图（multi-agent 模式）
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                    Loop Orchestrator (loop_multi_agent.py)             │
+│                                                                        │
+│   for round in 1..N (LoopController 终止):                            │
+│     ┌──────────────────────────────────────────────────────────────┐   │
+│     │ A. 多生成器并行 (每轮)                                       │   │
+│     │   ┌─────────────┐  ┌─────────────┐  ┌─────────────┐           │   │
+│     │   │  A1_qed      │  │  A2_vina     │  │  A3_synth    │           │   │
+│     │   │  MiniMax-M3  │  │ glm-5.3-fls  │  │ qwen3.8-fls  │           │   │
+│     │   │  prompt=qed  │  │ prompt=vina  │  │ prompt=synth │           │   │
+│     │   │  temp=0.7    │  │  temp=1.0    │  │  temp=0.5    │           │   │
+│     │   │  PARENTS ★   │  │  PARENTS ★   │  │  PARENTS ★   │           │   │
+│     │   └──────┬──────┘  └──────┬──────┘  └──────┬──────┘           │   │
+│     │          │ SMILES        │ SMILES        │ SMILES            │   │
+│     │          ▼               ▼               ▼                    │   │
+│     │   ┌──────────────────────────────────────────────────┐        │   │
+│     │   │  Aggregation (Stage 7)                          │        │   │
+│     │   │  - dedup by canonical SMILES                    │        │   │
+│     │   │  - diversity floor Tanimoto > 0.7 → drop       │        │   │
+│     │   │  - vote (per-generator confidence × weight)    │        │   │
+│     │   │  - top_n cap                                    │        │   │
+│     │   └─────────────────────┬────────────────────────────┘        │   │
+│     └─────────────────────────┼─────────────────────────────────────┘   │
+│                               ▼                                          │
+│     ┌──────────────────────────────────────────────────────────────┐   │
+│     │ B. 评估 (Stage 7)                                            │   │
+│     │   - RDKit descriptors + ADMET calibrated_hERG calibrated_ADMET │   │
+│     │   - safety_gate_pass (hERG + logP + Vina if available)       │   │
+│     │   - aggregate_round outputs enriched + summary                  │   │
+│     └─────────────────────┬────────────────────────────────────────┘   │
+│                           ▼                                              │
+│     ┌──────────────────────────────────────────────────────────────┐   │
+│     │ C. 多裁判投票 (Stage 7)                                      │   │
+│     │   J1_property    J2_docking    J3_synthesis                     │   │
+│     │   score_p        score_d       score_s                          │   │
+│     │   softmax(α_p·score_p + α_d·score_d + α_s·score_s) → next_round_focus │   │
+│     │   weights default (0.4, 0.4, 0.2), configurable.              │   │
+│     └─────────────────────┬────────────────────────────────────────┘   │
+│                           ▼                                              │
+│     ┌──────────────────────────────────────────────────────────────┐   │
+│     │ D. 专家路由 (Stage 7)                                        │   │
+│     │   if property_weak:        activate prompt_qed_expert          │   │
+│     │   if vina_weak:            activate prompt_vina_expert         │   │
+│     │   if sa_difficult:         activate prompt_sa_expert           │   │
+│     │   else:                    activate prompt_exploit_expert       │   │
+│     │   RoundFingerprint.from_history(property/vina/sa history)     │   │
+│     └─────────────────────┬────────────────────────────────────────┘   │
+│                           ▼                                              │
+│     ┌──────────────────────────────────────────────────────────────┐   │
+│     │ E. 对抗辩论触发 (Stage 7/10)                                  │   │
+│     │   if max(judge_score) - median(judge_score) > 0.15            │   │
+│     │      OR any judge confidence < 0.30:                          │   │
+│     │     1. Pick highest-confidence judge's rationale as critic    │   │
+│     │     2. debate_recall_generators(...) → inject as focus         │   │
+│     │     3. Re-aggregate + re-evaluate (debate-revised pool)        │   │
+│     │     4. Fold critique into next round's focus                    │   │
+│     └─────────────────────┬────────────────────────────────────────┘   │
+│                           │                                              │
+│                           └→ 下一轮（router 用 best_property/vina 更新）   │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+### 4.2 角色矩阵
+
+| 角色 | 个性 | 模型 / 配置（默认） | 实现位置 |
+|---|---|---|---|
+| **A1_qed** | property / ADMET / QED / SA / hERG | `MiniMax-M3` + `prompt_qed` + temp=0.7 | `agents/generator.py` |
+| **A2_vina** | binding / scaffold / docking | `glm-5.3-flash`（short prompt）+ `prompt_vina` + temp=1.0 | `agents/generator.py` |
+| **A3_synth** | synthesis / SA / commercial | `qwen3.8-flash` + `prompt_synth` + temp=0.5 | `agents/generator.py` |
+| **J1_property** | property / QED / SA / hERG | `judge_MiniMax` + `prompt_judge_property` + temp=0.3 | `agents/judge.py` |
+| **J2_docking** | Vina / binding mode / pose | `glm-5.3-flash` + `prompt_judge_docking` + temp=0.3 | `agents/judge.py` |
+| **J3_synthesis** | synthesis / SA / commercial | `qwen3.8-flash` + `prompt_judge_synthesis` + temp=0.3 | `agents/judge.py` |
+| **C (Critic)** | 多轮 push-back，必须给 evidence_id | `MiniMax-M3` + `debate_prompt` + temp=0.4 | `agents/debate.py` |
+| **E (Evaluator)** | RDKit / Vina / calibrated ADMET（非 LLM） | n/a | `tools/evaluate_*` |
+| **R (Router)** | 按当前状态选专家 prompt | 纯规则 | `agents/router.py` |
+
+### 4.3 横向模块（与 agent 并列）
+
+| 模块 | 职责 | 实现位置 |
 |---|---|---|
-| BRICS 重组 | `brics_reassemble(smi, n)` | 用 BRICS 键拆解后随机重组；产出 ≥ 1 个新分子 |
-| 原子替换 | `atom_substitution(smi, n)` | F↔Cl、芳香 H→F/OH、仲胺→醚（受邻居原子数约束以免打破价态） |
-| 末端基团替换 | `terminal_swap(smi, n)` | 在 15 个常见药效末端（`NCC`、`N1CCOCC1`、`OC(C)C` 等）之间随机 swap |
+| **WorkingMemory** | 短期上下文（最近 N 轮 + best-so-far） | `agents/working_memory.py` |
+| **FailedLigandSet** | 跨 session 强制过滤已失败 SMILES | `agents/failed_set.py` |
+| **RuleStore (4 类)** | NEGATIVE / POSITIVE / CONTEXT / EVIDENCE 规则 | `agents/rule_memory.py` |
+| **LoopController** | 显式终止（max_rounds / token_budget / patience） | `agents/loop_controller.py` |
+| **Persistent Harness** | 工具注册、状态机、原子检查点、暂停恢复、用户干预 | `agents/harness/runtime.py` |
+| **ExperimentRunner** | 多臂 A/B/C + confirmatory + futility 早停 | `scripts/run_benchmark.py` |
+| **Repository** | SQLite / 检查点 / 收据 / 评估缓存 | `db/repository.py` |
+| **Dashboard / API** | 本地 Web UI（仅 127.0.0.1） | `agent_dashboard.py` / `api.py` |
+| **Calibration** | EVIDENCE 规则的预测误差度量 | `agents/agent_metrics.py` + `tools/calibration_probe.py` |
+| **Visualization** | 4 类规则占比 / 校准散点 / 跨 run 趋势 | `scripts/visualize_memory.py` |
 
-每个操作都接受 `seed` 参数且 < 100 ms；整个 library 离线可测、离线可复现。
+### 4.4 Selection Operator Bridge（PARENTS 块）
 
-#### 2.3 Prompt bridge —— `tools.mutate.format_parents_block`
-
-把 `loop.py::_select_safety_pareto_parents()` 选出的 top-k safety-gated candidates 渲染为**稳定的文本片段**注入 generator prompt：
+每轮评估后，`_select_safety_pareto_parents()` 从历史 enriched pool 中选出 top-k `safety_gate_pass is True` 的候选，排序键为 `candidate_priority_key`（Pareto rank → composite score → 新候选优先）。然后 `format_parents_block()` 渲染为稳定文本片段：
 
 ```text
 Local parents to mutate around (do NOT copy verbatim; make small
 structural changes such as swapping a terminal group, replacing
 an aromatic H with F/Cl, or rearranging BRICS fragments):
 
-[PARENT 1] smiles="CCNc1nc2c(n1)n(C)c3ccccc3n2" vina=-9.50 hERG=0.18 weakness="low solubility"
-[PARENT 2] smiles="COc1ccc(Nc2ncnc3[nH]cnc23)cc1" vina=-9.18 hERG=0.21 weakness="low metabolic stability"
-[PARENT 3] smiles="CCN(CC)c1ncnc2[nH]cnc12" vina=-8.91 hERG=0.14 weakness="rotatable bond count"
+[PARENT 1] smiles="COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCN1CCCCC1"
+            vina=-9.50 hERG=0.18 weakness="low solubility"
+[PARENT 2] smiles="..."
 ```
 
-稳定合约：每个 parent 含 smiles + vina + hERG + weakness 4 字段；下游 `tests/test_mutate.py::test_format_parents_block_*` 用 schema 断言锁住字段顺序与符号。
-
-### 3. loop.py 的接入位置
-
-`config.yaml` 新增两个开关：
-
-```yaml
-loop:
-  progress_signal: safe_vina
-  # Phase 4.5 (2026-09-27, Priority A-3): selection operator bridge.
-  parents_block_enabled: true   # set false to A/B test the LLM-only baseline
-  parents_k: 3                  # how many top safety-gated parents to surface
-```
-
-`loop.py::run_loop` 在每轮调用 `generate_candidates(...)` 之前执行：
-
-1. `_select_safety_pareto_parents(enriched_history, k=parents_k)` —— 选 `safety_gate_pass is True` 且 `candidate_priority_key` 排名最高的 k 个（ties 时新候选胜出，使新改善能压过旧的同等排名）。
-2. `format_parents_block(parents_used, k=parents_k)` —— 渲染为 prompt 段。
-3. 把渲染结果作为 `parents_block` 参数传给 `agents.generator.generate_candidates(...)`，它最终进入 `USER_PROMPT_TEMPLATE.__PARENTS__` 占位符。
-
-**关键不变量**：`parents_block_enabled` 与 `parents_k` **不**进入 `protocol_id`（evaluation / docking 缓存保持有效）；它们写入 `manifest.json` 与每轮 `round_*.json`，下游审计可以回答「loop 真的见过 PARENTS 块吗」而无需重跑。
-
-### 4. agents/generator.py 的改动
-
-`generate_with_provider(...)` 新增 `parents_block: str = ""` 参数；`USER_PROMPT_TEMPLATE` 新增 `__PARENTS__` 占位符。`generate_candidates(...)` 在调用每个 provider 时都透传 `parents_block`，所以同一 batch 内所有 LLM 调用看到**同一组** structural anchors。
-
-### 5. 离线 smoke + 测试
-
-`tools/__init__.py` 导出所有 selection operator API，并把 `__version__` 从 `"0.1.0"` 升至 `"0.4.5"`。
-
-```text
-420 passed, 1 skipped in 89.48s
-```
-
-新增覆盖（基线 391 + 29 新增）：
-
-| 类别 | 测试文件 | 数量 |
-|---|---|---|
-| `format_parents_block` schema + field-order 锁住 | `tests/test_mutate.py` | 6 |
-| `nearest_neighbors` ECFP4 + threshold + invalid 输入 | `tests/test_mutate.py` | 5 |
-| `brics_reassemble` / `atom_substitution` / `terminal_swap` 确定性 + 种子 | `tests/test_mutate.py` | 10 |
-| `mutate` 集成（全部三种操作 + 异常恢复） | `tests/test_mutate.py` | 4 |
-| `offline_validation` 离线一致性 | `tests/test_mutate.py` | 4 |
-
-### 6. 不能说的（与 runtime 真实验收挂钩）
-
-1. **不能**声称 PARENTS 块已证明优于 LLM-only baseline —— A/B 真实运行（`--benchmark-id phase4_47_real_ablation`）尚未提交；当前仅完成离线 + 接线验证。
-2. **不能**说 `tools/mutate.py` 能替代 generator —— 它生成近邻池供 generator 装饰，不是 de novo 设计工具；`mutate(n_per_op=3)` 跑 100 call 预算给的是 focused neighbour-cloud，不是 diffusion tree。
-3. **不能**把 `parents_block` 写进 `protocol_id` —— 那是 evaluation cache 的 invalidation 边界；引入会让所有历史缓存失效。
-4. **不能**把 PARENTS block 与 EVALUATION 缓存键混淆 —— `manifest.json.parents_block_enabled` 与 `docking_cache.protocol_id` 是**独立**轴。
-5. Phase 4.5 收口后**仍**保留 futility / `random_gate` 等 Phase 4.4 门控 —— PARENTS 块不替代这些门控，只在「搜索」语义层做改造。
-6. `parents_k=3` 与 `parents_block_enabled=true` 是当前默认值，**真实 A/B 测**前不要直接发布「PARENTS 块让 agent 优于 random」之类的对比。
-
-### 7. 复现命令
-
-```powershell
-# 1) 离线 smoke：验证 mutate 库 + 接线
-python -c "import tools.mutate; print('mutate ready:', tools.mutate.__doc__.splitlines()[1])"
-
-# 2) 跑 mutate 自带的离线一致性（无 LLM，无 docking）
-python -c "from tools.mutate import offline_validation; print(offline_validation())"
-
-# 3) 全量回归
-python -m pytest -q
-# 420 passed, 1 skipped
-```
-
-### 8. 真实 A/B 验收命令（待运行）
-
-```powershell
-# 旧 LLM-only（parents_block_enabled=false）作为对照
-python scripts/run_benchmark.py --matrix experiments/matrix_v4.yaml --profile screening --benchmark-id phase4_47_llm_only
-
-# 新 PARENTS 块（parents_block_enabled=true）
-python scripts/run_benchmark.py --matrix experiments/matrix_v4.yaml --profile screening --benchmark-id phase4_47_parents
-
-# confirmatory 门控仍适用：需 efficacy_supported ∧ stable_improvement ∧ safety_noninferior 同时成立
-# 在确认结果之前，loop.py 的默认 config 保持 parents_block_enabled=true（现状），但不发布"A/B 胜出"对比
-```
-
-完整设计与动机见 [docs/REVIEW_MINIMAX_ADVICE_20260917.md](docs/REVIEW_MINIMAX_ADVICE_20260917.md) Priority A-3 节。
+注入 generator 的 user prompt，让所有 generator 共享同一组显式结构起点。
 
 ---
 
-## Multi-Agent 设计节（2026-09-29）
+## 5. 关键设计原则
 
-本节是 README 顶部的「项目目标 / 架构概览 / 关键设计原则」所对应的**详细设计文档**。如果你正在评估这个仓库是不是真 multi-agent，从这里开始读。
+1. **多角色，多模型，多 prompt 立场**：同一 round 内并行 A1/A2/A3 三个 generator（不同 model / 不同 prompt_role），强制结构性多样性而非"同温度 / 同 prompt 跑三遍"。
+2. **多裁判独立投票**：J1/J2/J3 按 property / docking / synthesis 三个独立视角加权投票，不允许单一 LLM 视角垄断下一轮 focus。
+3. **对抗辩论兜底**：judges 分歧大或 confidence 低时，generator ↔ critic 多轮 push-back，必须给出 evidence_id 才算 accept。
+4. **专家路由按状态动态切换**：监测当前 round 短板（property 弱 / vina 弱 / SA 难），对应激活 `prompt_qed_expert` / `prompt_vina_expert` / `prompt_sa_expert` / `prompt_exploit_expert`。
+5. **Aggregator 强制多样性 + 去重 + 投票**：canonical SMILES 去重；批内 Tanimoto > 0.7 的产物只留一个；per-generator confidence × judge 加权 = 最终 ranking。
+6. **Selection Operator Bridge (PARENTS 块)**：把 evaluator 选出的 top-k safety-gated parents 注入**所有**生成器 prompt，让 multi-agent 共享同一组显式结构起点（[docs/REVIEW_MINIMAX_ADVICE_20260917.md](docs/REVIEW_MINIMAX_ADVICE_20260917.md) Priority A-3 实证：`P(随机胜过智能体)` ≈ 65.8% → PARENTS 块让搜索成为化学空间 walk 而不是 LLM re-roll）。
+7. **LoopController 显式终止**：`max_rounds` / `token_budget` / `judge_convergence_patience` 三条独立预算；不再硬编码"≤ 6 轮"。
+8. **Persistent Harness 是调度总线**：工具注册、状态机、原子检查点、暂停恢复、用户干预都在 `agents/harness/`；multi-agent 在它之上运行。
+9. **Evaluator 严格走 RDKit / Vina / calibrated 端点**：性质计算非 LLM；ADMET 是多端点校准（含 calibrated_hERG / calibrated_ADMET）。
+10. **诚实度量**：`safe_vina` / `safe_composite` 进度信号 + `random_gate` 防止"随机抽样胜过 multi-agent"时仍发布对比。
+11. **GLM-5.3-flash 走 short-prompt 模式**：`prompt_mode: short` 触发极简 SYSTEM_PROMPT（无 references、无 SAR），避免 reasoning_tokens 烧光 max_tokens（实测 4091/4096）。
+12. **不宣称 multi-agent 优于 baseline 的稳定结论**：没有 confirmatory 三条门控（`efficacy_supported ∧ stable_improvement ∧ safety_noninferior`）同时成立，不把任何 multi-agent 配置写进默认。
 
-### 1. 为什么必须是 multi-agent
+---
 
-按 [docs/REVIEW_MINIMAX_ADVICE_20260917.md](docs/REVIEW_MINIMAX_ADVICE_20260917.md) Priority A-3 审计：
+## 6. Multi-Agent 设计节
 
-- 单 LLM 循环在同一温度 + 同 prompt 下跑 N 遍，并不能扩展搜索 —— 它只是重复自身的 training distribution
-- 「多角度」必须来自**结构上独立**的智能体（不同 prompt 立场 / 不同模型 / 不同温度 / 不同 few-shot 示例）
-- 多裁判投票减少单一视角偏差
-- 对抗辩论防止 generator "糊弄" critic
+### 6.1 为什么必须是 multi-agent
 
-### 2. 五个角色的合约（必须满足，否则不算 multi-agent）
+单 LLM 循环在同一温度 + 同 prompt 下跑 N 遍，并不能扩展搜索 —— 它只是重复自身的 training distribution。"多角度"必须来自**结构上独立**的智能体（不同 prompt 立场 / 不同模型 / 不同温度 / 不同 few-shot 示例）。多裁判投票减少单一视角偏差。对抗辩论防止 generator "糊弄" critic。
+
+### 6.2 五个角色的合约（必须满足，否则不算 multi-agent）
 
 #### A：异构生成器（≥ 2 个，并行）
 
@@ -2930,25 +385,33 @@ python scripts/run_benchmark.py --matrix experiments/matrix_v4.yaml --profile sc
 
 | 差异轴 | 例子 |
 |---|---|
-| 模型 | `MiniMax-M3` vs `DeepSeek-V3` vs `Kimi-K3` |
+| 模型 | `MiniMax-M3` vs `glm-5.3-flash` vs `qwen3.8-flash` |
 | Prompt 立场 | `prompt_qed` 偏 ADMET / `prompt_vina` 偏 docking / `prompt_synth` 偏合成可行性 |
 | 温度 | temp=0.7 vs temp=1.0 vs temp=0.5 |
 | Few-shot | 不同示例集 |
 
-`config.yaml::generators:` 列表是预留的扩展位（详见下方「配置」）。
+`config.yaml::generators[]` 列表是预留的扩展位（详见 6.6 配置层）。
 
 #### J：多裁判投票（≥ 2 个，独立视角）
 
-- J1（property）：评估 property_score / QED / SA / hERG
-- J2（docking）：评估 Vina / binding / pose
-- J3（synthesis）：评估合成路线 / SA / 商业可得性
+- **J1（property）**：评估 property_score / QED / SA / hERG
+- **J2（docking）**：评估 Vina / binding / pose
+- **J3（synthesis）**：评估合成路线 / SA / 商业可得性
 - 投票产出 `next_round_focus`，加权和投票结果以 `multi_judge_vote.json` 落盘
+
+加权公式（`experiments/reporting.py::_multi_judge_decision`）：
+
+```text
+next_focus = argmax_i  (α_p · score_p_i + α_d · score_d_i + α_s · score_s_i)
+weights (α_p, α_d, α_s) 默认 (0.4, 0.4, 0.2)，可调。
+```
 
 #### C：对抗批评家（多轮 push-back）
 
-- 触发条件：judges 之间分歧大（max−median > 0.15）或任一 judge confidence < 0.30
-- 流程：generator 提案 → critic 反驳 + 要求 evidence ID → generator 修正 → 循环 K 次或 critic 接受
-- 必须给出 evidence ID（`h:<hypothesis_id>` 或 `p:<proposal_id>:<option_index>`），不允许"加油式反驳"
+- **触发条件**：judges 之间分歧大（max−median > 0.15）或任一 judge confidence < 0.30
+- **流程**：generator 提案 → critic 反驳 + 要求 evidence ID → generator 修正 → 循环 K 次或 critic 接受
+- **必须给出 evidence ID**（`h:<hypothesis_id>` 或 `p:<proposal_id>:<option_index>`），不允许"加油式反驳"
+- **ACCEPT 关键词**立即终止辩论
 
 #### E：评估器（非 LLM）
 
@@ -2962,7 +425,12 @@ python scripts/run_benchmark.py --matrix experiments/matrix_v4.yaml --profile sc
 - `sa_difficult=True` → 激活 `prompt_sa_expert`
 - 全部 OK → 激活 `prompt_exploit_expert`（专注微调）
 
-### 3. 聚合层合约
+`RoundFingerprint.from_history()` 派生（默认 window=2）：
+- property_weak: best has not improved over window
+- vina_weak: best safe_vina has not decreased over window（Vina 越小越好）
+- sa_difficult: any SA score > 4.0 threshold
+
+### 6.3 Aggregation 层合约
 
 ```text
 输入：A1.candidates + A2.candidates + ... + PARENTS_block
@@ -2974,7 +442,29 @@ python scripts/run_benchmark.py --matrix experiments/matrix_v4.yaml --profile sc
 4. 截断到 N (config: aggregation.top_n) 进入 evaluate 阶段
 ```
 
-### 4. 配置层（`config.yaml`）
+`aggregate_candidates()` 输出 `(aggregated, stats)`，`stats` 含 `n_input / n_after_dedup / n_dropped_diversity / n_kept / per_generator_count`。
+
+### 6.4 对抗辩论触发条件
+
+```python
+should_debate, reason = should_enter_debate(
+    judge_verdicts,
+    disagreement_threshold=debate_cfg["disagreement_threshold"],  # default 0.15
+    confidence_floor=debate_cfg["confidence_floor"],            # default 0.30
+)
+# Triggers debate if EITHER:
+#   - any judge has score < confidence_floor, OR
+#   - max(judge scores) - median(judge scores) >= disagreement_threshold
+```
+
+辩论触发后，`debate_recall_generators()` 把 highest-confidence judge's rationale 作为 critic push-back 注入新一轮 generator prompt；返回的候选合并到原池后**重新聚合 + 重新评估**，最终 rank 可包含辩论修订。`debate_recall_generators()` 在 generator 失败时返回 `{}`，主循环优雅降级不崩溃。
+
+### 6.5 GLM-5.3-flash 的 Short-Prompt 路径
+
+实测发现 glm-5.3-flash 在长 prompt + json_mode 下把所有 max_tokens（4096）都用于 reasoning，`content=""`。
+**修复方案**：`prompt_mode: short` 触发 `SHORT_SYSTEM_PROMPT`（~300 字，无 references、无 SAR），让 GLM 有足够 tokens 产出 JSON 输出。实测 3-generator multi-agent 1 round 端到端跑通（519.9 秒）。
+
+### 6.6 配置层（`config.yaml`）
 
 ```yaml
 loop:
@@ -2982,49 +472,37 @@ loop:
     - name: A1_qed
       provider: MiniMax
       model: MiniMax-M3
-      prompt_role: qed           # 从 agents/prompts/{role}.j2 加载
+      prompt_role: qed           # 加载 agents/prompts/qed.j2
       temperature: 0.7
-      weight: 0.4
+      weight: 1.0
     - name: A2_vina
-      provider: deepseek
-      model: deepseek-chat
+      provider: glm_volcengine_coding
+      model: glm-5.3-flash
       prompt_role: vina
       temperature: 1.0
-      weight: 0.4
+      weight: 1.0
     - name: A3_synth
-      provider: kimi
-      model: kimi-k3
+      provider: qwen_aliyun
+      model: qwen3.8-flash
       prompt_role: synth
       temperature: 0.5
-      weight: 0.2
+      weight: 1.0
 
   judges:
     - name: J1_property
-      provider: MiniMax
-      model: MiniMax-M3
+      provider: judge_MiniMax
       prompt_role: judge_property
       temperature: 0.3
-      weight: 0.4
-    - name: J2_docking
-      provider: deepseek
-      model: deepseek-chat
-      prompt_role: judge_docking
-      temperature: 0.3
-      weight: 0.4
-    - name: J3_synthesis
-      provider: kimi
-      model: kimi-k3
-      prompt_role: judge_synthesis
-      temperature: 0.3
-      weight: 0.2
+      weight: 1.0
+    # + J2_docking / J3_synthesis 类似
 
   router:
     enabled: true
     experts:
       property_weak: prompt_qed_expert
       vina_weak:     prompt_vina_expert
-      sa_difficult: prompt_sa_expert
-      ok:           prompt_exploit_expert
+      sa_difficult:  prompt_sa_expert
+      ok:            prompt_exploit_expert
 
   debate:
     enabled: true
@@ -3035,120 +513,349 @@ loop:
 
   aggregation:
     dedup: canonical
-    diversity_floor: 0.7    # Tanimoto; > 时强制去重
-    top_n: 12               # 进入 evaluate 的总候选数
+    diversity_floor: 0.7   # Tanimoto > 0.7 → drop lower-ranked
+    top_n: 12
 
-  # Phase 4.5 仍适用
-  parents_block_enabled: true
+  parents_block_enabled: true   # Phase 4.5 selection operator
   parents_k: 3
 ```
 
-### 5. 实测如何判断是不是真 multi-agent
+### 6.7 实测如何判断是不是真 multi-agent
 
 | 检查 | 通过条件 |
 |---|---|
-| 至少 2 个 generator 并行调用同一 round | log 显示 `[multi-agent] round 1: A1+A2+A3 parallel` |
+| 至少 2 个 generator 并行调用同一 round | log 显示 `[multi_agent] round N: A1+A2+A3 parallel` |
 | 至少 2 个 judge 独立投票 | `multi_judge_vote.json` 含 ≥ 2 个 judge_scores |
-| Generator 与 critic 至少 1 次 push-back | log 含 `[debate] round X: A_i <-> C, debate_round=N` |
+| Generator 与 critic 至少 1 次 push-back | log 含 `[debate] round X: debate_round=N` |
 | 不同 generator 的 prompt 立场不同 | `config.yaml::generators[*].prompt_role` 至少 2 个不同值 |
 | （可选）不同模型 | `config.yaml::generators[*].model` 至少 2 个不同值 |
-| aggregation 强制多样性 | log 含 `[aggregator] dropped X candidates due to Tanimoto > 0.7` |
+| Aggregation 强制多样性 | log 含 `[aggregator] dropped X candidates due to Tanimoto > 0.7` |
 
-### 6. 不能说的（Multi-Agent 边界）
+### 6.8 不能说的（multi-agent 边界）
 
-1. **不能**声称 multi-agent 已证明优于 single-agent —— 真实 A/B 测（`--benchmark-id phase4_6_multi_agent`）尚未跑；当前仅离线 + 接线验证。
-2. **不能**把「同一个 LLM 跑 N 遍」当成 multi-agent —— 必须是模型 / prompt / 温度 / few-shot 至少一轴不同。
+1. **不能**声称 multi-agent 已证明优于 single-agent —— A/B 真实跑（`scripts/run_phase4_6_ablation.py`）做了对比，但 judges confidence 在 MockLLMClient 下都是 0，真实 confidence 比较需要更长时间的真实 LLM judge 调用。
+2. **不能**把"同一个 LLM 跑 N 遍"当成 multi-agent —— 必须是模型 / prompt / 温度 / few-shot 至少一轴不同。
 3. **不能**让多裁判共享同一个 system prompt —— 三个 judge 必须各有独立的视角定义。
-4. **不能**让 aggregation 层只做"简单拼接" —— 必须有多样性过滤 + 投票加权，否则多样性被均值化。
+4. **不能**让 aggregation 退化为简单拼接 —— 必须有多样性过滤 + 投票加权，否则多样性被均值化。
 5. **不能**用 multi-agent 配置绕过 confirmatory 门控 —— `efficacy_supported ∧ stable_improvement ∧ safety_noninferior` 仍适用。
-6. 部署多模型增加 token 成本（每个 generator 平均 ~2-3K tokens / round）。如果 token 预算紧张，至少用 **同模型 + 多 prompt 立场**作为最低门槛。
+6. 部署多模型增加 token 成本（每个 generator 平均 ~2-3K tokens / round）。如果 token 预算紧张，至少用 **同模型 + 多 prompt 立场** 作为最低门槛。
 
-### 7. 复现命令
+### 6.9 Marketplace / N-of-N 投票（Phase 4.6 阶段 13）
 
-```powershell
+`agents/marketplace.py` 提供两个互补机制：
+
+#### `allocate_budgets(candidates, total_budget, ...)`（trader 模型）
+
+每个候选按 softmax(score) 分配下一轮 generator 调用预算。`min_weight=0.05` 防止低分候选被饿死；`sum(allocated) == total_budget` 严格守恒。
+
+```python
+allocations = allocate_budgets([
+    {"smiles": "CCO", "score": 0.9},
+    {"smiles": "CCN", "score": 0.7},
+], total_budget=10)
+# → [BudgetAllocation(smiles='CCO', weight=0.55, allocated=6),
+#    BudgetAllocation(smiles='CCN', weight=0.45, allocated=4)]
+```
+
+#### `select_top_k_by_vote(candidates, k)`（N-of-N 投票）
+
+每个候选按 ECFP4 Tanimoto 相似度给其它候选投票。结构相似的候选互相加权；不相似的互相抵消。**苯 + 苯酚**会互相加持超过**哌啶**（前者结构相近，后者孤立）。
+
+```python
+top, stats = select_top_k_by_vote([
+    {"smiles": "c1ccccc1", "score": 1.0},       # benzene
+    {"smiles": "c1ccc(O)cc1", "score": 1.0},    # phenol (similar)
+    {"smiles": "CN1CCCC1", "score": 1.0},        # piperidine (dissimilar)
+], k=1)
+# → top[0].smiles in ("c1ccccc1", "c1ccc(O)cc1") (NOT piperidine)
+```
+
+### 6.10 复现命令
+
+```bash
 # 1) 离线 smoke：multi-agent 接线
 python scripts/smoke_multi_agent.py
 
-# 2) 单 round multi-agent 真实运行（需要第二/第三个模型 API key）
-python scripts/run_multi_agent_round.py --round-id 1 --parents-block
+# 2) 跑 mutate 自带的离线一致性（无 LLM，无 docking）
+python -c "from tools.mutate import offline_validation; print(offline_validation())"
 
-# 3) 完整 multi-agent 实验（>= 4 rounds, multi-model）
-python scripts/run_benchmark.py --matrix experiments/multi_agent_matrix.yaml --profile multi_agent --benchmark-id phase4_6_multi_agent
+# 3) 真 multi-agent 1 round
+python scripts/run_multi_agent_round.py --n-per-generator 2 \
+    --out runs/samples/multi_agent_round.json
 
-# 4) 全量回归
+# 4) 真 multi-agent 多 round（router → eval → multi-judge → debate → 下一轮）
+python scripts/run_full_multi_agent.py --n-per-generator 1 --max-rounds 2 \
+    --out runs/samples/multi_agent_full.json
+
+# 5) A/B 验证 multi-agent vs single-agent
+python scripts/run_phase4_6_ablation.py --n-per-generator 1 --max-rounds 1 \
+    --out runs/samples/phase4_6_ablation.json
+
+# 6) Dashboard multi-agent 模式
+python agent_dashboard.py
+# 在创建任务页面勾选 "multi_agent" 即可
+
+# 7) 全量回归
 python -m pytest -q
+# 515 passed, 1 skipped
 ```
 
-### 8. 历史与一致性
+### 6.11 历史（multi-agent 章节）
 
-本仓库从一开始的设计目标就是 multi-agent（[PLAN.md](PLAN.md) 阶段 3 标题：扩展到 4-Agent）。中间实现进度暂时退化为单 agent 循环（AutoGPT/ReAct 风格），但**README 标题始终保留 `Multi-Agent Iterative Loop`**，**`config.yaml::generators:` 列表始终保留扩展位**。本设计节是 2026-09-29 的正式 multi-agent 实施规划，与现有 Phase 4.5 PARENTS 块正交 —— PARENTS 块是 selection operator，所有 multi-agent 生成器都共享同一组 parents。
+- Phase 0-3（2026-09-13 之前）：单 agent loop，`loop.py` 主体
+- Phase 4.1（2026-09-17 起）：WorkingMemory + FailedLigandSet + LoopController + HITL
+- Phase 4.4（2026-09-27）：记忆校准 + 内存可视化 + 立体化学 + 安全口径指标 + 随机胜率门槛 + ADMET 扩展
+- Phase 4.5（2026-09-27）：Selection Operator Bridge（PARENTS 块）
+- **Phase 4.6（2026-09-29）**：Multi-Agent 完整实施
+  - 阶段 1-3：README + config + 协调核心
+  - 阶段 4-5：prompt 模板 + 对抗辩论 + 多 model provider 占位
+  - 阶段 6：API 验证 + 真实端到端 run
+  - 阶段 7：end-to-end wiring（per-gen focus + evaluate + multi-judge + debate）
+  - 阶段 8：完整 loop 跑通 + README 更新
+  - 阶段 9：Dashboard multi-agent 接入
+  - 阶段 10：Generator re-call inside debate round
+  - 阶段 11：GLM short-prompt path（3-generator multi-agent）
+  - 阶段 12：A/B ablation runner
+  - 阶段 13：Marketplace / N-of-N 投票
 
 ---
 
-## 2026-09-29：Phase 4.6 — Multi-Agent 实施规划（实际进度）
+## 7. API 验证状态
 
-把「README 上说 multi-agent」变成「代码上跑 multi-agent」。本节是路线图，**部分阶段已完成**。
+| Key | 状态 | 端点 | 模型 |
+|---|---|---|---|
+| `MiniMax_API_KEY` | ✅ OK | `https://api.minimaxi.com/v1` | `MiniMax-M3` |
+| `MiniMax_API_KEY_SECONDARY` | ✅ OK | `https://api.minimaxi.com/v1` | `MiniMax-M3` |
+| `GLM_API_KEY` | ✅ OK | `https://ark.cn-beijing.volces.com/api/coding/v3` | `glm-5.3-flash` |
+| `QWEN_API_KEY` | ✅ OK | `https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1` | `qwen3.8-flash` |
+| `DEEPSEEK_API_KEY` | ⚠️ **qwen-only** | 实际是 qwen3.8-flash 的另一个别名（同 key 字符串） |  |
 
-### 阶段 1（2026-09-29，本轮）✅
+`scripts/check_all_api_keys.py` 自动探测所有 `*_API_KEY` 环境变量，对每个 key 尝试一组候选 `(base_url, model)`，直到找到一个 OK（HTTP 200 + 有效 JSON）。输出每个 key 的 working endpoint 和所有 attempt 列表。
 
-- README 改回 multi-agent 叙事（标题 / 项目目标 / 架构 / 关键设计原则）
-- 新增「Multi-Agent 设计节」
-- 新增 `config.yaml::multi_agent.{generators, judges, router, debate, aggregation}` 预留位
-- 新增 `agents/router.py`（专家路由规则）
-- 新增 `agents/multi_agent.py`（heterogeneity / dedup+聚合 / multi-judge 投票 / debate 触发 / config validation）
+### 7.1 MiniMax-M3 的特殊处理
 
-### 阶段 2（2026-09-29）✅
+MiniMax-M3 在响应中把 reasoning 包裹在 `<think>...</think>` 块里再输出 JSON。`check_all_api_keys.py` 和 generator 解析都先 `re.sub` 掉 `<think>` 块再解析 JSON。
 
-- `loop_multi_agent.py::call_multi_generators` 实现真正的逐 generator 调用（per-generator `prompt_role` / `model` / `temperature`）
-- `agents/judge.py::judge_round` 已是 multi-judge-ready（每个 generator 走 judge 一次，然后用 `combine_judge_votes` 加权合并）
-- 离线 multi-agent 测试 35 个（`tests/test_multi_agent.py`）+ 18 个 (`tests/test_loop_multi_agent.py`)
+### 7.2 GLM-5.3-flash 的 short-prompt 必要性
 
-### 阶段 3（2026-09-29）✅
+GLM-5.3-flash 在长 prompt（5000+ 字符的 EGFR brief）下，4096 max_tokens 中 4091 用于 reasoning，`content=""`。配置 `prompt_mode: short` 后切到 `SHORT_SYSTEM_PROMPT`（~300 字符），正常产出 SMILES。
 
-- 接第二/第三个 provider：GLM via Volcengine Coding Plan + Qwen via Alibaba Cloud Token Plan（连通性 probe 在 `runs/samples/all_api_keys_probe_20260929.json`）
-- 真实 multi-agent 端到端：`scripts/run_multi_agent_round.py`（单 round）+ `scripts/run_full_multi_agent.py`（多 round 全链路 router → evaluate → multi-judge → debate → 下一轮 focus）
-- 2-generator / 2-judge 真实 LLM 跑通（MiniMax + Qwen，详见 `runs/samples/multi_agent_full_20260929.json`）
-- 对抗辩论触发条件 + evidence ID 强校验（`agents/debate.py`）
-- GLM-5.3-flash 已实测：reasoning_tokens 烧光导致 content 为空；保留 provider 块但从 multi_agent.* 注释，等 short-prompt path
-- **未跑真实 A/B**：multi-agent vs single-agent baseline 仍是下一步
+---
 
-### 阶段 4（待启动）
+## 8. Local Dashboard / API
 
-- 多模型 marketplace（market mechanism）：每个候选分子 = 一个 trader，根据评分"竞价"下一轮预算
-- 异构生成器的 N-of-N 投票机制
-- Generator re-call inside an active debate round（当前 debate 触发后只把 critique 折进下一轮 focus，不真调 generator）
-- 接入 `agent_task.py` / `agent_dashboard.py`（让用户能在 dashboard 选 multi-agent / single-agent 模式）
+### 8.1 Dashboard
 
-### 真实跑通证据（2026-09-29）
+```bash
+python agent_dashboard.py
+# 打开 http://127.0.0.1:8765
+```
+
+特性：
+- 创建任务时勾选 **multi_agent** 即启用 multi-agent 模式（要求 `config.yaml::loop.multi_agent.enabled=true`）
+- multi-agent 模式会启动 `scripts/run_multi_agent_for_dashboard.py` 作为 worker，写日志到 `task_dir/multi_agent_log.json`
+- Dashboard 主页和 snapshot 视图自动附加 multi-agent 日志（`view["multi_agent"]`）
+- 单 agent 模式仍是 `agent_task.py resume` 路径
+
+### 8.2 FastAPI
+
+```bash
+uvicorn api:app --host 127.0.0.1 --port 8766
+```
+
+端点：
+- `POST /runs` — 创建任务（接受 `multi_agent: bool` 字段）
+- `GET /runs/{task_id}` — 任务状态
+- `GET /runs/{task_id}/candidates` — 候选列表
+- pause / resume / cancel / approvals — 控制命令
+
+⚠️ 仅绑定 127.0.0.1，不要暴露到公网（无鉴权）。
+
+---
+
+## 9. 受控实验矩阵
+
+```bash
+# 1) Offline 烟雾（< 1 秒）：验证 ExperimentRunner 端到端
+python scripts/run_benchmark.py --profile smoke --mock --no-dock --benchmark-id smoke_check
+
+# 2) 真实 A/B/C 消融（3 组 × 3 重复 × 3 轮 × 5 候选 ≈ 70 min）
+python scripts/run_benchmark.py \
+    --matrix experiments/matrix.yaml \
+    --profile screening \
+    --benchmark-id real_ablation_v4
+
+# 3) Confirmatory：reflection vs reflection_memory（10 次重复 + futility 早停）
+python scripts/run_benchmark.py \
+    --matrix experiments/confirmatory_matrix_v4.yaml \
+    --profile confirmatory \
+    --benchmark-id confirmatory_v4
+
+# 4) 中途挂掉？用 --resume 接着跑
+python scripts/run_benchmark.py \
+    --matrix experiments/confirmatory_matrix_v4.yaml \
+    --profile confirmatory \
+    --benchmark-id confirmatory_v4 \
+    --resume
+
+# 5) Phase 4.6 multi-agent vs single-agent ablation
+python scripts/run_phase4_6_ablation.py --n-per-generator 1 --max-rounds 1 \
+    --out runs/samples/phase4_6_ablation.json
+```
+
+报告写入 `<benchmark_dir>/benchmark_report.json` 与 `benchmark_report.md`，包含 Group summary、vs baseline 主对比、judge 投票分布、被排除 attempt 的原因、以及 confirmatory 决策。
+
+---
+
+## 10. 测试基线
+
+```text
+515 passed, 1 skipped   # 离线回归（最后 commit 66c5f2a）
+```
+
+跳过的 1 个是 `tests/test_mutate.py::test_mutate_deterministic_with_seed`，是 RDKit BRICSBuild 的随机性偶发问题（RDKit 内部顺序不完全确定），单独跑通常通过，与 multi-agent 改造无关。
+
+测试增量（Phase 4.6 起）：
+- `tests/test_multi_agent.py`（35 tests）：heterogeneity / aggregate / multi-judge vote / debate trigger / config validation
+- `tests/test_loop_multi_agent.py`（18 tests）：config readers / maybe_route / call_multi_generators / aggregate_round / run_multi_agent_loop entry/exit
+- `tests/test_loop_multi_agent_stage7.py`（9 tests）：build_per_generator_focus / maybe_debate / evaluate_aggregated_candidates
+- `tests/test_prompts.py`（7 tests）：load / render / expert prompts
+- `tests/test_debate.py`（16 tests）：extract_evidence_ids / validate_critic_turn / should_terminate / run_debate
+- `tests/test_short_prompt.py`（6 tests）：SHORT_SYSTEM_PROMPT / prompt_mode 切换
+- `tests/test_dashboard_multi_agent.py`（13 tests）：flag 接受 / snapshot / launch worker 选择
+- `tests/test_debate_recall.py`（4 tests）：REVISION REQUEST 注入 / 失败降级 / 重新聚合
+- `tests/test_marketplace.py`（16 tests）：allocate_budgets / select_top_k_by_vote
+
+---
+
+## 11. 真实跑通证据
+
+### 11.1 Phase 4.6 stage 7-8：完整 multi-agent 2 rounds
 
 ```text
 Multi-agent full loop: n_per_generator=1 max_rounds=2 mock=False
+
 === Round 0 ===
   [router] active expert: prompt_exploit_expert
   [aggregator] input=2 after_dedup=2 dropped_diversity=0 kept=2
-  [evaluate] n_total=2 n_valid=2 best_property=None best_vina=None
-  [judges] combined=0.000 dispersion=0.000 vote=[J1=0.0, J2=0.0]
-  [judges] next_focus: Replace the basic tertiary-amine propoxy tail (piperidinylpropoxy in [0], morpholinylpropoxy in [1]) with a neutral 2-me...
+  [evaluate] n_total=2 n_valid=2 best_property=None best_vina=None best_safe_vina=None
+  [judges] combined=0.000 dispersion=0.000 vote=[(J1_property, 0.0), (J2_synthesis, 0.0)]
+  [judges] next_focus: Replace the basic tertiary-amine propoxy tail ...
   [debate] round 0 trigger=low_confidence(min=0.000<0.3) critic=J1_property
+
 === Round 1 ===
   [router] active expert: prompt_exploit_expert
   [aggregator] input=2 after_dedup=1 dropped_diversity=0 kept=1
-  [evaluate] n_total=1 n_valid=1 best_property=None best_vina=None
-  [judges] combined=0.815 dispersion=0.035 vote=[J1=0.85, J2=0.78]
-  [judges] next_focus: Replace the C7 2-methoxyethoxy on [0] with 3-morpholinopropoxy (gefitinib pattern) to add a protonatable morpholine N fo...
+  [evaluate] n_total=1 n_valid=1
+  [judges] combined=0.815 dispersion=0.035 vote=[(J1_property, 0.85), (J2_synthesis, 0.78)]
+  [judges] next_focus: Replace the C7 2-methoxyethoxy on [0] with 3-morpholinopropoxy ...
+
+Total wall time: 153.5 s
 ```
 
-注意 Round 0 judges 都返回 confidence=0（mini-judge prompt_role wiring 在 mock 模式下的占位）；Round 1 真实 LLM 投票 confidence=0.85/0.78、dispersion=0.035，next_focus 是真实生成内容。
+Round 0 judges 都返回 confidence=0（MiniMax-M3 的 judge 路径在 mock 模式下走 MockLLMClient 占位）；Round 1 真实 LLM 投票 confidence=0.85/0.78、dispersion=0.035，next_focus 是真实生成内容。
 
-### 测试基线
+### 11.2 Phase 4.6 stage 11：3-generator multi-agent 1 round
 
 ```text
-505 passed, 1 skipped   # 离线回归（含 9 个 stage 7 wiring 测试 + 23 个 stage 4-5 prompt+debate 测试）
+Multi-agent full loop: n_per_generator=1 max_rounds=1 mock=False
+[multi_agent] 3 generators | 3 judges | max_rounds=1
+
+=== Round 0 ===
+  [router] active expert: prompt_exploit_expert
+  [aggregator] input=3 after_dedup=2 dropped_diversity=0 kept=2
+  [judges] combined=0.000 dispersion=0.000
+  vote=[(J1_property, 0.0), (J2_docking, 0.0), (J3_synthesis, 0.0)]
+  [debate] round 0 trigger=low_confidence
+  [debate] re-aggregated: input=6 after_dedup=4 kept=3
+
+Total wall time: 519.9 s
 ```
 
-### 不能说的
+3 generators (MiniMax + GLM + Qwen) 都产生 SMILES，aggregator 去重保留 2，debate 触发后 re-aggregator 保留 3（包含辩论修订）。
 
-1. **不能**在 multi-agent 没跑真实 A/B 之前声称优于 single-agent
-2. **不能**让"同模型 + 同 prompt"伪装成 multi-agent
-3. **不能**让多裁判共享同一个 system prompt
-4. **不能**让 aggregation 退化为简单拼接
+### 11.3 Phase 4.6 stage 12：A/B ablation
+
+```text
+--- ARM 1: single-agent (1 generator, 1 judge) ---
+  elapsed=12555.7 ms (12.6 s)
+
+--- ARM 2: multi-agent (3 generators, 3 judges, debate) ---
+  elapsed=683136.3 ms (11.4 min)
+
+  - single-agent elapsed=12.6 s vs multi-agent elapsed=683.1 s (delta=670.6 s)
+  - single-agent combined_score=0.0 vs multi-agent combined_score=0.0
+  - multi-agent debate_triggered=True, single-agent=False
+```
+
+multi-agent 比 single-agent 慢 **54×**（3 generators + 3 judges + debate）。judges confidence 都为 0（MockLLMClient 占位限制）；真实 confidence 比较需要更长时间的真实 LLM judge 调用（Phase 4.7 follow-up）。
+
+### 11.4 MiniMax 连通性（前置门槛）
+
+```text
+schema_version: 1
+attempted: 3
+successful: 3
+clients_created: 1
+client_closed_explicitly: true
+retried_requests: 0
+retried: false (sequence 1, 2, 3)
+schema_valid: true (returned_sequence 1, 2, 3)
+latency_ms: 1357.733, 847.44, 650.559
+```
+
+3/3 通过；任何分子实验前必须 3/3 通过。
+
+---
+
+## 12. 路线图
+
+### 12.1 已完成（Phase 4.6 全 13 阶段）
+
+- ✅ 多角色 multi-agent 协作（异构生成器 + 多裁判 + 对抗辩论 + 专家路由 + 评估器）
+- ✅ Selection Operator Bridge（PARENTS 块，Phase 4.5）
+- ✅ GLM-5.3-flash short-prompt 路径（Phase 4.6 stage 11）
+- ✅ Dashboard multi-agent 接入（Phase 4.6 stage 9）
+- ✅ Marketplace / N-of-N 投票（Phase 4.6 stage 13）
+- ✅ A/B ablation runner（Phase 4.6 stage 12）
+- ✅ End-to-end multi-agent loop 跑通（Phase 4.6 stage 7-8）
+
+### 12.2 Phase 4.7 候选（按 ROI 排序）
+
+1. **MiniMax-M3 judge 路径在 MockLLMClient 下的 confidence 占位修复**（小改动，A/B 验证可信度）
+2. **Real A/B 验证 multi-agent vs single-agent**（科学价值最高，需要 n ≥ 3 repeats + 真实 LLM judge budget）
+3. **Marketplace 接入 run_multi_agent_loop**（让 trader budget + N-of-N 投票真正影响下一轮）
+4. **GLM-5.3-flash judge 路径同样走 short-prompt**（让 3-judge multi-judge 全部可用）
+5. **deepseek-v3 / kimi-k3 真正接入**（需要新 API key，但 Aliyun Token Plan 已有 key 在 QWEN 上成功）
+
+---
+
+## 13. 历史时间线
+
+保留旧的中部节作为时间线（不让外部读 README 的人失去上下文）。完整目录：
+
+| 时间 | Phase | 描述 |
+|---|---|---|
+| 2026-09-13 | 0 | 环境准备 + RDKit / Vina / MiniMax 验证 |
+| 2026-09-13 | 1 | 工具封装（validate_mol / admet_score / dock_score / diversity） |
+| 2026-09-15 | 1.5 | 第一阶段可信度修复（PHASE_1_CREDIBILITY.md） |
+| 2026-09-17 | 2 | 2-Agent MVP 闭环（generator → evaluator） |
+| 2026-09-18 | 2.5 | Persistent Harness（agent_task.py / Dashboard）+ RuleStore 4 类 |
+| 2026-09-19 | 3 | 多臂 A/B/C 消融（benchmarks/real_ablation_v3_20260915） |
+| 2026-09-19 | 3.5 | Confirmatory 实验（do_not_approve 决策） |
+| 2026-09-20 | v4 | 修复 transport + 真实端到端 multi-agent |
+| 2026-09-27 | 4.4 | 记忆校准 + 内存可视化 + 立体化学 + ADMET 扩展 |
+| 2026-09-27 | 4.5 | Selection Operator Bridge（PARENTS 块） |
+| 2026-09-29 | 4.6 | **完整 Multi-Agent 实施**（阶段 1-13） |
+
+详细历史见 `docs/PROJECT_HANDBOOK.md`（chapter 41-42 是 Phase 4.5/4.6）、`docs/PHASE_4_PLAN.md`、`docs/REVIEW_MINIMAX_ADVICE_20260917.md` 和 `docs/EXPERIMENT_MATRIX.md`。
+
+旧 README 标题"Multi-Agent Iterative Loop for AI-Driven Drug Design (AIDD)"保留作为原始项目定位；本 README 不声称回退到 single-agent。
+
+---
+
+## 14. 许可
+
+MIT © 2026 LeslieDian
+
+详见 [LICENSE](LICENSE)。
