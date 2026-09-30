@@ -1,0 +1,164 @@
+{
+  "probed_at": 1790779694.1903982,
+  "n_total": 4,
+  "n_ok": 3,
+  "results": [
+    {
+      "env": "DEEPSEEK_API_KEY",
+      "ok": true,
+      "working": {
+        "label": "deepseek-direct",
+        "base_url": "https://api.deepseek.com/v1",
+        "model": "deepseek-chat",
+        "status": "ok",
+        "http_status": 200,
+        "latency_ms": 1988.153,
+        "response_received": true,
+        "schema_valid": true,
+        "response_preview": "{\"status\":\"ok\",\"sequence\":7}",
+        "error": ""
+      },
+      "attempts": [
+        {
+          "label": "deepseek-direct",
+          "base_url": "https://api.deepseek.com/v1",
+          "model": "deepseek-chat",
+          "status": "ok",
+          "http_status": 200,
+          "latency_ms": 1988.153,
+          "response_received": true,
+          "schema_valid": true,
+          "response_preview": "{\"status\":\"ok\",\"sequence\":7}",
+          "error": ""
+        }
+      ]
+    },
+    {
+      "env": "GLM_API_KEY",
+      "ok": false,
+      "working": null,
+      "attempts": [
+        {
+          "label": "zhipu-glm4flash",
+          "base_url": "https://open.bigmodel.cn/api/paas/v4",
+          "model": "glm-4-flash",
+          "status": "auth_error",
+          "http_status": 401,
+          "latency_ms": 448.981,
+          "response_received": false,
+          "schema_valid": false,
+          "response_preview": "",
+          "error": "Error code: 401 - {'error': {'code': '401', 'message': '令牌已过期或验证不正确'}}"
+        },
+        {
+          "label": "zhipu-glm4plus",
+          "base_url": "https://open.bigmodel.cn/api/paas/v4",
+          "model": "glm-4-plus",
+          "status": "auth_error",
+          "http_status": 401,
+          "latency_ms": 426.571,
+          "response_received": false,
+          "schema_valid": false,
+          "response_preview": "",
+          "error": "Error code: 401 - {'error': {'code': '401', 'message': '令牌已过期或验证不正确'}}"
+        },
+        {
+          "label": "volcengine-plan-glm53",
+          "base_url": "https://ark.cn-beijing.volces.com/api/plan/v3",
+          "model": "glm-5.3",
+          "status": "auth_error",
+          "http_status": 401,
+          "latency_ms": 476.832,
+          "response_received": false,
+          "schema_valid": false,
+          "response_preview": "",
+          "error": "Error code: 401 - {'error': {'code': 'AuthenticationError', 'message': 'The API key or AK/SK in the request is missing o"
+        },
+        {
+          "label": "volcengine-plan-glm53flash",
+          "base_url": "https://ark.cn-beijing.volces.com/api/plan/v3",
+          "model": "glm-5.3-flash",
+          "status": "auth_error",
+          "http_status": 401,
+          "latency_ms": 464.024,
+          "response_received": false,
+          "schema_valid": false,
+          "response_preview": "",
+          "error": "Error code: 401 - {'error': {'code': 'AuthenticationError', 'message': 'The API key or AK/SK in the request is missing o"
+        },
+        {
+          "label": "volcengine-coding-glm53flash",
+          "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
+          "model": "glm-5.3-flash",
+          "status": "schema_invalid",
+          "http_status": 200,
+          "latency_ms": 2188.32,
+          "response_received": true,
+          "schema_valid": false,
+          "response_preview": "{\"status",
+          "error": ""
+        }
+      ]
+    },
+    {
+      "env": "MINIMAX_API_KEY",
+      "ok": true,
+      "working": {
+        "label": "minimax-tokenplan-direct",
+        "base_url": "https://api.minimaxi.com/v1",
+        "model": "MiniMax-M3",
+        "status": "ok",
+        "http_status": 200,
+        "latency_ms": 2896.388,
+        "response_received": true,
+        "schema_valid": true,
+        "response_preview": "<think>The user wants strict JSON output.</think>\n\n{\"status\"",
+        "error": ""
+      },
+      "attempts": [
+        {
+          "label": "minimax-tokenplan-direct",
+          "base_url": "https://api.minimaxi.com/v1",
+          "model": "MiniMax-M3",
+          "status": "ok",
+          "http_status": 200,
+          "latency_ms": 2896.388,
+          "response_received": true,
+          "schema_valid": true,
+          "response_preview": "<think>The user wants strict JSON output.</think>\n\n{\"status\"",
+          "error": ""
+        }
+      ]
+    },
+    {
+      "env": "QWEN_API_KEY",
+      "ok": true,
+      "working": {
+        "label": "aliyun-tokenplan-qwen38flash",
+        "base_url": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+        "model": "qwen3.8-flash",
+        "status": "ok",
+        "http_status": 200,
+        "latency_ms": 1787.953,
+        "response_received": true,
+        "schema_valid": true,
+        "response_preview": "{\"status\":\"ok\",\"sequence\":7}",
+        "error": ""
+      },
+      "attempts": [
+        {
+          "label": "aliyun-tokenplan-qwen38flash",
+          "base_url": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+          "model": "qwen3.8-flash",
+          "status": "ok",
+          "http_status": 200,
+          "latency_ms": 1787.953,
+          "response_received": true,
+          "schema_valid": true,
+          "response_preview": "{\"status\":\"ok\",\"sequence\":7}",
+          "error": ""
+        }
+      ]
+    }
+  ]
+}
