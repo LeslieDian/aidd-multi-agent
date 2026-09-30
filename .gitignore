@@ -321,3 +321,17 @@ benchmarks/
 data/prepared/*.meeko.json
 
 /data/prepared/
+
+# Chainlit runtime files (config.toml is committed; runtime DB / sessions are not)
+.chainlit/.langchain.db
+.chainlit/.langchain.db-journal
+.chainlit/.langchain.db-shm
+.chainlit/.langchain.db-wal
+.chainlit/feedback.sqlite
+.chainlit/feedback.sqlite-journal
+.chainlit/feedback.sqlite-shm
+.chainlit/feedback.sqlite-wal
+.chainlit/chat_sessions/
+.chainlit/sessions/
+.chainlit/traces/
+.chainlit/file_storage/

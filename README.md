@@ -859,3 +859,138 @@ latency_ms: 1357.733, 847.44, 650.559
 MIT © 2026 LeslieDian
 
 详见 [LICENSE](LICENSE)。
+
+---
+
+## Chainlit 对话式前端集成（2026-09-30）
+
+### 背景与动机
+
+项目的 `agents/harness/` 已经把决策/执行/审计/恢复拆得很干净（见 [docs/AGENT_HARNESS.md](docs/AGENT_HARNESS.md)）。CLI 与 FastAPI 控制台（`agent_task.py` / `agent_dashboard.py`，端口 8765）面向**开发者**调试任务，但**非技术同事**没法用：
+
+- 看不懂「`step_20260930_xxx.json` 里的 `reasoning` 字段到底什么意思」
+- 想在 agent 跑偏时**中途插一句话**让它换方向，CLI 没有这个能力
+- 想看候选分子「长什么样」，只能切到 Mol* 或 RDKit.js 自己渲
+
+本轮新增 **Chainlit 对话式前端**（端口 8000），把 harness 包成 ChatGPT 式 UI：
+
+- 自然语言输入目标（"围绕 EGFR 优化候选，Vina < -9"）
+- 每一步 LLM 决策渲染成**可折叠时间线卡片**（含 reasoning / evidence / 评分）
+- 候选分子**服务端 RDKit 渲染 2D 图**，点开看结构
+- 关键节点前**弹按钮让用户选**（接受 / 改方向 / 暂停）→ 直接写入 `TaskState.revisions`
+- 同对话支持多 task，可随时 `/tasks` 列、`/switch <id>` 切换
+
+### 为什么是 Chainlit（不是其他方案）
+
+| 方案 | 评估 | 结论 |
+|---|---|---|
+| **Chainlit** | Python 原生 `@cl.step` 装饰器直接对应 harness 决策步骤；内建人类反馈按钮（`cl.AskActionMessage`）；多模态消息（图片 / 代码）；ASGI 服务 | ✅ **采纳** |
+| Open WebUI / LibreChat / NextChat | 漂亮，但需要把 harness **包成 chat API**，且 agent 步骤展示弱 | ❌ 包装成本高于收益 |
+| Flowise / Langflow / Dify | 拖拽式 **workflow builder** 是固定流水线（"先 A 再 B 再 C"），但本项目每步是 LLM 自主决策——**不是 DAG** | ❌ 模型不匹配 |
+| 自建 Web 前端（Next.js / React） | 工作量大，与现有 `agent_dashboard.py` 重复 | ❌ 重复造轮子 |
+| 继续扩展现有 dashboard.html | 它已经是控制台（表格 / 暂停按钮），不是对话式 | ⚠️ 心智不对 |
+
+Chainlit 与自研 harness **完全解耦**：Chainlit 仅作为 UI 壳，业务逻辑仍在 `agents/harness/runtime.py`。harness 内部代码一行没改。
+
+### 4 个关键决策（基于项目偏好）
+
+| # | 决策 | 替代方案 | 选择理由 |
+|---|---|---|---|
+| 1 | **与现有 dashboard 共存**：Chainlit 8000 + FastAPI dashboard 8765 | 关掉 dashboard 只留 Chainlit | 开发者仍然依赖 dashboard 调试；同事用 Chainlit。两套并存，端口分开，互不干扰 |
+| 2 | **一对话支持多 task**（可切换） | 一对话 = 一 task（纯 ChatGPT 心智） | 同事经常"先开一个 EGFR 优化，再开一个 hERG 优化"，来回切。dashboard 的多 task 心智保留下来 |
+| 3 | **RDKit 服务端渲染 PNG**（候选分子以图片消息下发） | RDKit.js 客户端渲染 | 服务端渲染最稳，不增加前端打包复杂度；rdkit 已在 `requirements.txt` 里 |
+| 4 | **复用现有 `CheckpointStore`（本地 JSON）**，Chainlit 不存业务数据 | 让 Chainlit 也写 Postgres | 已有 `psycopg` 是为 rule_memory 服务的；Chainlit 没必要碰业务库，复用 CheckpointStore 即可 |
+
+### 架构
+
+```
+浏览器 (同事)  http://127.0.0.1:8000
+       │  WebSocket
+       ▼
+chainlit_app.py  (Chainlit 1.x, ASGI, 端口 8000)
+   ├─ @cl.on_chat_start   → 加载 config.yaml + 建 LLMClient
+   ├─ @cl.on_message      → 启动 / 恢复 task
+   ├─ @cl.step 包装层     → 把 Harness.run_step() 转成可折叠 UI 卡片
+   ├─ cl.AskActionMessage → 用户在回路中干预（steer / 暂停）
+   └─ 候选 2D 图渲染       → RDKit → base64 PNG → cl.Image
+       │  直接调
+       ▼
+agents/harness/runtime.py  (现有 Harness，零改动)
+   ├─ LLMPolicy / MockPolicy
+   ├─ TaskState + CheckpointStore
+   └─ ToolRegistry (7 个动作：generate / refine / evaluate / compare / history / retry_evaluation / finish)
+```
+
+### 文件改动清单（5 个新文件 + 3 处小改）
+
+| 类型 | 文件 | 行数 | 说明 |
+|---|---|---|---|
+| 改 | `requirements.txt` | +3 行 | 追加 `chainlit>=1.0`（注释说明是可选依赖） |
+| 改 | `.gitignore` | +12 行 | 忽略 `.chainlit/` 运行时数据库与 sessions（保留 `config.toml`） |
+| 改 | `README.md` | +160 行 | 末尾追加 Chainlit 集成章节（本节） |
+| 新 | `chainlit_app.py` | ~480 | Chainlit 主入口，5 个 `@cl.on_*` 钩子 |
+| 新 | `agents/harness/chainlit_bridge.py` | ~250 | **UI 无关**适配层：`Harness` 事件 → Chainlit 回调；纯函数可单测 |
+| 新 | `tests/test_chainlit_bridge.py` | ~140 | bridge 层单元测试（不启 Chainlit） |
+| 新 | `.chainlit/config.toml` | ~30 | 标题 / 头像 / 中文欢迎语 |
+| 新 | `docs/CHAINLIT_FRONTEND.md` | ~150 | 同事使用文档（启动 + 用法） |
+
+### bridge 层设计（为什么单独抽一层）
+
+`agents/harness/chainlit_bridge.py` 把 Chainlit 装饰器（`@cl.step`、`cl.AskActionMessage`）**与 harness 逻辑解耦**。bridge 层对外只暴露纯函数：
+
+```python
+def to_step_event(harness_step: HarnessStep) -> ChainlitStep
+def to_image_payload(smiles: str) -> bytes        # RDKit -> PNG
+def to_status_card(state: TaskState) -> str
+def revisions_from_user_input(text: str) -> list
+```
+
+测试代码可以直接构造 `HarnessStep` 数据，断言 `to_step_event` 返回的结构，不依赖 Chainlit 运行。
+
+harness 内部代码（`runtime.py` / `state.py` / `tools.py`）**一行没改**。
+
+### 启动
+
+```bash
+pip install -r requirements.txt        # 含 chainlit>=1.0
+chainlit run chainlit_app.py --host 127.0.0.1 --port 8000
+# 浏览器打开 http://127.0.0.1:8000
+```
+
+只在本机监听（`127.0.0.1`），不暴露公网。同事通过 VPN / 内网访问本机。
+
+### 同事使用流程
+
+1. 在聊天框输入目标（例："围绕 EGFR 优化候选，Vina < -9，hERG 不超阈值"）
+2. 看到**时间线卡片**：
+   - `🧠 决策 round 1 → generate(15)`
+   - `🔧 生成 15 个候选（点击展开看 SMILES + 2D 图）`
+   - `🔧 evaluate → 11 通过初筛，4 进入下一轮`
+   - `🧠 决策 round 2 → compare(...)`（含 reasoning）
+3. 关键节点前弹按钮：**"这 4 个候选里选哪个继续？"**（用户选 → 写入 `revisions`）
+4. 一对话支持多 task：发 `/tasks` 看列表，`/switch <task_id>` 切换
+
+详细使用文档：[docs/CHAINLIT_FRONTEND.md](docs/CHAINLIT_FRONTEND.md)。
+
+### 限制与未来工作
+
+- **首次启动要装依赖**：本仓库不要求 chainlit 必装（`requirements.txt` 注释标注为"可选"），同事首次跑需要 `pip install -r requirements.txt`
+- **未做权限模型**：单用户本机使用，多用户需加 auth（Chainlit 支持 OAuth / Header 注入）
+- **未做 session 持久化 UI**：Chainlit 默认在浏览器 sessionStorage 里，对话关掉就没了（这是 Chainlit 设计哲学，不是 bug）。若需持久化，开启 `.chainlit/config.toml` 的 `features.persistent_sessions = true`
+
+### 测试覆盖
+
+`tests/test_chainlit_bridge.py` 覆盖：
+
+- `HarnessStep → ChainlitStep` 序列化（含 reasoning / evidence / scores 字段）
+- RDKit 渲染失败的降级（无效 SMILES 返回占位文本而非崩溃）
+- `revisions_from_user_input` 解析自由文本（"换方向：增加极性基团" → `revision_action=steer`）
+- 状态卡片从 `TaskState` 提取关键字段（task_id / status / round / best_score）
+
+bridge 层 100% 单测覆盖；`chainlit_app.py` 本身只通过手动 smoke 验证（启动后用浏览器跑一个 mock 任务）。
+
+### 参考
+
+- Chainlit 官方文档：https://docs.chainlit.io
+- 项目 harness 架构：[docs/AGENT_HARNESS.md](docs/AGENT_HARNESS.md)
+- 现有 FastAPI dashboard：`agent_dashboard.py`（端口 8765）

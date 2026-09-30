@@ -36,3 +36,8 @@ httpx>=0.27
 
 # PostgreSQL: synchronous psycopg 3 driver (no connection pool)
 psycopg[binary]>=3.2,<4
+
+# 可选: Chainlit 对话式前端 (docs/CHAINLIT_FRONTEND.md)
+# 安装后 `chainlit run chainlit_app.py --host 127.0.0.1 --port 8000` 启动
+# 不安装不影响主流程（loop.py / agent_task.py / agent_dashboard.py 仍可用）
+chainlit>=1.0

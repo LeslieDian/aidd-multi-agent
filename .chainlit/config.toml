@@ -1,0 +1,39 @@
+# Chainlit configuration for the AIDD persistent-task chat front-end.
+# Reference: https://docs.chainlit.io/chat-profile
+
+[project]
+# Internal name used by Chainlit. Surfaces in window title and admin APIs.
+name = "AIDD 持久任务"
+
+# Disable LiteralAI telemetry by default; we never want model responses or
+# task states to leave the host. Override locally with AIDD_CHAINLIT_TELEMETRY=1
+# when debugging Chainlit itself.
+telemetry = false
+
+[UI]
+# Default light theme; switch to "dark" when most colleagues ask for it.
+default_theme = "light"
+# Show the Chainlit "Powered by" badge so colleagues can find the docs.
+show_readme_as_default = false
+
+[meta]
+generated_by = "AIDD"
+
+[features]
+# We render molecule images via cl.Image elements; built-in latex/mermaid
+# are unnecessary and only add client-side weight.
+latex = false
+mermaid = false
+# Allow users to drop the assistant a one-off message; required for /start etc.
+multi_select = false
+
+# The "AIDD 持久任务" chat profile is registered in code (chainlit_app.py).
+# Defining chat_profiles here too keeps the dashboard in sync if someone
+# inspects this file directly.
+[[chat_profiles]]
+name = "AIDD 持久任务"
+markdown_starters = [
+  { label = "列出任务", message = "/tasks" },
+  { label = "新建任务", message = "/start 设计针对 EGFR 的口服候选，目标 logP<3、TPSA>75" },
+  { label = "查看状态", message = "/status" },
+]
