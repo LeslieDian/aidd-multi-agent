@@ -335,3 +335,7 @@ data/prepared/*.meeko.json
 .chainlit/sessions/
 .chainlit/traces/
 .chainlit/file_storage/
+# Phase 4.7: chainlit auto-generated translation bundles + default welcome
+# markdown (we ship our own welcome message via chainlit_app.py).
+.chainlit/translations/
+chainlit.md

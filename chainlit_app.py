@@ -44,7 +44,15 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from chainlit import AskActionMessage, ChatProfile, action, cl
+from chainlit import (
+    AskActionMessage,
+    ChatProfile,
+    action,
+    on_chat_start,
+    on_message,
+    set_chat_profiles,
+)
+import chainlit as cl  # Chainlit 2.12 removed the `cl` alias; keep it for legacy callers.
 
 from agents.harness import CheckpointStore, Harness, MockPolicy
 from agents.harness.chainlit_bridge import (
@@ -61,6 +69,12 @@ HUMAN_CHECK_EVERY = 3     # ask the user to confirm direction every N steps
 _PROFILE = ChatProfile(
     name="AIDD 持久任务",
     icon="https://em-content.zunicode.net/svg/129440.svg",
+    # Chainlit 2.12 requires markdown_description (was optional in 1.x).
+    markdown_description=(
+        "AIDD 持久任务助手 —— 通过 Chainlit 对话运行 multi-agent 分子优化闭环。"
+        "支持多任务切换 / 暂停 / 继续 / 取消，候选分子 2D 渲染，"
+        "Phase 4.6 multi-agent (异构生成器 + 多裁判投票 + 对抗辩论 + 专家路由)。"
+    ),
     markdown_starters=[
         {"label": "列出任务", "message": "/tasks"},
         {"label": "新建任务", "message": "/start 设计针对 EGFR 的口服候选，目标 logP<3、TPSA>75"},
@@ -134,12 +148,12 @@ def _candidate_svg(smiles: str, highlight_atoms: list[int] | None = None) -> str
 # ---------------------------------------------------------------------------
 # Chainlit lifecycle
 # ---------------------------------------------------------------------------
-@cl.set_chat_profiles
+@set_chat_profiles
 async def _profiles() -> list[ChatProfile]:
     return [_PROFILE]
 
 
-@cl.on_chat_start
+@on_chat_start
 async def _on_chat_start() -> None:
     """Greet the user and prompt for the first action."""
     cl.user_session.set("current_task_id", None)
@@ -161,7 +175,7 @@ async def _on_chat_start() -> None:
     ).send()
 
 
-@cl.on_message
+@on_message
 async def _on_message(message: cl.Message) -> None:
     """Dispatch slash commands; everything else is a steering instruction."""
     text = (message.content or "").strip()
@@ -481,6 +495,6 @@ _HELP_TEXT = """\
 """
 
 
-# Register the Chainlit entry point. ``cl.run`` is the standard hook so
-# ``chainlit run chainlit_app.py`` works without extra config.
-cl.run(__file__)
+# Launch via the CLI:  chainlit run chainlit_app.py --host 127.0.0.1 --port 8000
+# (Chainlit 2.12 removed the legacy ``cl.run(__file__)`` hook; the CLI
+# replaces it.)

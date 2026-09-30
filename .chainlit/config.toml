@@ -11,6 +11,8 @@ name = "AIDD 持久任务"
 telemetry = false
 
 [UI]
+# Chainlit 2.12 requires an explicit UI name (separate from [project].name).
+name = "AIDD Multi-Agent Chat"
 # Default light theme; switch to "dark" when most colleagues ask for it.
 default_theme = "light"
 # Show the Chainlit "Powered by" badge so colleagues can find the docs.
