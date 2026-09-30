@@ -15,11 +15,13 @@
 
 | 指标 | 值 |
 |---|---|
-| 离线测试 | **515 passed, 1 skipped**（最后 commit `66c5f2a`） |
-| Generator | MiniMax-M3 + GLM-5.3-flash + Qwen-3.8-flash（全部 live 验证） |
-| 端到端 multi-agent | 519.9 s / 1 round / 3 generators（live 跑通） |
-| Selection operator | PARENTS block（Phase 4.5） |
-| Adversarial debate | generator ↔ critic 多轮 push-back + evidence_id 强校验 |
+| 离线测试 | **532 passed, 1 skipped**（最后 commit `f4aa534`，2026-09-30） |
+| Generators | **MiniMax-M3 × 2 + DeepSeek-chat + Qwen-3.8-flash fallback**（MiniMax-first 高用量；GLM-5.3-flash 已移除——其 API key 2026-09-30 过期） |
+| Judges | **judge_MiniMax × 2 + Qwen-3.8-flash**（MiniMax 承担 4/5 weight） |
+| 端到端 multi-agent | **327 s / 1 round / 4 generators + 3 judges + debate**（live 跑通，n=1 ablation） |
+| Selection operator | PARENTS block（Phase 4.5）→ Phase 4.6 marketplace 2-stage（top-2k Pareto → ECFP4 Tanimoto N-of-N voting） |
+| Adversarial debate | generator ↔ critic 多轮 push-back + evidence_id 强校验 + debate_recall_generators 真正重调 |
+| Chainlit 前端 | `chainlit_app.py` (port 8000) + `agents/harness/chainlit_bridge.py`；E2E smoke `tests/test_chainlit_e2e.py` 通过 |
 
 ---
 
@@ -626,9 +628,13 @@ python -m pytest -q
 |---|---|---|---|
 | `MiniMax_API_KEY` | ✅ OK | `https://api.minimaxi.com/v1` | `MiniMax-M3` |
 | `MiniMax_API_KEY_SECONDARY` | ✅ OK | `https://api.minimaxi.com/v1` | `MiniMax-M3` |
-| `GLM_API_KEY` | ✅ OK | `https://ark.cn-beijing.volces.com/api/coding/v3` | `glm-5.3-flash` |
 | `QWEN_API_KEY` | ✅ OK | `https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1` | `qwen3.8-flash` |
-| `DEEPSEEK_API_KEY` | ⚠️ **qwen-only** | 实际是 qwen3.8-flash 的另一个别名（同 key 字符串） |  |
+| `DEEPSEEK_API_KEY` | ✅ OK | `https://api.deepseek.com/v1` | `deepseek-chat` |
+| `GLM_API_KEY` | ❌ **EXPIRED 2026-09-30** | 401 `令牌已过期或验证不正确` on every endpoint | — |
+
+**关键变化**（2026-09-30）：
+- `DEEPSEEK_API_KEY` 不再是 `sk-sp-...` qwen-only 别名，已换成真的 DeepSeek key（`sk-94946d8c4f744c75a8f03f53cd5021c8`）。probe 显示 `api.deepseek.com/v1` + `deepseek-chat` ~2 s。
+- `GLM_API_KEY` 彻底失效（UUID 格式的 Zhipu key，2026-09-30 起所有 endpoint 401）。`glm_volcengine_coding` provider block 已从 `config.yaml` 移除；multi_agent.* 注释中"GLM judge short-prompt"路径失效已自然消失。
 
 `scripts/check_all_api_keys.py` 自动探测所有 `*_API_KEY` 环境变量，对每个 key 尝试一组候选 `(base_url, model)`，直到找到一个 OK（HTTP 200 + 有效 JSON）。输出每个 key 的 working endpoint 和所有 attempt 列表。
 
@@ -636,9 +642,9 @@ python -m pytest -q
 
 MiniMax-M3 在响应中把 reasoning 包裹在 `<think>...</think>` 块里再输出 JSON。`check_all_api_keys.py` 和 generator 解析都先 `re.sub` 掉 `<think>` 块再解析 JSON。
 
-### 7.2 GLM-5.3-flash 的 short-prompt 必要性
+### 7.2 short-prompt 路径（GLM 已退役，保留说明）
 
-GLM-5.3-flash 在长 prompt（5000+ 字符的 EGFR brief）下，4096 max_tokens 中 4091 用于 reasoning，`content=""`。配置 `prompt_mode: short` 后切到 `SHORT_SYSTEM_PROMPT`（~300 字符），正常产出 SMILES。
+`SHORT_SYSTEM_PROMPT`（~300 字符）和 `prompt_mode: short` 触发逻辑仍在线（`agents/generator.py`）。如果未来引入其它"reasoning-heavy"模型（例如某些 kimi-thinking 变体），这个路径直接复用即可。
 
 ---
 
@@ -810,23 +816,26 @@ latency_ms: 1357.733, 847.44, 650.559
 
 ## 12. 路线图
 
-### 12.1 已完成（Phase 4.6 全 13 阶段）
+### 12.1 已完成（Phase 4.6 全 13 阶段 + Phase 4.7 chainlit 集成）
 
 - ✅ 多角色 multi-agent 协作（异构生成器 + 多裁判 + 对抗辩论 + 专家路由 + 评估器）
-- ✅ Selection Operator Bridge（PARENTS 块，Phase 4.5）
-- ✅ GLM-5.3-flash short-prompt 路径（Phase 4.6 stage 11）
+- ✅ Selection Operator Bridge（PARENTS 块，Phase 4.5）→ Phase 4.6 marketplace 2-stage
 - ✅ Dashboard multi-agent 接入（Phase 4.6 stage 9）
 - ✅ Marketplace / N-of-N 投票（Phase 4.6 stage 13）
-- ✅ A/B ablation runner（Phase 4.6 stage 12）
+- ✅ A/B ablation runner（Phase 4.6 stage 12，n=1 已跑 327 s single-agent vs multi-agent）
 - ✅ End-to-end multi-agent loop 跑通（Phase 4.6 stage 7-8）
+- ✅ Chainlit 对话式前端集成（Phase 4.7，port 8000，E2E smoke `tests/test_chainlit_e2e.py` 通过）
+- ✅ Generator re-call inside debate round（Phase 4.6 stage 10）
+- ✅ MiniMax-first 高用量配置（MiniMax 承担 4/5 weight）
+- ✅ Real DeepSeek 接入（DEEPSEEK_API_KEY 2026-09-30 更新成真 DeepSeek key）
 
-### 12.2 Phase 4.7 候选（按 ROI 排序）
+### 12.2 Phase 4.8 候选（按 ROI 排序）
 
-1. **MiniMax-M3 judge 路径在 MockLLMClient 下的 confidence 占位修复**（小改动，A/B 验证可信度）
-2. **Real A/B 验证 multi-agent vs single-agent**（科学价值最高，需要 n ≥ 3 repeats + 真实 LLM judge budget）
-3. **Marketplace 接入 run_multi_agent_loop**（让 trader budget + N-of-N 投票真正影响下一轮）
-4. **GLM-5.3-flash judge 路径同样走 short-prompt**（让 3-judge multi-judge 全部可用）
-5. **deepseek-v3 / kimi-k3 真正接入**（需要新 API key，但 Aliyun Token Plan 已有 key 在 QWEN 上成功）
+1. **n≥3 A/B 验证 multi-agent vs single-agent**（科学价值最高，需要再跑 2 个 repeat，每个 ~5.5 min）
+2. **MiniMax-M3 judge 路径在 MockLLMClient 下的 confidence 占位修复**（小改动，A/B 验证可信度）
+3. **接入 agent_task.py / agent_dashboard.py 已做**（无需再做）
+4. **deepseek-v3 / kimi-k3 真正接入**（DEEPSEEK 已接，kimi 需要新 API key）
+5. **Marketplace 接入 run_multi_agent_loop 已做**（无需再做）
 
 ---
 
@@ -846,7 +855,8 @@ latency_ms: 1357.733, 847.44, 650.559
 | 2026-09-20 | v4 | 修复 transport + 真实端到端 multi-agent |
 | 2026-09-27 | 4.4 | 记忆校准 + 内存可视化 + 立体化学 + ADMET 扩展 |
 | 2026-09-27 | 4.5 | Selection Operator Bridge（PARENTS 块） |
-| 2026-09-29 | 4.6 | **完整 Multi-Agent 实施**（阶段 1-13） |
+| 2026-09-29 | 4.6 | **完整 Multi-Agent 实施**（阶段 1-13，13 commits：1 commit per stage 1-13 + 文档重写 + Chainlit 修复） |
+| 2026-09-30 | 4.7 | Chainlit 对话式前端（端口 8000）+ GLM key 过期替换 DeepSeek + Marketplace 接入 |
 
 详细历史见 `docs/PROJECT_HANDBOOK.md`（chapter 41-42 是 Phase 4.5/4.6）、`docs/PHASE_4_PLAN.md`、`docs/REVIEW_MINIMAX_ADVICE_20260917.md` 和 `docs/EXPERIMENT_MATRIX.md`。
 
