@@ -354,6 +354,7 @@ def maybe_route(
 # ============================================================
 
 from agents.prompts import load as load_prompt, render as render_prompt
+from agents.marketplace import select_top_k_by_vote as marketplace_select_top_k
 
 
 def build_per_generator_focus(
@@ -421,6 +422,58 @@ from agents.debate import (
     should_terminate_debate,
     validate_critic_turn,
 )
+
+
+def _select_safety_pareto_parents_via_marketplace(
+    enriched_history: list[list[dict]],
+    parents_k: int,
+) -> tuple[list[dict], dict]:
+    """Phase 4.6 stage 13: pick PARENTS block via marketplace N-of-N voting.
+
+    Two-stage selection:
+    1. Take top ``max(2k, 6)`` Pareto-front safety-pass candidates
+       from the legacy ``_select_safety_pareto_parents`` (oversampled
+       so N-of-N voting has room to choose).
+    2. Rank the candidate pool by ECFP4-Tanimoto N-of-N voting
+       (``agents.marketplace.select_top_k_by_vote``): structurally
+       similar candidates reinforce each other; dissimilar ones
+       cancel out. The top ``parents_k`` ranked entries become the
+       PARENTS block.
+
+    Returns:
+        (parents, stats)
+        parents: up to parents_k enriched candidate dicts.
+        stats: dict with n_candidate_pool / n_unparseable / n_selected /
+            score_range for audit.
+    """
+    if parents_k < 1:
+        raise ValueError("parents_k must be >= 1")
+    try:
+        from loop import _select_safety_pareto_parents
+    except ImportError:
+        return [], {}
+    pool = _select_safety_pareto_parents(
+        enriched_history, k=max(parents_k * 2, 6),
+    )
+    if not pool:
+        return [], {}
+    market_in = [
+        {"smiles": c.get("smiles"), "score": c.get("composite_score", 0.0)}
+        for c in pool if c.get("smiles")
+    ]
+    if not market_in:
+        return [], {}
+    top, market_stats = marketplace_select_top_k(market_in, k=parents_k)
+    smiles_to_full = {c["smiles"]: c for c in pool if c.get("smiles")}
+    parents = [smiles_to_full[v.smiles] for v in top
+               if v.smiles in smiles_to_full]
+    stats = {
+        "n_candidate_pool": market_stats.get("n_valid", len(market_in)),
+        "n_unparseable": market_stats.get("n_unparseable", 0),
+        "n_selected": len(parents),
+        "score_range": list(market_stats.get("score_range", ())),
+    }
+    return parents, stats
 
 
 def maybe_debate(
@@ -655,18 +708,22 @@ def run_multi_agent_loop(
         if verbose and expert_prompt:
             print(f"  [router] active expert: {expert_prompt}")
 
-        # 2. Build PARENTS block (Phase 4.5 selection operator still applies).
+        # 2. Build PARENTS block (Phase 4.5 selection operator + Phase 4.6
+        # marketplace N-of-N voting).
         parents_block_enabled = bool(loop_cfg.get("parents_block_enabled", True))
         parents_k = int(loop_cfg.get("parents_k", 3))
         parents_block = ""
+        parents_marketplace_stats: dict = {}
         if parents_block_enabled and enriched_history:
-            try:
-                from loop import _select_safety_pareto_parents
-                parents_used = _select_safety_pareto_parents(enriched_history, k=parents_k)
-            except ImportError:
-                parents_used = []
+            parents_used, parents_marketplace_stats = (
+                _select_safety_pareto_parents_via_marketplace(
+                    enriched_history, parents_k=parents_k,
+                )
+            )
             if parents_used:
-                parents_block = format_parents_block(parents_used, k=parents_k)
+                parents_block = format_parents_block(
+                    parents_used, k=parents_k,
+                )
 
         # 3. Per-generator focus / weakness overlays (real "5 roles" wiring).
         per_focus, per_weakness = build_per_generator_focus(
@@ -790,6 +847,7 @@ def run_multi_agent_loop(
             },
             "per_generator_counts": agg_stats.get("per_generator_count", {}),
             "aggregation_stats": agg_stats,
+            "parents_marketplace_stats": parents_marketplace_stats,
             "n_candidates": len(candidates),
             "n_enriched": len(enriched),
             "summary_keys": sorted(summary.keys()) if summary else [],
