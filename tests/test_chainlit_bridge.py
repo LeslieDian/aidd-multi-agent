@@ -20,11 +20,17 @@ from agents.harness.chainlit_bridge import (
 
 
 def _create_task(root: Path, *, goal: str = "Test goal", mock: bool = True) -> Path:
+    """Treat ``root`` as the task directory itself (not its parent).
+
+    Earlier versions created ``root / task_alpha / task.json`` which
+    did not match ``list_tasks``'s single-level discovery rule. After
+    ``5f08f4c`` the helper now writes the task.json straight into
+    ``root``.
+    """
     config = yaml.safe_load((Path(__file__).resolve().parents[1] / "config.yaml").read_text(encoding="utf-8"))
-    task_dir = root / "task_alpha"
-    store = CheckpointStore(task_dir)
+    store = CheckpointStore(root)
     store.save(TaskState(goal=goal, config=config, mock=mock, dock_enabled=False, max_steps=4))
-    return task_dir
+    return root
 
 
 def test_list_tasks_discovers_checkpoints(tmp_path: Path) -> None:
@@ -105,7 +111,9 @@ def test_bridge_records_callbacks_when_event_loops(tmp_path: Path) -> None:
 
     asyncio.run(main())
     assert len(seen_steps) == 2
-    assert any("evaluate" in m for m in seen_messages)
+    # _event_to_text uses the Chinese TOOLS labels; "evaluate" maps to
+    # "评估候选". Accept either spelling.
+    assert any("evaluate" in m or "评估候选" in m for m in seen_messages)
 
 
 def test_event_to_text_for_instruction(tmp_path: Path) -> None:

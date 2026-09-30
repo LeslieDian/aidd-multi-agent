@@ -123,9 +123,17 @@ class ChainlitBridge:
     # Public read API (used by chainlit_app.py to render snapshots)
     # ------------------------------------------------------------------
     def snapshot(self) -> dict:
-        """Return the latest user-facing projection of the task state."""
+        """Return the latest user-facing projection of the task state.
+
+        Falls back to loading the task from the store on first call when
+        the caller never wired ``task_state`` explicitly. This keeps
+        the bridge usable as a read-only inspector without forcing
+        ``chainlit_app.py`` to call ``load_task_state`` up front.
+        """
         if self.last_view is not None:
             return self.last_view
+        if self.task_state is None:
+            self.task_state = self.store.load()
         if self.task_state is None:
             return {}
         return task_view(self.task_state, active=False)
@@ -161,24 +169,49 @@ async def _async_sleep(seconds: float) -> None:
 # Discovery helpers (mirror agent_dashboard.py)
 # ----------------------------------------------------------------------
 def list_tasks(root: str | Path) -> list[dict]:
-    """Discover tasks under ``root`` that contain a top-level ``task.json``."""
+    """Discover tasks at ``root`` or under ``root``.
+
+    Supports two layouts:
+
+    1. ``root / task.json`` — ``root`` itself is the task directory.
+    2. ``root / <task_name> / task.json`` — each subdirectory is a task.
+
+    Results are de-duplicated (case 1 wins if both apply) and sorted by
+    ``created`` mtime, newest first.
+    """
     root_path = Path(root)
     if not root_path.exists():
         return []
-    found: list[dict] = []
-    for child in sorted(root_path.iterdir()):
+
+    candidates: dict[str, Path] = {}
+
+    # Case 1: root is a task_dir.
+    if (root_path / "task.json").exists():
+        candidates[str(root_path)] = root_path
+
+    # Case 2: each subdirectory that holds a task.json.
+    try:
+        children = list(root_path.iterdir())
+    except OSError as exc:
+        log.warning("chainlit_bridge: iterdir(%s) failed: %s", root_path, exc)
+        children = []
+    for child in children:
         if not child.is_dir():
             continue
         if not (child / "task.json").exists():
             continue
+        candidates.setdefault(str(child), child)
+
+    found: list[dict] = []
+    for task_dir in candidates.values():
         try:
-            state = CheckpointStore(child).load()
+            state = CheckpointStore(task_dir).load()
         except Exception as exc:
-            log.warning("chainlit_bridge: failed to load %s: %s", child, exc)
+            log.warning("chainlit_bridge: failed to load %s: %s", task_dir, exc)
             continue
         found.append({
             "task_id": state.task_id,
-            "task_dir": str(child),
+            "task_dir": str(task_dir),
             "goal": state.goal,
             "status": state.status,
             "status_label": _STATUS_LABEL.get(state.status, state.status),
@@ -186,7 +219,7 @@ def list_tasks(root: str | Path) -> list[dict]:
             "mock": state.mock,
             "steps_used": state.steps_used,
             "max_steps": state.max_steps,
-            "created": child.stat().st_mtime,
+            "created": task_dir.stat().st_mtime,
             "final": state.final is not None,
         })
     found.sort(key=lambda row: row["created"], reverse=True)
