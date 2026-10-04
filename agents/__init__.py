@@ -51,4 +51,4 @@ __all__ = [
     "should_terminate_debate", "validate_critic_turn",
     "load_prompt", "render_prompt",
 ]
-__version__ = "0.4.6"
+__version__ = "0.4.7"
