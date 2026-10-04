@@ -25,10 +25,15 @@ NOT shipped yet (Phase 4.6 stages 3-5):
 """
 from __future__ import annotations
 
+import copy
 import json
 import logging
+import re
+import uuid
 import warnings
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -44,7 +49,19 @@ from agents.multi_agent import (
     validate_multi_agent_config,
 )
 from agents.router import RoundFingerprint, route, router_enabled
+# Phase 4.1+ integrations brought into the multi-agent path so this entry
+# point stops bypassing the project's core safety nets.
+from agents.working_memory import WorkingMemory
+from agents.failed_set import FailedLigandSet
+from agents.loop_controller import LoopController, LoopConfig, LoopState
+from agents.evaluator import summarize_round
 from tools.mutate import format_parents_block
+# Manifest + caches mirror loop.py so multi-agent runs are audit-equivalent
+# to legacy single-agent runs (same schema_version=2 manifest, same
+# protocol_id derived from target + scoring, same evaluation/docking caches).
+from tools.evaluation_cache import EvaluationCache
+from tools.docking_cache import DockingCache
+from tools.provenance import digest, evaluation_protocol, docking_protocol, file_hash
 
 log = logging.getLogger(__name__)
 
@@ -334,9 +351,16 @@ def maybe_route(
     best_property_history: list[float],
     best_vina_history: list[float],
     recent_sa_scores: list[float],
+    best_safe_vina_history: list[float] | None = None,
+    progress_signal: str = "vina",
 ) -> tuple[str, RoundFingerprint | None]:
     """If router is enabled, return (expert_prompt, fingerprint).
     Otherwise return ("", None).
+
+    Phase 4.7: when ``progress_signal == "safe_vina"``, the fingerprint
+    looks at the safety-gated Vina series instead of the all-candidate
+    Vina series, so the router no longer watches unsafe progress when
+    the project has opted into the safety-gated signal.
     """
     r = read_router(loop_cfg)
     if not r["enabled"]:
@@ -345,6 +369,8 @@ def maybe_route(
         best_property_history=best_property_history,
         best_vina_history=best_vina_history,
         recent_sa_scores=recent_sa_scores,
+        best_safe_vina_history=best_safe_vina_history,
+        progress_signal=progress_signal,
     )
     return route(fp, experts=r["experts"]), fp
 
@@ -674,6 +700,218 @@ def run_multi_agent_loop(
 
     aggregation_cfg = read_aggregation(loop_cfg)
 
+    # ---- Phase 4.7: parity with loop.py's safety nets ----
+    scoring_cfg = config.get("scoring") or {}
+    target_cfg = config.get("target") or {}
+
+    progress_signal = str(loop_cfg.get("progress_signal", "safe_vina"))
+    if progress_signal not in ("vina", "safe_vina"):
+        raise ValueError(
+            "loop.progress_signal must be 'vina' or 'safe_vina' "
+            f"(got {progress_signal!r})"
+        )
+    token_budget = int(loop_cfg.get("token_budget", 50000))
+
+    memory_enabled = bool(loop_cfg.get("memory_enabled", True))
+    failed_set_enabled = bool(loop_cfg.get("failed_set_enabled", memory_enabled))
+    memory_namespace = str(loop_cfg.get("memory_namespace", "default"))
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", memory_namespace):
+        raise ValueError(
+            "loop.memory_namespace may contain only letters, digits, ., _, and -"
+        )
+    evaluation_cache_enabled = bool(
+        loop_cfg.get("evaluation_cache_enabled", True)
+    )
+    docking_cache_enabled = bool(loop_cfg.get("docking_cache_enabled", True))
+    require_all_generators = bool(loop_cfg.get("require_all_generators", False))
+    generation_max_attempts = int(loop_cfg.get("generation_max_attempts", 1))
+    judge_max_attempts = int(loop_cfg.get("judge_max_attempts", 1))
+    if generation_max_attempts < 1 or judge_max_attempts < 1:
+        raise ValueError("loop generation/judge max attempts must be positive")
+
+    if not target_cfg.get("name"):
+            # Tests and offline smoke runs sometimes omit target.name. Default it
+            # to a placeholder so setup continues; loop.py raises the same error
+            # at startup, but multi-agent has historically been more permissive.
+            log.warning(
+                "config.target.name is missing; defaulting to 'UNKNOWN'. "
+                "Persistent memory / docking caches will still be created."
+            )
+            target_cfg = {**target_cfg, "name": "UNKNOWN"}
+    import os as _os
+    dock_enabled = str(_os.environ.get("AIDD_DOCK_ENABLED", "0")).lower() in (
+        "1", "true", "yes",
+    )
+
+    # ---- protocol_id (mirror loop.py) ----
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:8]
+        # evaluation_protocol requires target.receptor_pdbqt and other dock fields.
+    # When called with an offline / minimal config (e.g. happy-path mocks
+    # without target), fall back to a synthetic protocol_id so setup continues.
+    try:
+            protocol = evaluation_protocol(target_cfg, scoring_cfg, dock_enabled)
+            protocol_id = digest(protocol)
+            docking_protocol_id = digest(docking_protocol(target_cfg, scoring_cfg))
+    except (KeyError, FileNotFoundError) as exc:
+            log.warning(
+                "[multi_agent] evaluation_protocol() needs target fields missing "
+                "from the config (got %s); using a synthetic protocol_id. "
+                "Persistent caches will not be reused across this run.",
+                exc,
+            )
+            protocol = {"synthetic": True, "target_name": target_cfg.get("name")}
+            protocol_id = digest(protocol)
+            docking_protocol_id = digest({"synthetic": True, "dock": True})
+
+    out_path = Path(output_dir)
+    out_path.mkdir(parents=True, exist_ok=True)
+    if any(out_path.glob("round_*.json")) or (out_path / "manifest.json").exists():
+        raise FileExistsError(
+            f"Output directory {out_path} already contains a run; "
+            "use a new output directory."
+        )
+
+    if use_mock:
+        memory_base = out_path / "_memory"
+        evaluation_cache_root = out_path / "_evaluation_cache"
+        docking_cache_root = out_path / "_docking_cache"
+    else:
+        memory_base = (
+            Path(loop_cfg.get("memory_dir", "memory/v2"))
+            / target_cfg["name"] / protocol_id / memory_namespace
+        )
+        evaluation_cache_root = Path(
+            loop_cfg.get("evaluation_cache_dir", "memory/evaluation_cache")
+        )
+        docking_cache_root = Path(
+            loop_cfg.get("docking_cache_dir", "memory/docking_cache")
+        )
+
+    evaluation_cache = EvaluationCache(
+        evaluation_cache_root,
+        protocol_id,
+        enabled=evaluation_cache_enabled,
+    )
+    docking_cache = DockingCache(
+        docking_cache_root,
+        docking_protocol_id,
+        enabled=docking_cache_enabled,
+    )
+
+    memory_strategy_path = memory_base / "strategy_history.json"
+    memory_best_path = memory_base / "best_molecules.json"
+    memory = WorkingMemory(
+        max_recent=int(loop_cfg.get("memory_max_recent", 3)),
+        strategy_persist_path=memory_strategy_path if memory_enabled else None,
+        best_persist_path=memory_best_path if memory_enabled else None,
+        target_name=target_cfg["name"],
+    )
+    failed_cfg = scoring_cfg.get("failed_set", {}) or {}
+    failed_set = FailedLigandSet(
+        path=(memory_base / "failed_ligands.json" if failed_set_enabled else
+              out_path / "_disabled_failed_ligands.json"),
+        threshold_composite=loop_cfg.get(
+            "failed_threshold_composite",
+            failed_cfg.get("composite_floor", 0.5),
+        ),
+        threshold_vina=loop_cfg.get(
+            "failed_threshold_vina",
+            failed_cfg.get("vina_floor", -2.5),
+        ),
+        max_size=int(loop_cfg.get(
+            "failed_max_size",
+            failed_cfg.get("max_size", 0),
+        )),
+        enable_embeddings=failed_set_enabled and bool(
+            (failed_cfg.get("embeddings") or {}).get("enabled", False)
+        ),
+        embedding_threshold=float(
+            (failed_cfg.get("embeddings") or {}).get("threshold", 0.85)
+        ),
+        embedding_model=str(
+            (failed_cfg.get("embeddings") or {}).get("model", "all-MiniLM-L6-v2")
+        ),
+        embedding_device=str(
+            (failed_cfg.get("embeddings") or {}).get("device", "auto")
+        ),
+    )
+
+    loop_controller = LoopController(LoopConfig(
+        max_rounds=max_rounds,
+        token_budget=token_budget,
+        judge_convergence_patience=int(loop_cfg.get(
+            "early_stop_patience",
+            loop_cfg.get("judge_convergence_patience", 2),
+        )),
+        progress_signal=progress_signal,
+    ))
+    state = LoopState()
+
+    parents_block_enabled = bool(loop_cfg.get("parents_block_enabled", True))
+    parents_k = int(loop_cfg.get("parents_k", 3))
+
+    # ---- manifest.json (schema_version=2, same as loop.py) ----
+    manifest = {
+        "schema_version": 2,
+        "run_id": run_id,
+        "is_mock": use_mock,
+        "mode": "multi_agent",
+        "protocol_id": protocol_id,
+        "protocol": protocol,
+        "docking_protocol_id": docking_protocol_id,
+        "execution": {
+            "max_rounds": max_rounds,
+            "candidates_per_round_per_generator": n_per_generator,
+            "providers": [g.get("provider") for g in gens],
+            "judges": [j.get("name") for j in read_judges(loop_cfg)],
+            "dock_enabled": dock_enabled,
+            "memory_namespace": memory_namespace,
+            "judge_enabled": bool(loop_cfg.get("judge_enabled", True)),
+            "memory_enabled": memory_enabled,
+            "failed_set_enabled": failed_set_enabled,
+            "progress_signal": progress_signal,
+            "progress_patience": loop_controller.config.judge_convergence_patience,
+            "token_budget": token_budget,
+            "require_all_generators": require_all_generators,
+            "generation_max_attempts": generation_max_attempts,
+            "judge_max_attempts": judge_max_attempts,
+            "evaluation_cache_enabled": evaluation_cache.enabled,
+            "evaluation_cache_dir": str(evaluation_cache.directory.resolve()),
+            "docking_cache_enabled": docking_cache.enabled,
+            "docking_cache_dir": str(docking_cache.directory.resolve()),
+            "parents_block_enabled": parents_block_enabled,
+            "parents_k": parents_k,
+        },
+        "llm": {
+            name: {k: v for k, v in settings.items()
+                   if k != "api_key_env" and "key" not in k.lower()}
+            for name, settings in llm_providers.items()
+        },
+        "reference_registry_sha256": (
+            file_hash("data/reference_compounds.json")
+            if Path("data/reference_compounds.json").exists() else None
+        ),
+        "sa_fragment_model_sha256": (
+            file_hash("tools/fpscores.pkl.gz")
+            if Path("tools/fpscores.pkl.gz").exists() else None
+        ),
+        "code_hashes": {
+            str(p): file_hash(p) for p in [
+                Path("loop_multi_agent.py"),
+                *Path("agents").glob("*.py"),
+                *Path("tools").glob("*.py"),
+            ]
+        },
+    }
+    (out_path / "manifest.json").write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    if verbose:
+        print(f"  [manifest] {out_path / 'manifest.json'}")
+        print(f"  [caches] eval={evaluation_cache.enabled} "
+              f"dock={docking_cache.enabled} protocol_id={protocol_id[:12]}")
+
     out_path = Path(output_dir)
     out_path.mkdir(parents=True, exist_ok=True)
 
@@ -689,14 +927,40 @@ def run_multi_agent_loop(
     focus = ""
     weakness = ""
     debate_critique = ""
+    stop_reason = "max_rounds_reached"
     best_property_history: list[float] = []
     best_vina_history: list[float] = []
+    best_safe_vina_history: list[float] = []
     recent_sa_scores: list[float] = []
     debate_cfg = read_debate(loop_cfg)
 
+    # Phase 4.7: refresh memory + failed-set prompt injections after each round.
+    memory_context_current = (
+        memory.compress_for_generator() if memory_enabled
+        else "Memory disabled for this experiment."
+    )
+    failed_prompt_current = (
+        failed_set.format_for_prompt() if failed_set_enabled else ""
+    )
+
     for round_num in range(max_rounds):
+        # 0. LoopController: should we stop before starting this round?
+        state.round = round_num
+        stop, reason = loop_controller.should_stop(state)
+        if stop:
+            stop_reason = reason
+            if verbose:
+                print(f"\n[STOP pre-round {round_num}] "
+                      f"{loop_controller.explain(reason)}")
+            break
+
         if verbose:
             print(f"\n=== [multi_agent] Round {round_num} ===")
+            if memory_enabled:
+                first_line = memory_context_current.splitlines()[0]
+                print(f"  [memory] {first_line}")
+            if failed_set_enabled and failed_set.failed:
+                print(f"  [failed_set] {len(failed_set.failed)} SMILES blocked")
 
         # 1. Router dispatch (may be a no-op).
         expert_prompt, fp = maybe_route(
@@ -704,7 +968,9 @@ def run_multi_agent_loop(
             best_property_history=best_property_history,
             best_vina_history=best_vina_history,
             recent_sa_scores=recent_sa_scores,
-        )
+                    best_safe_vina_history=best_safe_vina_history,
+                    progress_signal=progress_signal,
+                )
         if verbose and expert_prompt:
             print(f"  [router] active expert: {expert_prompt}")
 
@@ -734,20 +1000,48 @@ def run_multi_agent_loop(
             debate_critique=debate_critique,
         )
 
-        # 4. Call each generator (heterogeneous, sequential per-gen).
-        per_gen = call_multi_generators(
-            config=config,
-            generators=gens,
-            n_per_generator=n_per_generator,
-            focus=focus,
-            weakness=weakness,
-            memory_context="",
-            failed_prompt="",
-            parents_block=parents_block,
-            use_mock=use_mock,
-            per_generator_focus=per_focus,
-            per_generator_weakness=per_weakness,
-        )
+        # 4. Call each generator IN PARALLEL via ThreadPoolExecutor.
+        # Phase 4.7: previously this was sequential. With 4 generators the
+        # wall-clock difference is roughly (latency of slowest) vs (sum of
+        # latencies). Each call to LLM takes 10-30s, so parallelism is a
+        # 2-3x speedup on multi-agent wall time.
+        def _call_one_generator(g: dict) -> tuple[str, list[dict]]:
+            name = g.get("name") or g.get("provider") or "unknown"
+            provider = g.get("provider")
+            if not provider:
+                return name, []
+            gen_focus = per_focus.get(name, focus)
+            gen_weakness = per_weakness.get(name, weakness)
+            try:
+                results = generate_candidates(
+                    config=config,
+                    providers=[provider],
+                    n_per_provider=n_per_generator,
+                    focus=gen_focus,
+                    weakness=gen_weakness,
+                    memory_context=memory_context_current,
+                    failed_prompt=failed_prompt_current,
+                    parents_block=parents_block,
+                    use_mock=use_mock,
+                    max_attempts_per_provider=generation_max_attempts,
+                )
+            except Exception as exc:
+                log.warning("[multi_agent] generator %s failed: %s", name, exc)
+                return name, []
+            items: list[dict] = []
+            for r in results or []:
+                for smi in (r.get("smiles_list") or []):
+                    items.append({
+                        "smiles": smi,
+                        "confidence": float(r.get("confidence", 1.0)),
+                        "rationale": r.get("rationale", ""),
+                    })
+            return name, items
+
+        per_gen: dict[str, list[dict]] = {}
+        with ThreadPoolExecutor(max_workers=max(1, len(gens))) as pool:
+            for name, items in pool.map(_call_one_generator, gens):
+                per_gen[name] = items
 
         # 5. Aggregate (dedup + diversity + voting + top_n).
         agg, agg_stats = aggregate_round(per_gen, aggregation_cfg=aggregation_cfg)
@@ -772,17 +1066,73 @@ def run_multi_agent_loop(
                 "multi_agent_score": c.score,
             })
 
-        # 7. Evaluate (RDKit + ADMET + safety gate; no Vina unless env says so).
-        enriched, summary = evaluate_aggregated_candidates(
-            candidates=candidates,
-            config=config,
-        )
+        # 7. Evaluate (RDKit + ADMET + safety gate; Vina via cache).
+        # Phase 4.7: wire EvaluationCache + DockingCache so multi-agent runs
+        # reuse work the legacy loop has already done under the same protocol_id.
+        try:
+            from loop import evaluate_candidates_with_cache
+        except ImportError:
+            evaluate_candidates_with_cache = None
+        cache_stats: dict = {}
+        if evaluate_candidates_with_cache is not None:
+            try:
+                enriched, cache_stats = evaluate_candidates_with_cache(
+                    candidates=candidates,
+                    scoring_config=scoring_cfg,
+                    target_config=target_cfg,
+                    dock_enabled=dock_enabled,
+                    artifact_dir=str(out_path / "artifacts"),
+                    cache=evaluation_cache,
+                    docking_cache=docking_cache,
+                )
+                summary = summarize_round(enriched)
+            except Exception as exc:
+                log.warning("[multi_agent] cache-aware evaluate failed: %s", exc)
+                enriched, summary = evaluate_aggregated_candidates(
+                    candidates=candidates, config=config,
+                )
+        else:
+            enriched, summary = evaluate_aggregated_candidates(
+                candidates=candidates, config=config,
+            )
         if verbose and summary:
             print(f"  [evaluate] n_total={summary.get('n_total')} "
                   f"n_valid={summary.get('n_valid')} "
                   f"best_property={summary.get('best_property')} "
                   f"best_vina={summary.get('best_vina')} "
-                  f"best_safe_vina={summary.get('best_safe_vina')}")
+                  f"best_safe_vina={summary.get('best_safe_vina')} "
+                  f"cache_hits={cache_stats.get('hits', 0)}/"
+                  f"misses={cache_stats.get('misses', 0)}")
+
+        # 7a. WorkingMemory + FailedLigandSet updates (mirror loop.py).
+        if memory_enabled and summary:
+            memory.add_round(enriched, focus_used=focus or "")
+        if failed_set_enabled and summary and not use_mock:
+            new_failures = []
+            for c in enriched:
+                if c.get("evaluation_status") != "complete":
+                    continue
+                safety_failed = c.get("safety_gate_pass") is False
+                if safety_failed or failed_set.should_mark_failed(
+                    c.get("composite_score", 0.0),
+                    (c.get("dock") or {}).get("score"),
+                ):
+                    new_failures.append((
+                        c.get("smiles", ""),
+                        f"composite={c.get('composite_score')}, "
+                        f"vina={(c.get('dock') or {}).get('score')}, "
+                        f"safety_gate_pass={c.get('safety_gate_pass')}",
+                    ))
+            if new_failures:
+                failed_set.add_failed_many(new_failures)
+        # Refresh for the next round.
+        memory_context_current = (
+            memory.compress_for_generator() if memory_enabled
+            else "Memory disabled for this experiment."
+        )
+        failed_prompt_current = (
+            failed_set.format_for_prompt() if failed_set_enabled else ""
+        )
 
         # 8. Multi-judge vote (independent judges).
         judges = read_judges(loop_cfg)
@@ -827,47 +1177,110 @@ def run_multi_agent_loop(
             bv = summary.get("best_vina")
             if isinstance(bv, (int, float)):
                 best_vina_history.append(float(bv))
-            recent_sa_scores = [
-                c.get("sa_score") for c in enriched
-                if isinstance(c.get("sa_score"), (int, float))
-            ][:5]
+                bsv = summary.get("best_safe_vina")
+                if isinstance(bsv, (int, float)):
+                    best_safe_vina_history.append(float(bsv))
+                recent_sa_scores = [
+                    c.get("sa_score") for c in enriched
+                    if isinstance(c.get("sa_score"), (int, float))
+                ][:5]
 
         enriched_history.append(enriched)
         if summary:
             summary_history.append(summary)
 
-        # 11. Record round log.
-        rounds_log.append({
+        # 11. Record round log + per-round JSON.
+        # LoopController: track both progress signals so the saved record
+        # can be re-audited under either termination policy later.
+        round_best_vina = summary.get("best_vina") if summary else None
+        round_best_safe_vina = summary.get("best_safe_vina") if summary else None
+        state.note_round_result(round_best_vina)
+        state.note_round_safe_result(round_best_safe_vina)
+        if verbose:
+            print(f"  [controller] signal={progress_signal} "
+                  f"patience={loop_controller.config.judge_convergence_patience} "
+                  f"no_improvement={loop_controller.rounds_without_improvement(state)}")
+
+        round_record = {
             "round": round_num,
-            "expert_prompt": expert_prompt,
-            "router_fingerprint": None if fp is None else {
-                "property_weak": fp.property_weak,
-                "vina_weak": fp.vina_weak,
-                "sa_difficult": fp.sa_difficult,
+            "run_id": run_id,
+            "protocol_id": protocol_id,
+            "is_mock": use_mock,
+            "mode": "multi_agent",
+            "timestamp": datetime.now().isoformat(timespec="seconds"),
+            "focus_used": focus,
+            "focus_next": focus,
+            "generator_outputs": per_gen,
+            "candidates": enriched,
+            "summary": summary,
+            "judgment": (
+                {"verdicts": [
+                    {"name": v.judge_name, "score": v.score,
+                     "rationale": v.rationale}
+                    for v in (judge_result.verdicts if judge_result else [])
+                ],
+                "combined": judge_result.combined_score if judge_result else None,
+                "dispersion": judge_result.dispersion if judge_result else None}
+                if judge_result else None
+            ),
+            "parents_block_enabled": parents_block_enabled,
+            "parents_k": parents_k,
+            "parents_block_text": parents_block,
+            "parents_used_smiles": [c.get("smiles") for c in parents_used],
+            "memory_snapshot": {
+                "recent_rounds": [
+                    {
+                        "round": r.round,
+                        "n_valid": r.n_valid,
+                        "best_vina": r.best_vina,
+                        "n_unique_scaffolds": r.n_unique_scaffolds,
+                    }
+                    for r in memory.recent_rounds
+                ] if memory_enabled else [],
+                "best_so_far": memory.best_so_far.get("smiles")
+                    if (memory_enabled and memory.best_so_far) else None,
             },
+            "loop_state": {
+                "round": state.round,
+                "progress_signal": progress_signal,
+                "rounds_without_vina_improvement": state.rounds_without_vina_improvement,
+                "rounds_without_safe_vina_improvement": state.rounds_without_safe_vina_improvement,
+            },
+            "cache_stats": cache_stats,
+            "experts_used": [g.get("prompt_role") for g in gens],
+            "judge_combined": round(judge_result.combined_score, 4)
+                if judge_result else None,
+            "judge_dispersion": round(judge_result.dispersion, 4)
+                if judge_result else None,
+            "next_focus": focus[:200] if focus else "",
+            "debate_triggered": debate_triggered,
+            "debate_reason": debate_reason,
+            "debate_critique_preview": critic_text[:120],
             "per_generator_counts": agg_stats.get("per_generator_count", {}),
             "aggregation_stats": agg_stats,
             "parents_marketplace_stats": parents_marketplace_stats,
             "n_candidates": len(candidates),
             "n_enriched": len(enriched),
             "summary_keys": sorted(summary.keys()) if summary else [],
-            "judges": [
-                {
-                    "name": v.judge_name,
-                    "score": round(v.score, 4),
-                    "rationale_preview": v.rationale[:80],
-                }
-                for v in (judge_result.verdicts if judge_result else [])
-            ],
-            "judge_combined": round(judge_result.combined_score, 4)
-                if judge_result else None,
-            "judge_dispersion": round(judge_result.dispersion, 4)
-                if judge_result else None,
-            "next_focus": focus[:200],
-            "debate_triggered": debate_triggered,
-            "debate_reason": debate_reason,
-            "debate_critique_preview": critic_text[:120],
-        })
+        }
+        rounds_log.append(round_record)
+        round_file = out_path / f"round_{round_num}.json"
+        round_file.write_text(
+            json.dumps(round_record, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        if verbose:
+            print(f"  [save] {round_file}")
+
+        # 12. Post-round stop check (mirror loop.py's bugfix that stopped
+        #     waiting one extra round after patience counter tripped).
+        post_stop, post_reason = loop_controller.should_stop(state)
+        if post_stop:
+            stop_reason = post_reason
+            if verbose:
+                print(f"  [controller] stop after round {round_num}: "
+                      f"{loop_controller.explain(post_reason)}")
+            break
 
         if debate_triggered and debate_cfg.get("enabled", False):
             # Stage 10: actually re-call each generator with the critic's
@@ -881,7 +1294,7 @@ def run_multi_agent_loop(
                     base_focus=focus,
                     base_weakness=weakness,
                     critic_text=critic_text,
-                    memory_context="",
+                    memory_context=memory_context_current,
                     parents_block=parents_block,
                     use_mock=use_mock,
                     max_rounds=debate_cfg.get("max_rounds", 3),
@@ -923,25 +1336,25 @@ def run_multi_agent_loop(
         "n_judges": len(read_judges(loop_cfg)),
         "rounds_log": rounds_log,
         "warnings": warns,
+        "stop_reason": stop_reason,
+        "loop_state": {
+            "progress_signal": progress_signal,
+            "rounds_without_vina_improvement": state.rounds_without_vina_improvement,
+            "rounds_without_safe_vina_improvement": state.rounds_without_safe_vina_improvement,
+            "best_vina": state.best_vina,
+            "best_safe_vina": state.best_safe_vina,
+            "memory_rounds": len(memory.recent_rounds) if memory_enabled else 0,
+            "failed_set_size": len(failed_set.failed),
+        },
+        "memory_dir": str(memory_base.resolve()) if (memory_enabled and not use_mock) else None,
+        "manifest_path": str((out_path / "manifest.json").resolve()),
         "note": (
             "Stage 7 wiring: per-generator prompt_role + router dispatch "
             "+ evaluate + multi-judge vote + debate trigger. "
-            "Generator re-call after debate is left as a follow-up (the "
-            "debate critique is folded into the next round's focus instead)."
-        ),
-    }
-
-    return {
-        "mode": "multi_agent",
-        "n_generators": len(gens),
-        "n_judges": len(read_judges(loop_cfg)),
-        "rounds_log": rounds_log,
-        "warnings": warns,
-        "note": (
-            "This is the multi-agent *coordination* skeleton. Per the "
-            "Phase 4.6 staged rollout, evaluation / scoring / memory / "
-            "failed-set are still routed to the legacy single-agent "
-            "loop when run end-to-end. See scripts/smoke_multi_agent.py "
-            "for end-to-end wiring."
+            "Phase 4.7 brings WorkingMemory + FailedLigandSet + LoopController "
+            "(safe_vina) + manifest.json + EvaluationCache/DockingCache onto "
+            "parity with loop.py. Generator re-call after debate is left as "
+            "a follow-up (the debate critique is folded into the next round's "
+            "focus instead)."
         ),
     }

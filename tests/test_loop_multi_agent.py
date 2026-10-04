@@ -8,6 +8,8 @@ generator-call contract, the aggregation flow, and the judge-vote flow
 from __future__ import annotations
 
 import json
+import shutil
+from pathlib import Path
 
 import pytest
 
@@ -29,6 +31,25 @@ from loop_multi_agent import (
     warn_if_degraded,
 )
 from agents.multi_agent import AggregatedCandidate, JudgeVerdict
+
+
+@pytest.fixture(autouse=True)
+def _clean_test_runs():
+    """Best-effort cleanup of the small set of dirs this file writes to.
+
+    The happy-path / non-heterogeneous tests re-use ``runs/_test_ma_*`` paths
+    on each run; without cleanup, the second invocation trips the
+    ``FileExistsError`` that ``run_multi_agent_loop`` raises when an
+    output dir already contains ``round_*.json`` or ``manifest.json``.
+    """
+    paths = [
+        Path("runs/_test_ma_happy"),
+        Path("runs/_test_ma_homog"),
+    ]
+    for p in paths:
+        if p.exists():
+            shutil.rmtree(p, ignore_errors=True)
+    yield
 
 
 # ============================================================

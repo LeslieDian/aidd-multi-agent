@@ -18,8 +18,11 @@ the `role` axis so different generators see different framings.
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Mapping
+
+log = logging.getLogger(__name__)
 
 _HERE = Path(__file__).resolve().parent
 
@@ -78,6 +81,58 @@ DEFAULT_TEMPLATES["prompt_exploit_expert"] = (
     "{failed_prompt} Return only JSON."
 )
 
+# Judge prompts (Phase 4.7: 5-role contract closure).
+# Multi-agent's three judges (J1_property / J2_docking / J3_synthesis)
+# previously fell through to the role-specific generator template, which is
+# wrong: a judge reviews candidates, it doesn't generate them. These judge
+# templates give each judge a proper brief that asks for an actionable
+# next-round focus instead of new SMILES.
+DEFAULT_TEMPLATES["judge_property"] = (
+    "You are an experienced medicinal chemist reviewing the latest round of "
+    "EGFR candidate molecules. Your role is **property / ADMET critic**.\n\n"
+    "Look at the candidates and prior focus in the conversation. Produce a "
+    "STRICT JSON object with these fields and NOTHING else:\n"
+    "{{"
+    "\"focus\": \"ONE specific 1-2 sentence instruction for the next round "
+    "(max 250 chars, naming the structural element to change and the expected "
+    "property impact)\","
+    "\"weakness\": \"the dominant property weakness you identified (1 sentence)\","
+    "\"confidence\": 0.0-1.0,"
+    "\"reflection\": \"ONE sentence evaluating the previous round's outcome "
+    "(max 200 chars; empty string if round 0)\""
+    "}}"
+)
+DEFAULT_TEMPLATES["judge_docking"] = (
+    "You are an experienced computational chemist reviewing the latest round "
+    "of EGFR candidate molecules. Your role is **binding / docking critic**.\n\n"
+    "Look at the candidates and prior focus in the conversation. Produce a "
+    "STRICT JSON object with these fields and NOTHING else:\n"
+    "{{"
+    "\"focus\": \"ONE specific 1-2 sentence instruction about scaffold / pose / "
+    "hinge engagement for the next round (max 250 chars)\","
+    "\"weakness\": \"the dominant binding-mode weakness you identified (1 sentence)\","
+    "\"confidence\": 0.0-1.0,"
+    "\"reflection\": \"ONE sentence evaluating the previous round's outcome "
+    "(max 200 chars; empty string if round 0)\""
+    "}}"
+)
+DEFAULT_TEMPLATES["judge_synthesis"] = (
+    "You are an experienced process chemist reviewing the latest round of "
+    "EGFR candidate molecules. Your role is **synthetic accessibility / "
+    "commercial availability critic**.\n\n"
+    "Look at the candidates and prior focus in the conversation. Produce a "
+    "STRICT JSON object with these fields and NOTHING else:\n"
+    "{{"
+    "\"focus\": \"ONE specific 1-2 sentence instruction about synthetic "
+    "feasibility / SA score / building blocks for the next round "
+    "(max 250 chars)\","
+    "\"weakness\": \"the dominant synthesis weakness you identified (1 sentence)\","
+    "\"confidence\": 0.0-1.0,"
+    "\"reflection\": \"ONE sentence evaluating the previous round's outcome "
+    "(max 200 chars; empty string if round 0)\""
+    "}}"
+)
+
 
 def load(role: str) -> str:
     """Return the prompt template for `role`. Falls back to 'default'."""
@@ -95,10 +150,12 @@ def render(role: str, placeholders: Mapping[str, str]) -> str:
     """Render `role` template with given placeholders.
 
     Missing placeholders are rendered as empty strings (no KeyError).
+    Falls back to a regex strip on unrecoverable format errors; that
+    fallback is logged so silent content loss is at least visible in
+    audit logs (Phase 4.7 fix for the silent-fallback bug noted in the
+    earlier review).
     """
     template = load(role)
-    # First, auto-fill any missing keys with empty strings so .format()
-    # doesn't KeyError on placeholders the caller didn't supply.
     import re as _re
     referenced = set(_re.findall(r"\{(\w+)\}", template))
     safe = {k: str(v) for k, v in placeholders.items()}
@@ -106,6 +163,11 @@ def render(role: str, placeholders: Mapping[str, str]) -> str:
         safe.setdefault(k, "")
     try:
         return template.format(**safe)
-    except (KeyError, IndexError):
-        # Last resort: replace any remaining placeholders with empty strings.
+    except (KeyError, IndexError) as exc:
+        # Last resort strip - but log it so we don't silently lose content.
+        log.warning(
+            "[prompts] render(role=%r) format() failed (%s); "
+            "falling back to regex strip that may lose content.",
+            role, exc,
+        )
         return _re.sub(r"\{[^}]*\}", "", template)

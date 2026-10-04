@@ -18,11 +18,17 @@ default prompt).
 The router is read from `loop.multi_agent.router` in config.yaml. If the
 block is missing or `enabled: false`, the router is a no-op and the
 existing single-template loop keeps working (backwards compatible).
+
+Phase 4.7: when ``progress_signal == "safe_vina"`` (the project's preferred
+signal), the router must also look at the safety-gated Vina. Otherwise the
+router would still be watching all-candidate Vina even though the loop
+optimises the safety-gated signal — a known inconsistency noted in the
+REVIEW_MINIMAX_ADVICE_20260917.md audit (Priority B-1).
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Iterable, Optional
 
 
 @dataclass(frozen=True)
@@ -32,7 +38,7 @@ class RoundFingerprint:
     Attributes:
         property_weak: True if property_score / QED / SA / hERG regressed
             (best-so-far delta in the last K rounds is negative or null).
-        vina_weak: True if best safe_vina regressed (best global Vina
+        vina_weak: True if best (safety-gated) Vina regressed (best Vina
             has not improved in the last K rounds).
         sa_difficult: True if a recent SA-score alarm was raised
             (sa_score > 4 for top candidates).
@@ -51,27 +57,42 @@ class RoundFingerprint:
         *,
         window: int = 2,
         sa_difficult_threshold: float = 4.0,
+        best_safe_vina_history: Optional[Iterable[float]] = None,
+        progress_signal: str = "vina",
     ) -> "RoundFingerprint":
         """Derive a fingerprint from the session's metric history.
 
         Args:
             best_property_history: best property_score per round (oldest -> newest).
-            best_vina_history: best safe_vina per round (oldest -> newest).
+            best_vina_history: best (all-candidates) safe_vina per round
+                (oldest -> newest). Used when ``progress_signal="vina"``.
             recent_sa_scores: SA scores of the most recent top candidates.
             window: number of trailing rounds used to decide "weak".
             sa_difficult_threshold: SA score above which we flag SA as difficult.
+            best_safe_vina_history: best safety-gated Vina per round. Used
+                when ``progress_signal="safe_vina"`` (preferred signal).
+            progress_signal: which Vina series the router should follow.
+                Must be ``"vina"`` (legacy all-candidate) or
+                ``"safe_vina"`` (preferred safety-gated).
 
         Returns:
             A RoundFingerprint suitable for the router.
         """
         prop_hist = list(best_property_history)[-window:]
-        vina_hist = list(best_vina_history)[-window:]
         # property_weak: best has not improved over the window.
         property_weak = (
             len(prop_hist) >= 2 and prop_hist[-1] <= prop_hist[0]
         )
-        # vina_weak: best safe_vina has not improved (Vina is "lower = better",
-        # so "weaker" means the value did NOT decrease).
+        # vina_weak: when progress_signal == "safe_vina" prefer the safety-gated
+        # Vina history; otherwise fall back to the all-candidate Vina history.
+        # Phase 4.7: this was previously always best_vina_history, so a project
+        # that opted in to safe_vina got a router that still watched unsafe
+        # progress.
+        if progress_signal == "safe_vina" and best_safe_vina_history is not None:
+            vina_series = [v for v in best_safe_vina_history if v is not None]
+        else:
+            vina_series = [v for v in best_vina_history if v is not None]
+        vina_hist = vina_series[-window:]
         vina_weak = (
             len(vina_hist) >= 2 and vina_hist[-1] >= vina_hist[0]
         )
