@@ -90,6 +90,9 @@
 - [40. 性能与成本估算](#40-性能与成本估算)
 - [41. Phase 4.4 — 校准、可视化、立体化学（2026-09-27）](#41-phase-44--校准可视化立体化学2026-09-27)
 - [42. Phase 4.4 收口 — 安全口径指标、随机胜率门槛、真实验收运行、ADMET 扩展（2026-09-27）](#42-phase-44-收口--安全口径指标随机胜率门槛真实验收运行admet-扩展2026-09-27)
+- [43. Phase 4.5 — Selection Operator Bridge（PARENTS 块，2026-09-27）](#43-phase-45--selection-operator-bridgeparents-块2026-09-27)
+- [44. Phase 4.6 — Multi-Agent 完整实施（2026-09-29 ~ 2026-09-30）](#44-phase-46--multi-agent-完整实施2026-09-29--2026-09-30)
+- [45. Phase 4.7 — multi-agent 与 loop.py 安全网对齐（2026-10-04）](#45-phase-47--multi-agent-与-looppy-安全网对齐2026-10-04)
 
 ### 附录
 
@@ -3193,3 +3196,346 @@ After:  391 passed, 1 skipped   (+17 tests)
 - **生成器选择算子（Priority A-3）**：REVIEW_MINIMAX_ADVICE 第 2 项（`tools/mutate.py` + 结构化 PARENTS）仍未做——P3 证明这是随机胜率仍 >50% 的主要修复方向。
 - **admetSAR/SwissADME 真模型**：P3-1 的原始修复方向；本地透明代理是中间路线，不是替代。
 - **MD 验证（P3-2）**：仍留待有 top 候选时启动。
+
+> **本章范围注**：原「不在本章范围」的三个未做项（生成器选择算子、ADMET 真模型、MD 验证）在 Phase 4.5 / 4.6 / 4.7 都已经完成或被新方案取代——详见以下 chapter 43、44、45。
+
+
+# 43. Phase 4.5 — Selection Operator Bridge（PARENTS 块，2026-09-27）
+
+> 本章是 **Phase 4.5 实施记录**，与 README §6.6 配置层、`tools/mutate.py` 同步。
+> 对应 commit：`2ae0de6`（marketplace 接入 PARENTS 上游）、前期 commits（`mutate.py` 引入）。
+
+## 43.1 动机：从 "agent 在做随机重采样" 到 "agent 在做结构化 walk"
+
+[docs/REVIEW_MINIMAX_ADVICE_20260917.md](REVIEW_MINIMAX_ADVICE_20260917.md) Priority A-3 给出了关键证据：
+
+| 证据 | 数值 | 含义 |
+|---|---:|---|
+| 同一分子池随机抽 8 个的 mean best | -8.441 | 超过 agent 的 -8.324 |
+| 随机采样胜过智能体的概率 | **72.7%** | 60 个真实轮次 + 4000 次重采样 |
+| 第 0 轮最优 = 全程最优的运行占比 | **70% (14/20)** | 多轮搜索没有扩展化学空间 |
+| 相邻两轮最优分子 Tanimoto ≥ 0.6 的比例 | **40.6%** | 多数相邻轮产物彼此不接近 |
+
+**结论**：单纯靠"加 token / 加轮次"无法修，必须给 generator 一个**显式的选择算子 + 结构起点**。
+
+## 43.2 `tools/mutate.py`：化学空间算子
+
+四类操作（与 `Mutator` 类一一对应）：
+
+| 算子 | 作用 | 实现要点 |
+|---|---|---|
+| `brics` | BRICS 片段重组 | 用 RDKit `BRICSBuild` 在断点处重连 |
+| `atom_subst` | 原子替换 | 遍历原子位置 + 候选元素 / 基团表 |
+| `terminal_swap` | 末端基团替换 | 识别 terminal atoms，用 `_TERMINAL_GROUPS` 字典换 |
+| `parents` | **PARENTS 块注入**（Phase 4.5 标志） | 选 top-k safety-gated 候选 → 渲染成稳定文本片段 |
+
+`format_parents_block(parents, k=3)` 输出（节选）：
+
+```text
+Local parents to mutate around (do NOT copy verbatim; make small
+structural changes such as swapping a terminal group, replacing
+an aromatic H with F/Cl, or rearranging BRICS fragments):
+
+[PARENT 1] smiles="COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OCCN1CCCCC1"
+            vina=-9.50 hERG=0.18 weakness="low solubility"
+[PARENT 2] smiles="..."
+```
+
+这段文本注入 `agents/generator.py::USER_PROMPT_TEMPLATE` 的 `__PARENTS__` 占位符，所有 generator 共享同一组结构起点。
+
+## 43.3 `_select_safety_pareto_parents`（loop.py）
+
+排序键：`candidate_priority_key` → `(safety_gate_pass, -pareto_rank, composite)`：
+
+1. 仅选 `safety_gate_pass is True`（hERG ≤ 0.55 ∧ logP ≤ 4.5）
+2. 同 rank 内按 Pareto rank 升序（rank 0 优于 rank 1）
+3. 同 rank 内按 composite 降序
+4. 取前 k = 3（默认）
+
+新候选（从未被 visited 过的 SMILES）天然偏向，给 generator 提供"探索信号"。
+
+## 43.4 审计接口
+
+- **不写到 protocol_id**：`parents_block_enabled` / `parents_k` 在 manifest.json 但不影响 EvaluationCache / DockingCache 的命中键。这样可以合法 cutoff（baseline 对照）。
+- **每次 round 重新计算**：`enriched_history` 累积 → 每 round PARENTS 反映**截至当前的全局 safety-gated Pareto**。
+
+## 43.6 文件变更与测试统计
+
+| 文件 | 变化 | 说明 |
+|---|---|---|
+| `tools/mutate.py` | 新增 | BRICSBuild + atom_subst + terminal_swap + parents 块 |
+| `loop.py` | +60 | `_select_safety_pareto_parents` + `format_parents_block` 集成 |
+| `agents/generator.py` | +20 | `__PARENTS__` 占位符注入 USER_PROMPT_TEMPLATE |
+| `config.yaml` | +2 | `parents_block_enabled: true` / `parents_k: 3` |
+| `tests/test_mutate.py` | 新增 | BRICS / atom_subst / terminal_swap / parents 块测试（带 flaky 抑制） |
+| `README.md` | +40 | §4.4 PARENTS 块章节 |
+
+---
+
+# 44. Phase 4.6 — Multi-Agent 完整实施（2026-09-29 ~ 2026-09-30）
+
+> 本章是 **Phase 4.6 完整记录**，与 README §6 Multi-Agent 设计节、`loop_multi_agent.py`、
+> `agents/multi_agent.py` / `debate.py` / `router.py` / `marketplace.py` 同步。
+> 对应 commit：`954f318`（README 重写）以及 13 个阶段 commit + Chainlit 修复 commit。
+
+## 44.1 整体策略：13 阶段分批落地
+
+| 阶段 | 范围 | 主要 commit |
+|---|---|---|
+| 1-3 | README + config + 协调核心（`agents/multi_agent.py`） | `954f318` 前置 |
+| 4-5 | prompt 模板（`agents/prompts/__init__.py`）+ 对抗辩论（`debate.py`）+ 多 model provider 占位 | `954f318` 前置 |
+| 6 | API 验证 + 真实端到端 run | `954f318` |
+| 7 | end-to-end wiring（per-gen focus + evaluate + multi-judge + debate） | `954f318` |
+| 8 | 完整 loop 跑通 + README 更新 | `954f318` |
+| 9 | Dashboard multi-agent 接入 | `4eb7310` |
+| 10 | Generator re-call inside debate round | `4eb7310` |
+| 11 | GLM short-prompt path（3-generator multi-agent 端到端跑通） | `4eb7310` |
+| 12 | A/B ablation runner（`scripts/run_phase4_6_ablation.py`） | `66c5f2a` |
+| 13 | Marketplace / N-of-N 投票（`agents/marketplace.py` → 接入 PARENTS 上游） | `2ae0de6` |
+
+## 44.2 5 角色合约（强制异构）
+
+每个 generator **至少一个轴**上必须与其它 generator 不同：
+
+- **模型**：`MiniMax-M3` / `deepseek-chat` / `qwen3.8-flash`
+- **Prompt 立场**：`prompt_qed` / `prompt_vina` / `prompt_synth`
+- **温度**：0.4 ~ 1.0
+- **Few-shot**：不同示例集
+
+`agents.multi_agent.validate_multi_agent_config` 检查并 warning，`generators_are_heterogeneous` raise ValueError。
+
+## 44.3 多裁判投票
+
+3 个 judge（`J1_property` / `J2_docking` / `J3_synthesis`）独立投票，`combine_judge_votes` 加权求和：
+
+```text
+combined_score = Σ (weight_j × score_j)
+dispersion = max(score) - median(score)
+```
+
+触发辩论：
+
+- `max - median ≥ 0.15`（`disagreement_threshold`）
+- 任一 judge `confidence < 0.30`（`confidence_floor`）
+
+## 44.4 对抗辩论（adversarial debate）
+
+`run_debate` 实现 generator ↔ critic 多轮 push-back：
+
+- 必须给 `evidence_id`（`h:<id>` 或 `p:<proposal_id>:<idx>`）
+- ACCEPT 关键词立即终止
+- `require_evidence_id=True` 默认开启
+
+`debate_recall_generators` 把 critic 反馈注入新一轮 generator prompt，**重调**所有 generator。
+
+## 44.5 专家路由（RoundFingerprint）
+
+`RoundFingerprint.from_history(...)` 派生三个布尔：
+
+- `property_weak`：best property 没提升
+- `vina_weak`：best safe_vina 没下降（Vina 越小越好）
+- `sa_difficult`：任一 SA > 4.0
+
+`route(fp, experts)` 按优先级映射到 4 个 expert 模板：
+
+1. `sa_difficult` → `prompt_sa_expert`
+2. `property_weak` → `prompt_qed_expert`
+3. `vina_weak` → `prompt_vina_expert`
+4. else → `prompt_exploit_expert`
+
+## 44.6 Marketplace / N-of-N 投票
+
+`agents/marketplace.py` 两个互补机制：
+
+1. **`allocate_budgets(candidates, total_budget)`**：softmax 分配下一轮 generator 调用预算；`min_weight=0.05` floor 防饿死；`sum(allocated) == total_budget` 严格守恒
+2. **`select_top_k_by_vote(candidates, k)`**：每个候选按 ECFP4 Tanimoto 给其它候选投票；结构相似互相加权；不相似的互相抵消
+
+`_select_safety_pareto_parents_via_marketplace`（loop_multi_agent.py）= Pareto top 2k → N-of-N → top k = PARENTS 块。
+
+## 44.7 A/B ablation runner（`scripts/run_phase4_6_armababab.py`）
+
+两个 arm 跑同 `n_per_generator=1, max_rounds=1`：
+
+- **ARM 1**：single-agent（1 个 generator + 1 个 judge）
+- **ARM 2**：multi-agent（4 个 generator + 3 个 judge + debate）
+
+输出 `runs/samples/phase4_6_ablation.json` 含 wall time / combined_score / debate_triggered 等指标。
+
+**Phase 4.6 实测**（n=1 ablation）：multi-agent 比 single-agent 慢 ~54×（3 gen + 3 judge + debate）。judges confidence = 0 是 MockLLMClient 占位限制（确认 multi-agent 优于 baseline 的稳定可信结论需要 n≥3 + 真 LLM judge）。
+
+## 44.8 配置层最终形态（Phase 4.6 末段，与 README §6.6 一致）
+
+```yaml
+loop.multi_agent:
+  enabled: true
+  generators:
+    - { name: A1_qed, provider: MiniMax, prompt_role: qed, temperature: 0.7, weight: 2.0 }
+    - { name: A2_vina, provider: MiniMax, prompt_role: vina, temperature: 1.0, weight: 2.0 }
+    - { name: A3_synth, provider: deepseek, prompt_role: synth, temperature: 0.5, weight: 1.0 }
+    - { name: A4_fallback, provider: qwen_aliyun, prompt_role: default, temperature: 0.7, weight: 0.5 }
+  judges:
+    - { name: J1_property, provider: judge_MiniMax, prompt_role: judge_property, weight: 2.0 }
+    - { name: J2_docking, provider: MiniMax, prompt_role: judge_docking, weight: 2.0 }
+    - { name: J3_synthesis, provider: qwen_aliyun, prompt_role: judge_synthesis, weight: 1.0 }
+  router: { enabled: true, experts: { ok: prompt_exploit_expert, property_weak: prompt_qed_expert, vina_weak: prompt_vina_expert, sa_difficult: prompt_sa_expert } }
+  debate: { enabled: true, max_rounds: 3, disagreement_threshold: 0.15, confidence_floor: 0.30, require_evidence_id: true }
+  aggregation: { dedup: canonical, diversity_floor: 0.7, top_n: 12 }
+```
+
+## 44.9 Chainlit 集成（2026-09-30，5f08f4c / f4aa534）
+
+详见 [docs/CHAINLIT_FRONTEND.md](CHAINLIT_FRONTEND.md)。要点：
+
+- `chainlit_app.py` (port 8000) 是 UI 壳
+- `agents/harness/chainlit_bridge.py` 是 UI 无关适配层（可单测）
+- 业务逻辑仍在 `agents/harness/runtime.py`，零改动
+
+## 44.10 文件变更与测试统计
+
+| 文件 | 变化 | 说明 |
+|---|---|---|
+| `loop_multi_agent.py` | 新增 ~700 | multi-agent 主循环（Phase 4.7 扩展到 ~1300） |
+| `agents/multi_agent.py` | 新增 ~300 | heterogeneity / aggregate / multi-judge vote / debate trigger |
+| `agents/router.py` | 新增 ~150 | RoundFingerprint + 路由规则 |
+| `agents/debate.py` | 新增 ~250 | generator ↔ critic 多轮 push-back |
+| `agents/marketplace.py` | 新增 ~200 | trader budget + N-of-N voting |
+| `agents/prompts/__init__.py` | 新增 ~80 | prompt 模板注册 |
+| `scripts/smoke_multi_agent.py` 等 9 个 | 新增 | runner / ablation / dashboard worker |
+| `chainlit_app.py` + bridge | 新增 | Chainlit 前端 |
+| 测试增量 | 131 passed | 35 multi-agent + 18 loop_multi_agent + 9 stage7 + 9 prompts + 16 debate + 6 short_prompt + 13 dashboard + 4 debate_recall + 16 marketplace + ~140 的 chainlit bridge |
+
+---
+
+# 45. Phase 4.7 — multi-agent 与 loop.py 安全网对齐（2026-10-04）
+
+> 本章是 **Phase 4.7 实施记录**，与 README §1.3、§7 完整流程、《§6 设计原则 #13》一致。
+> 对应 commit：`4409105`（2026-10-04）。
+
+## 45.1 动机
+
+Phase 4.6 落地了多 agent 协调骨架，但 `run_multi_agent_loop` 的真实运行**绕开了** `loop.py` 早已集成的几道安全网：
+
+- `WorkingMemory`（短期上下文 + best-so-far + strategy_chain）
+- `FailedLigandSet`（跨 session 强制过滤已失败 SMILES）
+- `LoopController`（`max_rounds` / `token_budget` / `judge_convergence_patience` 三条预算）
+- `manifest.json`（schema_version=2，与 legacy loop 共享 `protocol_id` 派生）
+- `EvaluationCache` / `DockingCache`（让 multi-agent 复用 legacy loop 已经跑过的同一 `protocol_id` 工作）
+
+也就是说：**Phase 4.6 的 multi-agent 是一个有自己的 fast path，不是真实 multi-agent**。两个端点跑出来的结果不可比（A/B 计时成本因 cache 缺失偏移，不是算法差异）。
+
+Phase 4.7 把这些都接上，让 `run_multi_agent_loop` 与 `loop.run_loop` **共享所有安全网**。
+
+## 45.2 改动前后对照表
+
+| 项 | 修复前 | 修复后 |
+|---|---|---|
+| `memory.compress_for_generator()` 进 generator prompt | 空字符串 | 真实策略链 + best-so-far |
+| `failed_set.format_for_prompt()` 进 generator prompt | 空字符串 | 已失败 SMILES 列表 |
+| 每轮 `memory.add_round()` + `failed_set.add_failed_many()` | 没接 | 与 `loop.py` 等价 |
+| `LoopController.should_stop()` 前后检查 | 没接 | 跑 `safe_vina` 信号，与 `progress_signal` 一致 |
+| `manifest.json` 写出 | 没写 | schema_version=2，含 `protocol_id` / `code_hashes` / `sa_fragment_model_sha256` |
+| `EvaluationCache` / `DockingCache` 复用 | 故意不接（baseline 隔离） | 接上 |
+| `call_multi_generators` 并行 | 顺序（4 gen × 10-30s） | `ThreadPoolExecutor(max_workers=len(gens))` |
+| `RoundFingerprint.from_history(progress_signal=...)` | 只看 all-candidate Vina | `safe_vina` 时看 safety-gated Vina |
+| `agents/prompts/judge_property` / `judge_docking` / `judge_synthesis` | 没有 | 加入；judge 不再误用 generator 模板 |
+| `render()` fallback 路径 | 静默吞内容 | `log.warning(...)` |
+
+## 45.3 设计取舍
+
+### 45.3.1 为什么不让 multi-agent 走 Harness？
+
+`agents/harness/runtime.py` 是更通用的"任务执行框架"，它的单元是 `ToolRegistry`（7 个动作）。multi-agent loop 是"分子优化搜索"的专用逻辑，**两者是不同的抽象层**。强制把 multi-agent 套到 harness 上会：
+
+- 引入 harness 的状态机负担（CheckpointStore / ToolRegistry / policy 决策）
+- 失去现有 `WorkingMemory` / `LoopController` 的 Phase 4.6+ 适配
+- 让 multi-agent 的 5 角色合约被 harness 的"tool call"模型挤压
+
+Phase 4.7 的方案是**底层共享、上层独立**：
+
+- 底层：`WorkingMemory` / `FailedLigandSet` / `LoopController` / `EvaluationCache` / `DockingCache` / `manifest.json` 全部共享
+- 上层：multi-agent 走 `loop_multi_agent.run_multi_agent_loop`，harness 任务走 `agents/harness/Harness.run()`
+
+### 45.3.2 为什么不强制把 `loop.py::run_loop` 与 `loop_multi_agent.py::run_multi_agent_loop` 合并？
+
+考虑过（Phase 4.8 路线图 #2），但当前不做的好处：
+
+- 两条路径 `legacy / multi-agent` 是 ready-to-use 入口；dashboard / chainlit / abalation runner 都按入口分流
+- 合并需要重新设计 entry signature（要不要 `kwargs=1`？要不要 `multi_agent=bool`？）
+- Phase 4.7 已经把语义层差异抹平（共享 protocol_id / cache / memory / controller），代码层仍然分两份只是入口问题
+- 先观察 confirmatory 实验结果再决定是否合并
+
+### 45.3.3 为什么 `RoundFingerprint` 同时支持 `vina` 和 `safe_vina`？
+
+`agents/router.py` 是单 agent loop 早期写的（2026-09-27），那时 `progress_signal` 还没分裂。Phase 4.7 把 router 的 fingerprint 也接上了 `progress_signal`：
+
+```python
+if progress_signal == "safe_vina" and best_safe_vina_history is not None:
+    vina_series = [v for v in best_safe_vina_history if v is not None]
+else:
+    vina_series = [v for v in best_vina_history if v is not None]
+vina_hist = vina_series[-window:]
+vina_weak = (
+    len(vina_hist) >= 2 and vina_hist[-1] >= vina_hist[0]
+)
+```
+
+这样 legacy `loop.py`（`progress_signal="vina"`）行为不变；multi-agent / 安全包默认（`progress_signal="safe_vina"`）路由看 safety-gated Vina。
+
+### 45.3.5 为什么不接 `judge_round` 用 `judge_*` 模板？
+
+`agents/judge.py::SYSTEM_PROMPT` 仍是一段内置 prompt，原因：`PROMPT_SYSTEM` 含 schema 约束（focus / weakness / reflection / confidence / adopted_count）已经被 `judge_round` 输出契约锁住。要换模板需要重写 `judge_round` 的解析（`extract_json`）。
+
+Phase 4.7 做了**准备工作**：
+
+- `agents/prompts/__init__.py` 加 `judge_property` / `judge_docking` / `judge_synthesis` 模板（**注册 + 可加载**）
+- `tests/test_prompts.py` 加测试断言"judge 模板不应该要求新 SMILES，应该要 next-round focus"
+
+调用方（`call_multi_judges`）**当前没用**是 `judge_*` 模板；Phase 4.8 follow-up 可以把 `judge_round` 的 prompt 切到 `judge_*` 模板（需要重写解析）。
+
+## 45.4 与 `loop.run_loop()` 的差异点（Phase 4.7 之后）
+
+| 维度 | `loop.run_loop()` | `loop_multi_agent.run_multi_agent_loop()` |
+|---|---|---|
+| generator 调用 | 单 provider list，ThreadPoolExecutor 并行 | 多 provider per generator，ThreadPoolExecutor 并行 |
+| 候选合并 | 单 generator 输出直接 evaluate | 4 generator 输出 → `aggregate_round` 去重 + 多样性 + 投票 |
+| judge | 单 judge | 多 judge，`combine_judge_votes` 加权投票 |
+| router | 不存在 | `agents.router` RoundFingerprint + 4 expert prompt |
+| debate | 不存在 | `agents.debate` + `debate_recall_generators` 重调 |
+| PARENTS 块 | 同样支持 | 同样支持（多 generator 共享） |
+| 终止 | `LoopController` | 同样 `LoopController` |
+| 写盘 | `manifest.json` + `round_*.json` | **完全一样**（schema_version=2） |
+| Cache | `EvaluationCache` + `DockingCache` | **共用同一组** |
+| 失败集 | `FailedLigandSet` | **共用同一组** |
+| 短期记忆 | `WorkingMemory` | **共用同一组** |
+| 终止判断信号 | `safe_vina` / `vina` | **共用同一组**（`progress_signal`） |
+
+**两条路在 Phase 4.7 之后共享所有"安全网 + 持久化"，唯一真正的差异点 = multi-agent 的 A-J 步骤**（multi-generator / aggregate / multi-judge / router / debate）。
+
+## 45.5 不在 Phase 4.7 范围
+
+- **把 `loop.py::run_loop` 与 `loop_multi_agent.py::run_multi_agent_loop` 合并为统一入口**：Phase 4.8 #2
+- **接入 `judge_*` 模板到 `judge_round`**：Phase 4.8 #5（需要重写解析）
+- **n≥3 A/B 验证 multi-agent vs single-agent**：Phase 4.8 #1（cache + manifest 都铺好了，剩下是真实 LLM 重复实验）
+
+## 45.6 文件变更与测试统计
+
+| 文件 | 变化 | 说明 |
+|---|---|---|
+| `loop_multi_agent.py` | +521 / -24 | Phase 4.7 setup 块（WorkingMemory / FailedLigandSet / LoopController / manifest / cache）+ 真并行 ThreadPoolExecutor + safe_vina 路由 |
+| `agents/router.py` | +24 / -9 | `RoundFingerprint.from_history` 支持 `best_safe_vina_history` + `progress_signal` |
+| `agents/prompts/__init__.py` | +60 / -10 | 新增 `judge_property` / `judge_docking` / `judge_synthesis`；`render()` 兜底加 `log.warning(...)` |
+| `tests/test_loop_multi_agent.py` | +21 / -0 | autouse fixture 清理 `runs/_test_ma_*` 防止 happy-path 二次跑失败 |
+| `tests/test_prompts.py` | +22 / -9 | 3 个 judge 模板测试 + 渲染测试 |
+
+**测试统计**：
+
+```text
+Before (Phase 4.6 末段): 532 passed / 1 skipped
+After  (Phase 4.7 commit 4409105): 560 passed / 1 skipped   (+28 tests)
+```
+
+**`agents/__init__.py::__version__`** 从 `"0.4.6"` 升到 `"0.4.7"`。
+
+---
+
+**至此本手册覆盖到 commit `4409105`（Phase 4.7，2026-10-04）。**

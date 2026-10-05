@@ -220,6 +220,135 @@ loop:
 - ChemRAG 检索命中率 > 50%
 - 所有输出带 "⚠ Heuristic" 前缀
 
+> 实际落地节奏：Phase 4.1 / 4.2 早已完成。Phase 4.3 的 RAG 改写为 calibrated ADMET / EVIDENCE 校准 / 立体化学（详见 README §15 / docs/PROJECT_HANDBOOK.md 第 41-42 章）。从 Phase 4.4 起下文描述实际落地。
+
+---
+
+### Phase 4.4 — 校准 + 可视化 + 立体化学（2026-09-27）✅ 已完成
+
+**目标**：把"agent 是否自信过头"变成可测量；让"agent 学到什么"对人类可见；从 2D 升级到 3D 感知
+
+- [x] `agents/agent_metrics.py`：第 4 类 EVIDENCE 规则 + 预测误差度量
+- [x] `tools/calibrated_admet.py`：6 端点校准 ADMET（与 calibrated_hERG 同思路）
+- [x] `scripts/visualize_memory.py`：4 类规则占比 + 校准散点 + 跨 run 趋势
+- [x] `tools/validate_mol.py`：立体化学感知（R/S / cis-trans）
+- [x] `scripts/audit_pool_vs_random.py`：把 `P(random beats agent)` 变成可重复审计
+
+**验收**：
+- 391 passed / 1 skipped（含 17 个新测试）
+- README §15 timeline 上 2026-09-27 标 ✅
+
+详细设计取舍见 [docs/PROJECT_HANDBOOK.md 第 41-42 章](PROJECT_HANDBOOK.md)。
+
+---
+
+### Phase 4.5 — Selection Operator Bridge（PARENTS 块，2026-09-27）✅ 已完成
+
+**动机**（来自 [docs/REVIEW_MINIMAX_ADVICE_20260917.md](REVIEW_MINIMAX_ADVICE_20260917.md) Priority A-3）：
+
+> 单 agent 的搜索 = "带脚手架的重采样"。证据：随机抽样胜过 agent 的概率 72.7%（60 个真实轮次 + 4000 次重采样）。加 token / 加轮次都不能修，必须给 generator 一个**显式的选择算子 + 结构起点**。
+
+**目标**：把"evaluator 选出的 top-k safety-gated parents"显式注入 generator prompt，让搜索成为化学空间 walk。
+
+- [x] `tools/mutate.py`：BRICSBuild + atom_subst + terminal_swap + parents 块（4 类化学算子）
+- [x] `loop.py::_select_safety_pareto_parents`：排序键 `(safety_gate_pass, -pareto_rank, composite)`
+- [x] `agents/generator.py`：USER_PROMPT_TEMPLATE 加 `__PARENTS__` 占位符
+- [x] `format_parents_block(parents, k=3)`：稳定文本片段
+- [x] `config.yaml::loop.parents_block_enabled: true` / `parents_k: 3`
+
+**验收**：
+- 所有 generator 共享同一组结构起点（heterogeneity 之外的另一个"shared anchor"）
+- `parents_block_enabled` 不进 `protocol_id` 派生，可合法 cutoff 做 baseline 对照
+- `tests/test_mutate.py` 通过（含 flaky BRICSBuild 抑制）
+
+详细实现见 [docs/PROJECT_HANDBOOK.md 第 43 章](PROJECT_HANDBOOK.md)。
+
+---
+
+### Phase 4.6 — Multi-Agent 完整实施（2026-09-29 ~ 2026-09-30）✅ 已完成
+
+**动机**：单 LLM 重复同温度 + 同 prompt 跑 N 遍不能扩展搜索，必须给 generator 结构上独立的伙伴（不同模型 / 不同 prompt_role / 不同温度 / 不同 few-shot）+ 多裁判投票 + 对抗辩论 + 专家路由。
+
+**目标**：5 角色 + 13 阶段分批落地。
+
+**13 阶段分批**：
+
+| 阶段 | 范围 | 主要 commit |
+|---|---|---|
+| 1-3 | README + config + 协调核心（`agents/multi_agent.py`） | `954f318` 前置 |
+| 4-5 | prompt 模板 + 对抗辩论（`debate.py`）+ 多 model provider 占位 | 同上 |
+| 6 | API 验证 + 真实端到端 run | `954f318` |
+| 7 | end-to-end wiring（per-gen focus + evaluate + multi-judge + debate） | 同上 |
+| 8 | 完整 loop 跑通 + README 更新 | 同上 |
+| 9 | Dashboard multi-agent 接入 | `4eb7310` |
+| 10 | Generator re-call inside debate round | 同上 |
+| 11 | GLM short-prompt path | 同上（GLM 后续退役） |
+| 12 | A/B ablation runner | `66c5f2a` |
+| 13 | Marketplace / N-of-N 投票 | `2ae0de6` |
+
+**5 角色合约**：
+
+| 角色 | 数量 | 个性 | 异构轴强制 |
+|---|---|---|---|
+| A 异构生成器 | ≥ 2 | 不同 model / prompt_role / temperature / few-shot | 至少一轴不同 |
+| J 多裁判 | ≥ 2 | property / docking / synthesis 等独立视角 | 不同视角定义 |
+| C 对抗批评家 | 1 | 多轮 push-back + evidence_id 强制 | ACCEPT 即终止 |
+| E 评估器 | 1 | RDKit + calibrated 端点（非 LLM） | n/a |
+| R 专家路由 | 1 | 按 state 选专家 prompt | n/a |
+
+**验收**：
+- A/B ablation runner（`scripts/run_phase4_6_ablation.py`）跑通，n=1 已落地（Phase 4.8 follow-up 需要 n≥3）
+- 532 passed / 1 skipped（commit `f4aa534` 时基线）
+- Chainlit 集成（commit `f4aa534`）：bridge 层 100% 单测覆盖
+
+详细实现见 [docs/PROJECT_HANDBOOK.md 第 44 章](PROJECT_HANDBOOK.md)。
+
+---
+
+### Phase 4.7 — multi-agent 与 loop.py 安全网对齐（2026-10-04）✅ 已完成
+
+**动机**：Phase 4.6 的 `run_multi_agent_loop` 真实运行**绕开了** `loop.py` 早已集成的几道安全网（WorkingMemory / FailedLigandSet / LoopController / manifest.json / EvaluationCache / DockingCache）。两条路径 A/B 不可比（cache 缺失偏移计时成本，不是算法差异）。
+
+**目标**：把 multi-agent 路径拉齐到与 `loop.py` 等价的安全网。
+
+**10 项改动**：
+
+| 项 | 修复前 | 修复后 |
+|---|---|---|
+| `memory.compress_for_generator()` 进 generator prompt | 空字符串 | 真实策略链 + best-so-far |
+| `failed_set.format_for_prompt()` 进 generator prompt | 空字符串 | 已失败 SMILES 列表 |
+| 每轮 `memory.add_round()` + `failed_set.add_failed_many()` | 没接 | 与 `loop.py` 等价 |
+| `LoopController.should_stop()` 前后检查 | 没接 | 跑 `safe_vina` 信号 |
+| `manifest.json` 写出 | 没写 | schema_version=2 |
+| `EvaluationCache` / `DockingCache` 复用 | 故意不接 | 接上 |
+| `call_multi_generators` 并行 | 顺序（4 gen × 10-30s） | `ThreadPoolExecutor(max_workers=len(gens))` |
+| `RoundFingerprint.from_history(progress_signal=...)` | 只看 all-candidate Vina | `safe_vina` 时看 safety-gated Vina |
+| `judge_*` 模板（property/docking/synthesis） | 没有 | 加入；judge 不再误用 generator 模板 |
+| `render()` fallback 路径 | 静默吞内容 | `log.warning(...)` |
+
+**验收**：
+- 560 passed / 1 skipped（commit `4409105`；+28 测试 vs Phase 4.6 末段）
+- `agents/__init__.py::__version__` 0.4.6 → 0.4.7
+- 与 `loop.run_loop()` 共享 protocol_id / cache / memory / controller（10 维对照见 [docs/PROJECT_HANDBOOK.md 第 45 章](PROJECT_HANDBOOK.md) §45.4）
+
+**与 README 一致性**：
+- README §1.3 列了同一组 10 行 before/after
+- README §7 完整流程按这条改动后的 `run_multi_agent_loop` 源码写
+- README §6.11 history 标 Phase 4.7 / 4.7.1（Chainlit 集成）
+
+---
+
+### Phase 4.8 候选（按 ROI 排序）
+
+| # | 候选 | 工作量 | 价值 |
+|---|---|---|---|
+| 1 | n≥3 A/B 验证 multi-agent vs single-agent（真实 LLM judge） | ~5.5 min/run × 2 = 11 min | 科学价值最高 |
+| 2 | 合并 `loop.py::run_loop` 与 `loop_multi_agent.py::run_multi_agent_loop` 为统一入口 | 1-2 天 | 架构整理 |
+| 3 | deepseek-v3 / kimi-k3 真正接入 | 半天（拿到 API key 后） | 异构性增强 |
+| 4 | 接入 `judge_*` 模板到 `judge_round`（需要重写解析） | 半天 | 5 角色合约真正闭环 |
+| 5 | MiniMax-M3 judge 路径在 MockLLMClient 下的 confidence 占位修复 | 小改动 | A/B 验证可信度 |
+| 6 | GLM 退役后 `prompt_mode: short` 真实用户案例 | 新 key + 半天 | reasoning-heavy 模型兜底 |
+
 ---
 
 ## 7. 目录结构
@@ -317,6 +446,33 @@ aidd-multi-agent/
 
 ---
 
-Last reviewed: 2026-09-13
-Design philosophy: 单 Agent + 模块化（评审通过）
-Next review: Phase 4.1 完成后
+## 13. 当前状态与下一步
+
+**当前**：Phase 4.1 / 4.2 / 4.3 / 4.4 / 4.5 / 4.6 / 4.7 **全部 ✅ 已完成**。对应 README §15 时间线：
+
+| 时间 | Phase | 描述 |
+|---|---|---|
+| 2026-09-13 | 0 | 环境准备 + RDKit / Vina / MiniMax 验证 |
+| 2026-09-13 | 1 | 工具封装（validate_mol / admet_score / dock_score / diversity） |
+| 2026-09-15 | 1.5 | 第一阶段可信度修复（PHASE_1_CREDIBILITY.md） |
+| 2026-09-17 | 2 | 2-Agent MVP 闭环（generator → evaluator） |
+| 2026-09-18 | 2.5 | Persistent Harness（agent_task.py / Dashboard）+ RuleStore 4 类 |
+| 2026-09-19 | 3 | 多臂 A/B/C 消融（benchmarks/real_ablation_v3_20260915） |
+| 2026-09-19 | 3.5 | Confirmatory 实验（do_not_approve 决策） |
+| 2026-09-20 | v4 | 修复 transport + 真实端到端 multi-agent |
+| 2026-09-27 | 4.4 | 记忆校准 + 内存可视化 + 立体化学 + ADMET 扩展 |
+| 2026-09-27 | 4.5 | Selection Operator Bridge（PARENTS 块） |
+| 2026-09-29 | 4.6 | **完整 Multi-Agent 实施**（13 stages） |
+| 2026-09-30 | 4.6.1 | Chainlit 对话式前端 + GLM 退役 + DeepSeek 接入 + Marketplace 接入 |
+| 2026-10-04 | **4.7** | **multi-agent 与 loop.py 安全网对齐**（commit `4409105`） |
+
+**下一步**：Phase 4.8 候选清单见 §6 Phase 4.8 表格。最关键的两项：
+
+1. **n≥3 A/B 验证 multi-agent vs single-agent**：cache + manifest + safe_vina 都已铺好，直接跑真 LLM 重复实验
+2. **把 `judge_*` 模板接进 `judge_round`**：5 角色合约真正闭环
+
+---
+
+Last reviewed: 2026-10-04 (Phase 4.7 commit 4409105)
+Design philosophy: 单 Agent + 模块化（Phase 4 评审通过）+ Multi-Agent 协作（Phase 4.6 实施，Phase 4.7 拉齐安全网）
+Next review: Phase 4.8 实施后
